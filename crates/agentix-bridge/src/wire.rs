@@ -217,6 +217,8 @@ pub enum Event {
     TurnCompleted(TurnCompleted),
     SessionSwitchStarted(SessionSwitchStarted),
     SessionSwitchFailed(SessionSwitchFailed),
+    InteractionRequested(InteractionRequested),
+    InteractionResolved(InteractionResolved),
 }
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EventFrame {
@@ -241,4 +243,25 @@ pub struct SessionSwitchFailed {
     pub session_id: String,
     pub client_id: String,
     pub reason: String,
+}
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InteractionRequested {
+    pub rpc_id: String,
+    pub method: String,
+    pub session_id: String,
+    pub turn_id: String,
+    #[serde(deserialize_with = "serde::Deserialize::deserialize")]
+    pub item_id: Option<String>,
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+    pub available_decisions: Vec<String>,
+    pub payload: serde_json::Value,
+    #[serde(deserialize_with = "serde::Deserialize::deserialize")]
+    pub auto_resolution_ms: Option<u64>,
+}
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InteractionResolved {
+    pub session_id: String,
+    pub request_id: String,
 }

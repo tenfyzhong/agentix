@@ -16,6 +16,7 @@ impl Engine {
     ) -> Result<(), EngineError> {
         let kind = match kind {
             "claude" => crate::AgentKind::Claude,
+            "opencode" => crate::AgentKind::OpenCode,
             "codex" => crate::AgentKind::Codex,
             "pi" => crate::AgentKind::Pi,
             "omp" => crate::AgentKind::Omp,

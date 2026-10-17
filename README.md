@@ -1,13 +1,13 @@
 # Agentix
 
-Agentix connects local Codex, Pi, Oh My Pi, and Claude Code sessions to Telegram, Feishu, or Slack. Attach a session from chat, send prompts, and follow the agent's replies.
+Agentix connects local Codex, Pi, Oh My Pi, Claude Code, and OpenCode sessions to Telegram, Feishu, or Slack. Attach a session from chat, send prompts, and follow the agent's replies.
 
 ## Features
 
 - Browse local agent sessions, attach from chat, and follow streamed replies and history.
-- Control Codex models, reasoning, plans, and reviews, and respond to approvals in IM.
+- Control Codex models, reasoning, plans, and reviews; answer Codex and OpenCode approvals and questions in IM.
 - Restore session bindings after restarts and receive background completion notifications.
-- Create Codex, Pi, OMP, and Claude Code sessions from chat with optional rmux or tmux integration.
+- Create Codex, Pi, OMP, Claude Code, and OpenCode sessions from chat with optional rmux or tmux integration.
 - Coordinate work with standalone Taskix and browse project, Job, and Task boards in IM or Obsidian.
 - Retain evidenced project decisions with optional Taskix memory.
 - Verify Jobs before completion and synchronize Obsidian status edits with automatic rollback on failure.
@@ -54,12 +54,12 @@ Copy-Item .\agentix\agentix.example.toml "$HOME\.config\agentix\config.toml"
 
 Edit `~/.config/agentix/config.toml`:
 
-1. Enable the backend you use: `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, or `[agent.claude]`. The example enables Codex; each table selects its backend without a `kind` field.
+1. Enable the backend you use: `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, `[agent.claude]`, or `[agent.opencode]`. The example enables Codex; each table selects its backend without a `kind` field.
 2. Set `[channel].kind` to `telegram`, `feishu`, or `slack`.
 3. Fill in the matching channel table: Telegram `token`, Feishu `app_id` and `app_secret`, or Slack `bot_token` and `app_token`.
 4. Leave the selected channel's owner list empty for first-time claiming.
 
-Pi/OMP need the [live-session bridge](https://github.com/tenfyzhong/agentix/wiki/Pi-and-OMP) loaded in the original terminal. Claude Code needs the [bridge plugin and terminal setup](https://github.com/tenfyzhong/agentix/wiki/Claude-Code). For Windows configuration, bot creation, and other settings, see [Getting started](https://github.com/tenfyzhong/agentix/wiki/Getting-Started) and [configuration and operations](https://github.com/tenfyzhong/agentix/wiki/Configuration-and-Operations).
+Pi/OMP need the [live-session bridge](https://github.com/tenfyzhong/agentix/wiki/Pi-and-OMP) loaded in the original terminal. Claude Code needs the [bridge plugin and terminal setup](https://github.com/tenfyzhong/agentix/wiki/Claude-Code). OpenCode 2.0.32+ uses the [OpenCode TUI and server plugins](https://github.com/tenfyzhong/agentix/wiki/OpenCode). For Windows configuration, bot creation, and other settings, see [Getting started](https://github.com/tenfyzhong/agentix/wiki/Getting-Started) and [configuration and operations](https://github.com/tenfyzhong/agentix/wiki/Configuration-and-Operations).
 
 ### Start and claim the bot
 
@@ -88,7 +88,7 @@ agentix doctor
 codex --remote unix://
 ```
 
-For Pi, OMP, or Claude Code, start the configured host with its bridge loaded and keep the original terminal running.
+For Pi, OMP, Claude Code, or OpenCode, start the configured host with its bridge loaded and keep the original terminal running.
 
 1. Send `/sessions` to the bot and choose **Attach** for your session.
 2. Send an ordinary message to prompt the agent and follow its replies in chat.
@@ -104,7 +104,7 @@ Read the [GitHub Wiki](https://github.com/tenfyzhong/agentix/wiki) for the full 
 - [Installation](https://github.com/tenfyzhong/agentix/wiki/Installation): Homebrew, release archives, Windows, source builds, and shell completions.
 - [Configuration and operations](https://github.com/tenfyzhong/agentix/wiki/Configuration-and-Operations): backends, chat channels, startup, reload, and diagnostics.
 - [Using Agentix](https://github.com/tenfyzhong/agentix/wiki/Usage): session attachment, commands, prompts, history, and queues.
-- [Agent setup](https://github.com/tenfyzhong/agentix/wiki#user-content-set-up-your-environment): Pi, OMP, Claude Code, and Slack guides.
+- [Agent setup](https://github.com/tenfyzhong/agentix/wiki#user-content-set-up-your-environment): Pi, OMP, Claude Code, OpenCode, and Slack guides.
 - [Taskix workflows](https://github.com/tenfyzhong/agentix/wiki#user-content-optional-taskix-workflows): host plugins, Jobs and Tasks, Obsidian, memory, and backups.
 
 Obsidian task boards require **Obsidian 1.14 or newer** with the built-in Bases plugin. Run `taskix obsidian setup` to install Taskix Sync for status changes and bounded, scrollable boards. TaskNotes is no longer required. Recent Jobs includes all unarchived Jobs without a per-status limit.

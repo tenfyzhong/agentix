@@ -659,6 +659,30 @@
             "SessionSwitchFailed"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "InteractionRequested": {
+              "$ref": "#/$defs/InteractionRequested"
+            }
+          },
+          "required": [
+            "InteractionRequested"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "InteractionResolved": {
+              "$ref": "#/$defs/InteractionResolved"
+            }
+          },
+          "required": [
+            "InteractionResolved"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -742,6 +766,89 @@
         "session_id",
         "client_id",
         "reason"
+      ],
+      "additionalProperties": false
+    },
+    "InteractionRequested": {
+      "type": "object",
+      "properties": {
+        "rpc_id": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "command_approval",
+            "file_approval",
+            "user_input"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "available_decisions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "payload": {
+          "type": "object"
+        },
+        "auto_resolution_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "rpc_id",
+        "method",
+        "session_id",
+        "turn_id",
+        "item_id",
+        "kind",
+        "title",
+        "detail",
+        "available_decisions",
+        "payload",
+        "auto_resolution_ms"
+      ],
+      "additionalProperties": false
+    },
+    "InteractionResolved": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "request_id"
       ],
       "additionalProperties": false
     }

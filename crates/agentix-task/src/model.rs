@@ -427,7 +427,18 @@ pub(crate) fn agent_name(executor: &str) -> Option<&str> {
         .split(':')
         .next()?;
     match name {
-        "codex" | "claude" | "pi" | "omp" => Some(name),
+        "codex" | "claude" | "pi" | "omp" | "opencode" => Some(name),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod opencode_tests {
+    #[test]
+    fn opencode_executor_projects_native_host_identity() {
+        assert_eq!(
+            super::agent_name("agent:opencode:ses_native"),
+            Some("opencode")
+        );
     }
 }

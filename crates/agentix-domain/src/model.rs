@@ -23,7 +23,7 @@ impl SessionId {
     #[must_use]
     pub fn native_str(&self) -> &str {
         match self.0.split_once(':') {
-            Some(("codex" | "pi" | "omp" | "oh-my-pi" | "claude", native))
+            Some(("codex" | "pi" | "omp" | "oh-my-pi" | "claude" | "opencode", native))
                 if !native.is_empty() =>
             {
                 native

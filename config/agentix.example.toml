@@ -70,6 +70,13 @@ endpoint = "unix://~/.codex/app-server-control/app-server-control-upstream.sock"
 # Install agentix-bridge@agentix. Default IM input requires rmux on PATH
 # and Claude running inside rmux. Channel delivery is an explicit alternative.
 
+# Enable OpenCode 2.0.32+ (see https://github.com/tenfyzhong/agentix/wiki/OpenCode):
+# [agent.opencode]
+# command = "opencode"
+# state_dir = "~/.local/share/agentix/opencode"
+# Install the OpenCode TUI and server plugins with make plugin HOSTS=opencode.
+# Custom state_dir: export AGENTIX_OPENCODE_STATE_DIR in original terminals.
+
 [storage]
 path = "~/.local/share/agentix/state.sqlite3"
 
@@ -97,7 +104,7 @@ owner_user_ids = []
 # enable = false
 # config = "~/.config/taskix/config.toml"
 
-# Enable any combination of [agent.codex], [agent.pi], [agent.omp], and [agent.claude].
+# Enable any combination of [agent.codex], [agent.pi], [agent.omp], [agent.claude], and [agent.opencode].
 # The table name selects the backend; do not add a kind field.
 # Pi/OMP require agentix-bridge in the original process.
 # Optional Pi/OMP fields (place inside the corresponding backend table):

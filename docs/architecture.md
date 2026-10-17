@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-See [Session lifecycle and message flows](session-lifecycle.md) for Codex, Pi, OMP, and Claude discovery, attachment, streaming, replacement, exit, and recovery diagrams.
+See [Session lifecycle and message flows](session-lifecycle.md) for Codex, Pi, OMP, Claude, and OpenCode discovery, attachment, streaming, replacement, exit, and recovery diagrams.
 
 Agentix separates domain contracts, runtime persistence, application orchestration, and external adapters. `agentix-domain` defines identity, binding rules, views, and ports; `agentix-storage` implements runtime persistence; `agentix-core` coordinates sessions and tasks. Agent and IM crates translate external protocols through domain contracts.
 
@@ -10,7 +10,7 @@ Agentix separates domain contracts, runtime persistence, application orchestrati
 flowchart LR
     IM["Telegram, Feishu, or Slack"]
     CLI["agentix client"]
-    BACKEND["Codex app-server and Pi / OMP / Claude live bridges"]
+    BACKEND["Codex app-server and Pi / OMP / Claude / OpenCode live bridges"]
     RMUX["rmux or tmux server"]
 
     subgraph SERVICE["agentix serve"]
@@ -86,6 +86,12 @@ flowchart TB
     RUNTIME --> STATE["Session projection + durable queue"]
     RUNTIME --> HOST["Pi / OMP host adapter"]
     HOST --> NATIVE["Original interactive process and native session log"]
+    TRANSPORT --> OC["OpenCode TUI SDK + bounded projection"]
+    OC --> OCLOG["Agentix sidecar: queue, checkpoints, receipt archive"]
+    OC --> OCHOST["Original OpenCode TUI / native SDK"]
+    OCHOST --> OCSERVER["Optional Taskix server plugin"]
+    OCSERVER --> TURN["Canonical native-turn normalization"]
+    OC --> TURN
     TRANSPORT --> CLAUDE["Claude MCP child + ClaudeSession"]
     CLAUDE --> STORE["Private checkpoint and incremental journal"]
     CLAUDE --> INPUT["TerminalDelivery or ChannelDelivery"]
@@ -103,8 +109,9 @@ flowchart TB
 | Agent adapters | Wire/domain conversion, host-specific capabilities and optional ports | Generated wire DTOs stay in `agentix-bridge`; explicit conversions produce core types |
 | Native connection ownership | Registration, duplicate rejection, online connections, one resume/offline lifecycle source | `BridgeHub` is authoritative; adapters do not maintain a second connection cache |
 | Extension | Original-process execution, native history projection and durable remote queue | Transport owns framing/reconnect; runtime coordinates; session owns turn association/history; queue owns receipts/replay; host adapter owns Pi/OMP API differences |
+| OpenCode plugins | TUI SDK projection, native controls/interactions, sidecar delivery receipts; separate Taskix routing/tools | One canonical tagged-message normalizer generates self-contained copies for both packages; delivered inbox IDs retain real prompt identity |
 | Claude plugin | Hook mailbox, observed turns, delivery receipts, terminal or Channel input | MCP tools and Channel capability are exposed only in Channel mode; hooks and delivery adapters own Claude-specific behavior |
-| Infrastructure | SQLite state, channel transport, rmux SDK and native session storage | Pi/OMP queue records remain in native logs; Claude keeps a private checkpoint and incremental journal; Agentix SQLite stores IM bindings and coordination state |
+| Infrastructure | SQLite state, channel transport, rmux SDK and native session storage | Pi/OMP queue records remain in native logs; Claude keeps a private checkpoint and incremental journal; OpenCode keeps Agentix sidecar checkpoints and a receipt archive separately from native storage; Agentix SQLite stores IM bindings and coordination state |
 
 The registry does not poll every backend for lifecycle changes. Adapters publish them: the Codex adapter observes its client registry and transport lifecycle, deferred adapters retry unavailable backends, and BridgeHub owns native connection lifecycle. On event broadcast lag, Engine invalidates stale actions and reconciles history for active bindings.
 
@@ -479,3 +486,55 @@ are prepared independently of delivery; receiving hosts own cross-turn deduplica
 A separate
 configuration snapshot governs each model loop. See the [memory design](taskix-memory-design.md),
 [operating guide](https://github.com/tenfyzhong/agentix/wiki/Taskix-Memory) and [dual-database backup protocol](https://github.com/tenfyzhong/agentix/wiki/Backup-and-Recovery).
+
+### OpenCode TUI and server plugins
+
+OpenCode 2.0.32+ joins the shared native bridge through a TUI plugin. The original
+process supplies its PID and client identity. Native Promise SDK calls and events
+provide streaming, history, controls, permissions and forms. A separate server
+plugin hosts Taskix routing and tools; the Bridge needs no server companion.
+Both are dependency-free native `{ id, setup(context) }` plugins.
+
+Native tagged user/assistant/compaction/idle history and delivered inbox IDs replace
+synthetic part stamps and heuristic compaction aliases. The canonical contract in
+`plugins/shared/opencode-turns.mjs` generates self-contained copies for both
+packages; `node scripts/generate-opencode-turns.mjs --check` guards drift. Prompt
+preparation/admission does not replace active Taskix ownership; native delivery
+activates it. Execution terminal events settle promoted turns; an assistant step
+error alone does not. Taskix saves
+minimal active identity/context in native plugin storage for compaction/restart
+recovery. Delivery queues and receipts stay in an Agentix sidecar journal.
+
+The v2 Agentix bridge protocol adds interaction events and a reply operation;
+existing host registrations remain compatible. OpenCode's own major version is
+separate from that wire version. The tested host baseline is 2.0.32; earlier patches
+are rejected and later API changes need compatibility testing. See
+[OpenCode protocol](host-protocol.md#opencode) for lifecycle and capability limits.
+
+OpenCode metadata/alias caches target 4,096 entries with active identity pinning.
+The part-text cache has independent bounds of 8,192 entries / 8 MiB; active text
+is not pinned against eviction. History reads fetch at most twenty pages of 200 native
+messages within a five-second total deadline. Queued remote work is limited to
+128 prompts / 8 MiB, with 256 KiB per prompt. The sidecar checkpoints after
+4,096 delta records or 1 MiB of deltas. Hot receipts retain at most 2,048 entries /
+1 MiB except pinned active work; older full receipts are archived on disk under hashed IDs and
+looked up lazily for exact deduplication. The archive intentionally grows with
+distinct deliveries. These are working-set limits, not a session-lifetime quota.
+
+Taskix retains at most 64 inactive native-session wrappers by LRU. Idle wrappers
+stop lease timers and refresh ownership from context; wrappers with active owned
+leases renew them and are not evicted to meet the idle limit. See
+[performance](performance.md#opencode-working-set-and-taskix-overhead) for measured
+latency and write-cost tradeoffs.
+
+Session-incarnation fences reject stale asynchronous history, interaction replay
+and route results. Bridge filtering excludes foreign sessions and unused tool
+payloads before queueing. Selected-session event count remains uncapped during
+bounded SDK waits, so cache limits are not an end-to-end memory ceiling.
+
+Taskix dispatch has a sixteen-job global limit and four-job per-session limit,
+with native-stream backpressure and ordered work within each session. It pins
+wrappers with active work, leases or dispatcher work. Retryable activation retains
+native source identity; cleanup preserves continuation context without recording
+a completed reply. The event pool bounds queued plugin work, not native history
+or external provider memory.

@@ -239,6 +239,7 @@ async fn screen(
         AgentKind::Pi => &["pi", "node", "bun"],
         AgentKind::Omp => &["omp", "node", "bun"],
         AgentKind::Claude => &["claude", "node"],
+        AgentKind::OpenCode => &["opencode", "bun"],
     };
     if parts.len() < 3
         || parts[0] != parts[1]

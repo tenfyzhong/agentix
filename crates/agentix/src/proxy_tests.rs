@@ -1,6 +1,4 @@
-#[path = "../../agentix-telegram/tests/support/mod.rs"]
-#[allow(dead_code)]
-mod telegram_support;
+use crate::telegram_test_support as telegram_support;
 
 #[path = "../../../tests/support/environment_proxy.rs"]
 mod environment_proxy;

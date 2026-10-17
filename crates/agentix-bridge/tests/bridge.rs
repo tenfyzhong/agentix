@@ -497,3 +497,96 @@ async fn native_new_crosses_ipc_with_stable_identity_and_replacement_registratio
     assert_eq!(adapter.session_client_id(&new).await, Some(identity));
     assert!(host.try_wait().unwrap().is_none());
 }
+
+#[tokio::test]
+async fn opencode_interaction_routes_to_pending_native_request_and_rejects_stale_reply() {
+    use agentix_domain::InteractionDecision;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+    use tokio::io::AsyncWriteExt;
+    let hub = Arc::new(BridgeHub::new());
+    let root = std::env::temp_dir();
+    let adapter = BridgeAdapter::new(BridgeKind::OpenCode, hub.clone(), &root);
+    let mut events = adapter.subscribe();
+    let mut snapshot: Value = serde_json::from_str(include_str!(
+        "../../../plugins/agentix-bridge/protocol/snapshot.json"
+    ))
+    .unwrap();
+    snapshot["session"]["id"] = json!("ses_test");
+    let (server, host) = tokio::io::duplex(65536);
+    let instance = snapshot["instance"].clone();
+    let remote = tokio::spawn(async move {
+        let mut host = BufReader::new(host);
+        let mut line = String::new();
+        host.read_line(&mut line).await.unwrap();
+        let event = json!({"instance":instance,"seq":4,"event":{"InteractionRequested":{
+            "rpc_id":"per_test","method":"opencode.permission","session_id":"ses_test","turn_id":"msg_test","item_id":null,
+            "kind":"command_approval","title":"Permission","detail":"bash","available_decisions":["once","always","reject"],"payload":{},"auto_resolution_ms":null
+        }}});
+        host.get_mut()
+            .write_all(format!("{event}\n").as_bytes())
+            .await
+            .unwrap();
+        line.clear();
+        host.read_line(&mut line).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let request: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(request["method"], "interaction");
+        assert_eq!(
+            request["params"],
+            json!({"rpc_id":"per_test","response":{"decision":"once"}})
+        );
+        host.get_mut()
+            .write_all(
+                format!("{}\n", json!({"id":request["id"],"ok":true,"result":{}})).as_bytes(),
+            )
+            .await
+            .unwrap();
+        line.clear();
+        if tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            host.read_line(&mut line),
+        )
+        .await
+        .is_ok()
+            && !line.is_empty()
+        {
+            let duplicate: Value = serde_json::from_str(&line).unwrap();
+            host.get_mut()
+                .write_all(
+                    format!("{}\n", json!({"id":duplicate["id"],"ok":true,"result":{}})).as_bytes(),
+                )
+                .await
+                .unwrap();
+        }
+    });
+    hub.accept(json!({"id":"register","method":"register","params":{
+        "version":2,"agent":"opencode","instance":snapshot["instance"],"pid":1,
+        "session_id":"ses_test","session_file":root.join("native.jsonl"),"cwd":root,"snapshot":snapshot
+    }}), server).await.unwrap();
+    loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(3), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if matches!(event, AgentEvent::InteractionRequested(_)) {
+            break;
+        }
+    }
+    let decision = InteractionDecision {
+        rpc_id: json!("per_test"),
+        response: json!({"decision":"once"}),
+    };
+    let (first, duplicate) = tokio::join!(
+        adapter.resolve_interaction(decision.clone()),
+        adapter.resolve_interaction(decision.clone()),
+    );
+    assert_eq!(
+        usize::from(first.is_ok()) + usize::from(duplicate.is_ok()),
+        1,
+        "a pending native interaction must only be dispatched once"
+    );
+    assert!(adapter.resolve_interaction(decision).await.is_err());
+    remote.await.unwrap();
+    hub.shutdown().await;
+}

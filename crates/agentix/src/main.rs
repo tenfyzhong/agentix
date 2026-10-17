@@ -9,8 +9,16 @@ use agentix::run_engine_loop;
 use control_runtime::run_control_handler;
 #[cfg(all(test, unix))]
 mod native_control_tests;
+#[cfg(all(test, unix))]
+mod opencode_closedloop_tests;
+#[cfg(test)]
+mod opencode_tests;
 #[cfg(test)]
 mod proxy_tests;
+#[cfg(test)]
+#[path = "../../agentix-telegram/tests/support/mod.rs"]
+#[allow(dead_code)]
+mod telegram_test_support;
 
 #[cfg(test)]
 use std::future::Future;
@@ -57,6 +65,15 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
+    #[command(hide = true)]
+    LaunchOpenCode {
+        #[arg(long)]
+        command: PathBuf,
+        #[arg(long)]
+        state_dir: PathBuf,
+        #[arg(long)]
+        endpoint: String,
+    },
     /// Run the Agentix bridge until interrupted.
     Serve {
         #[command(flatten)]
@@ -129,6 +146,14 @@ enum ClientCommand {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let CliCommand::LaunchOpenCode {
+        command,
+        state_dir,
+        endpoint,
+    } = &cli.command
+    {
+        return launch_opencode(command, state_dir, endpoint);
+    }
     #[cfg(unix)]
     if matches!(cli.command, CliCommand::Serve { .. }) {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -183,7 +208,9 @@ async fn run(cli: Cli) -> Result<()> {
         }
         CliCommand::Doctor => doctor(&config).await,
         CliCommand::Client { command } => client(&config.server.endpoint, command).await,
-        CliCommand::Completions { .. } | CliCommand::Reload { .. } => {
+        CliCommand::Completions { .. }
+        | CliCommand::Reload { .. }
+        | CliCommand::LaunchOpenCode { .. } => {
             unreachable!("completions and reload are handled before runtime initialization")
         }
     }
@@ -481,6 +508,7 @@ async fn build_service(
                 notification_setting.clone(),
                 bridge_hub.clone(),
                 &multiplexer,
+                &config.server.endpoint,
             )
             .await
             {
@@ -493,6 +521,7 @@ async fn build_service(
                     let background = notification_setting.clone();
                     let directory = multiplexer.home_dir.to_string_lossy().into_owned();
                     let multiplexer = multiplexer.clone();
+                    let endpoint = config.server.endpoint.clone();
                     let adapter = agentix_core::DeferredAgent::new(
                         agent.kind().display_name(),
                         directory,
@@ -501,8 +530,9 @@ async fn build_service(
                             let multiplexer = multiplexer.clone();
                             let bridge_hub = bridge_hub.clone();
                             let background = background.clone();
+                            let endpoint = endpoint.clone();
                             async move {
-                                build_agent(&retry, background, bridge_hub, &multiplexer)
+                                build_agent(&retry, background, bridge_hub, &multiplexer, &endpoint)
                                     .await
                                     .map(|built| built.adapter)
                                     .map_err(|error| AgentError::Unavailable(error.to_string()))
@@ -654,6 +684,28 @@ async fn doctor(config: &Config) -> Result<()> {
 
     for agent in config.selected_agents() {
         match agent {
+            AgentConfig::OpenCode { command, state_dir } => {
+                let output = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    tokio::process::Command::new(command)
+                        .arg("--version")
+                        .output(),
+                )
+                .await
+                .context("OpenCode version check timed out")?
+                .context("cannot check OpenCode version")?;
+                if !output.status.success() {
+                    bail!("OpenCode version check failed");
+                }
+                validate_opencode_version(&String::from_utf8_lossy(&output.stdout))?;
+                doctor_pi(
+                    BridgeKind::OpenCode,
+                    command,
+                    state_dir,
+                    &config.server.endpoint,
+                )
+                .await?;
+            }
             AgentConfig::Claude {
                 command,
                 session_dir,
@@ -737,6 +789,62 @@ fn build_multiplexer(
     })
 }
 
+fn opencode_workspace_args(command: &Path, state_dir: &Path, endpoint: &str) -> Vec<String> {
+    vec![
+        "launch-open-code".into(),
+        "--command".into(),
+        command.to_string_lossy().into_owned(),
+        "--state-dir".into(),
+        state_dir.to_string_lossy().into_owned(),
+        "--endpoint".into(),
+        endpoint.into(),
+    ]
+}
+
+fn opencode_launch_command(
+    command: &Path,
+    state_dir: &Path,
+    endpoint: &str,
+) -> std::process::Command {
+    let mut child = std::process::Command::new(command);
+    // Keep the IM session server under the terminal lifetime and launcher environment.
+    child
+        .arg("--standalone")
+        .env("AGENTIX_OPENCODE_STATE_DIR", state_dir)
+        .env("AGENTIX_CONTROL_ENDPOINT", endpoint);
+    child
+}
+
+fn launch_opencode(command: &Path, state_dir: &Path, endpoint: &str) -> Result<()> {
+    let mut child = opencode_launch_command(command, state_dir, endpoint);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        Err(child.exec()).context("cannot launch OpenCode")
+    }
+    #[cfg(not(unix))]
+    {
+        let status = child.status().context("cannot launch OpenCode")?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
+fn validate_opencode_version(version: &str) -> Result<()> {
+    let value = version.trim();
+    let value = value.strip_prefix("opencode v").unwrap_or(value);
+    let numbers = value
+        .split('.')
+        .map(str::parse::<u64>)
+        .collect::<std::result::Result<Vec<_>, _>>();
+    match numbers {
+        Ok(parts) if parts.len() == 3 && parts.as_slice() >= [2, 0, 32].as_slice() => Ok(()),
+        _ => bail!(
+            "OpenCode 2.0.32 or later is required; found {}",
+            version.trim()
+        ),
+    }
+}
+
 fn claude_workspace_args() -> Vec<String> {
     // Prompts use terminal input; ordinary plugin loading supplies the bridge hooks.
     Vec::new()
@@ -747,10 +855,27 @@ async fn build_agent(
     background_turn_notifications: Arc<std::sync::atomic::AtomicBool>,
     bridge_hub: Option<Arc<BridgeHub>>,
     multiplexer: &agentix::MultiplexerConfig,
+    endpoint: &str,
 ) -> Result<BuiltAgent> {
     let directory = &multiplexer.home_dir;
     let driver = build_multiplexer(multiplexer.resolved_kind);
     match config {
+        AgentConfig::OpenCode { command, state_dir } => Ok(BuiltAgent {
+            adapter: Arc::new(
+                BridgeAdapter::new(
+                    BridgeKind::OpenCode,
+                    bridge_hub.context("native bridge hub is not configured")?,
+                    state_dir,
+                )
+                .with_workspace(
+                    &std::env::current_exe().context("cannot locate Agentix launcher")?,
+                    opencode_workspace_args(command, state_dir, endpoint),
+                    directory,
+                )
+                .with_optional_multiplexer(driver),
+            ),
+            codex: None,
+        }),
         AgentConfig::Claude {
             command,
             session_dir,
@@ -1196,13 +1321,49 @@ async fn doctor_pi(
 }
 
 fn resolve_executable(command: &Path) -> Option<PathBuf> {
-    if command.components().count() > 1 {
-        return command.is_file().then(|| command.to_owned());
-    }
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|path| path.join(command))
-            .find(|candidate| candidate.is_file())
+    let paths = std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+        .unwrap_or_default();
+    #[cfg(windows)]
+    let extensions = std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+        .split(';')
+        .filter(|suffix| suffix.starts_with('.'))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    #[cfg(not(windows))]
+    let extensions = Vec::new();
+    resolve_executable_in(command, &paths, &extensions)
+}
+
+fn resolve_executable_in(
+    command: &Path,
+    paths: &[PathBuf],
+    extensions: &[String],
+) -> Option<PathBuf> {
+    let candidates = if command.components().count() > 1 {
+        vec![command.to_owned()]
+    } else {
+        paths
+            .iter()
+            .map(|directory| directory.join(command))
+            .collect()
+    };
+    candidates.into_iter().find_map(|candidate| {
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if candidate.extension().is_some() {
+            return None;
+        }
+        extensions
+            .iter()
+            .map(|extension| {
+                let mut path = candidate.as_os_str().to_owned();
+                path.push(extension);
+                PathBuf::from(path)
+            })
+            .find(|path| path.is_file())
     })
 }
 

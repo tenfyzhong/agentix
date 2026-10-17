@@ -29,7 +29,7 @@ async function fixture(t) {
     t.after(() => rm(directory, { recursive: true, force: true }));
     const bin = join(directory, "bin");
     await mkdir(bin);
-    for (const command of ["cargo", "cp", "rm", "taskix", "codex", "claude", "pi", "omp"]) {
+    for (const command of ["cargo", "cp", "rm", "taskix", "codex", "claude", "pi", "omp", "opencode", "node"]) {
         const path = join(bin, command);
         await writeFile(path, `#!/bin/sh
 echo "${command} $*" >> "$INSTALL_FIXTURE_DIR/calls"
@@ -93,6 +93,7 @@ for (const args of [["plugin", "SOURCE=typo"], ["plugin", "HOSTS=codex typo"], [
 test("missing_selected_cli_fails_before_cleanup", { skip: process.platform === "win32" }, async t => {
     const f = await fixture(t);
     assert.notEqual(f.run(["plugin", "CLAUDE=/nonexistent/agentix-test-claude"]).status, 0);
+    assert.notEqual(f.run(["plugin", "HOSTS=opencode", "OPENCODE=/nonexistent/agentix-test-opencode"]).status, 0);
     await assert.rejects(f.calls(), { code: "ENOENT" });
 });
 
@@ -113,3 +114,14 @@ test("removed_aliases_fail_without_changing_plugins", { skip: process.platform =
     }
     await assert.rejects(f.calls(), { code: "ENOENT" });
 });
+
+for (const source of ["local", "main"]) {
+    test(`explicit_opencode_${source}_does_not_touch_default_hosts`, async t => {
+        const f = await fixture(t);
+        const result = f.run(["plugin", "HOSTS=opencode", `SOURCE=${source}`, "NODE=node"]);
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(await f.calls(), [
+            `node scripts/opencode-plugin.mjs install ${source}`,
+        ]);
+    });
+}

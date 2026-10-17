@@ -12982,3 +12982,232 @@ async fn background_partial_cached_answer_marks_missing_history() {
             .contains("Additional turn content is unavailable.")
     );
 }
+
+#[tokio::test]
+async fn opencode_multiple_question_requires_submit_and_respects_custom_false() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::InteractionRequested(user_input_request(
+            "multi",
+            &serde_json::json!([
+                {"id":"0", "question":"Choose features", "multiple":true, "custom":false,
+                 "options":[{"label":"A"},{"label":"B"}]}
+            ]),
+        )))
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(!view.actions.iter().any(|a| a.label == "Other…"));
+    click_action(
+        &engine,
+        "multi-a",
+        view.actions
+            .iter()
+            .find(|a| a.label == "A")
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    assert!(agent.interaction_decisions().is_empty());
+    let view = channel.updated().last().unwrap().1.clone();
+    click_action(
+        &engine,
+        "multi-b",
+        view.actions
+            .iter()
+            .find(|a| a.label == "B")
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    assert!(agent.interaction_decisions().is_empty());
+    let view = channel.updated().last().unwrap().1.clone();
+    click_action(
+        &engine,
+        "multi-submit",
+        view.actions
+            .iter()
+            .find(|a| a.label == "Submit")
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    assert_eq!(
+        agent.interaction_decisions()[0].response,
+        serde_json::json!({"answers":{"0":{"answers":["A","B"]}}})
+    );
+}
+
+#[tokio::test]
+async fn opencode_questions_can_be_rejected() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    let mut request = user_input_request(
+        "reject-question",
+        &serde_json::json!([{"id":"0","question":"Choose","options":[],"custom":true}]),
+    );
+    request.payload["rejectable"] = serde_json::json!(true);
+    engine
+        .handle_agent_event(AgentEvent::InteractionRequested(request))
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    click_action(
+        &engine,
+        "reject",
+        view.actions
+            .iter()
+            .find(|a| a.label == "Reject")
+            .expect("question reject action")
+            .token
+            .clone(),
+    )
+    .await;
+    assert_eq!(
+        agent.interaction_decisions()[0].response,
+        serde_json::json!({"decision":"reject"})
+    );
+    let before = channel.sent().len();
+    engine
+        .handle_agent_event(AgentEvent::InteractionRequested(user_input_request(
+            "next-question",
+            &serde_json::json!([{"id":"0","question":"Continue now?","options":[{"label":"Continue"}]}]),
+        )))
+        .await
+        .unwrap();
+    assert_eq!(
+        channel.sent().len(),
+        before + 1,
+        "a new question must not resurrect the successfully rejected request"
+    );
+    let next = channel.sent().last().unwrap().1.clone();
+    click_action(
+        &engine,
+        "answer-after-reject",
+        next.actions[0].token.clone(),
+    )
+    .await;
+    assert_eq!(
+        agent.interaction_decisions()[1].rpc_id,
+        serde_json::json!("next-question")
+    );
+}
+
+#[tokio::test]
+async fn opencode_multiple_question_keeps_custom_and_deselection_before_next_question() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine.handle_agent_event(AgentEvent::InteractionRequested(user_input_request("multi-custom", &serde_json::json!([
+        {"id":"0", "question":"Choose features", "multiple":true, "options":[{"label":"A"},{"label":"B"}]},
+        {"id":"1", "question":"Choose environment", "custom":false, "options":[{"label":"Test"}]}
+    ])))).await.unwrap();
+    let first = channel.sent().last().unwrap().1.clone();
+    click_action(
+        &engine,
+        "custom-a",
+        first
+            .actions
+            .iter()
+            .find(|a| a.label == "A")
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    let selected = channel.updated().last().unwrap().1.clone();
+    click_action(
+        &engine,
+        "custom-deselect",
+        selected
+            .actions
+            .iter()
+            .find(|a| a.label == "✓ A")
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    let deselected = channel.updated().last().unwrap().1.clone();
+    assert!(deselected.actions.iter().any(|a| a.label == "A"));
+    click_action(
+        &engine,
+        "custom-other",
+        deselected
+            .actions
+            .iter()
+            .find(|a| a.label == "Other…")
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "Custom feature"))
+        .await
+        .unwrap();
+    assert!(agent.interaction_decisions().is_empty());
+    let custom = channel.updated().last().unwrap().1.clone();
+    click_action(
+        &engine,
+        "custom-submit",
+        custom
+            .actions
+            .iter()
+            .find(|a| a.label == "Submit")
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    assert!(agent.interaction_decisions().is_empty());
+    let next = channel.updated().last().unwrap().1.clone();
+    assert!(!next.actions.iter().any(|a| a.label == "Submit"));
+    click_action(
+        &engine,
+        "custom-next",
+        next.actions
+            .iter()
+            .find(|a| a.label == "Test")
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    assert_eq!(
+        agent.interaction_decisions()[0].response,
+        serde_json::json!({"answers":{
+            "0":{"answers":["Custom feature"]}, "1":{"answers":["Test"]}
+        }})
+    );
+}

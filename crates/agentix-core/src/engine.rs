@@ -181,6 +181,7 @@ enum UiAction {
         answer: String,
     },
     BeginCustomInput(InteractionKey),
+    SubmitInput(InteractionKey),
     SessionCommand {
         session_id: SessionId,
         command: SessionCommand,
@@ -208,6 +209,7 @@ impl UiAction {
             Self::Resolve { interaction, .. }
             | Self::BeginInput(interaction)
             | Self::SelectInput { interaction, .. }
+            | Self::SubmitInput(interaction)
             | Self::BeginCustomInput(interaction) => &interaction.session_id == session_id,
             Self::Multiplexer(..) | Self::MultiplexerLaunch(..) | Self::TaskBrowse(_) => false,
             Self::Issue(action) => action.session_id.as_ref() == Some(session_id),
@@ -256,7 +258,8 @@ struct InteractionKey {
 #[derive(Debug, Clone)]
 struct InputProgress {
     questions: Vec<InputQuestion>,
-    answers: Vec<Option<String>>,
+    reject_rpc_id: Option<Value>,
+    answers: Vec<Option<Vec<String>>>,
     current: usize,
 }
 
@@ -267,6 +270,8 @@ struct InputQuestion {
     question: String,
     options: Vec<InputOption>,
     secret: bool,
+    multiple: bool,
+    custom: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -954,6 +959,7 @@ fn event_importance(event: &AgentEvent) -> EventImportance {
 fn parse_backend(kind: &str) -> Result<crate::AgentKind, EngineError> {
     match kind {
         "claude" => Ok(crate::AgentKind::Claude),
+        "opencode" => Ok(crate::AgentKind::OpenCode),
         "codex" => Ok(crate::AgentKind::Codex),
         "pi" => Ok(crate::AgentKind::Pi),
         "omp" | "oh-my-pi" => Ok(crate::AgentKind::Omp),

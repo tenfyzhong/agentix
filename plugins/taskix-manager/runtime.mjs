@@ -180,7 +180,7 @@ export function registerExtension(
 ) {
     let active;
     // Same-process bridge integration shares native turn IDs without an IPC dependency.
-    const turnRegistry = globalThis[Symbol.for("agentix.discussion.turns")] ??= new Map();
+    const turnRegistry = routing.turnRegistry ?? (globalThis[Symbol.for("agentix.discussion.turns")] ??= new Map());
     // Retries of one host call must retain the original authorization input,
     // even when the first attempt committed and released the current lease.
     const requestTokens = new Map();
@@ -216,6 +216,16 @@ export function registerExtension(
                             { triggerTurn: false, deliverAs: "steer" },
                         );
                         state.cancellationNotice = notice;
+                    }
+                    if (host === "opencode" && state.idle) {
+                        const context = await runner(["context"], {
+                            ...state.options,
+                            signal: controller.signal,
+                        });
+                        if (active === state && !controller.signal.aborted) {
+                            state.ownedLease = Boolean(context.result?.lease);
+                            if (!state.ownedLease) pause(state);
+                        }
                     }
                 }
             } catch (error) {
@@ -256,7 +266,7 @@ export function registerExtension(
         const state = { options };
         active = state;
         await runner(["hook", "session-start"], state.options);
-        if (active === state) renew(state, ctx);
+        if (active === state && host !== "opencode") renew(state, ctx);
     });
     api.on("session_shutdown", async (_event, ctx) => {
         const state = stateFor(ctx);
@@ -269,30 +279,68 @@ export function registerExtension(
         const state = stateFor(ctx);
         if (state) {
             state.aborted = false;
+            state.idle = false;
         }
     });
     api.on("agent_end", async (event, ctx) => {
         const state = stateFor(ctx);
         if (!state) return;
-        let messages = (event.messages || []).map((message, index) => visibleMessage(message, `${state.turn}:${index}`)).filter(Boolean);
-        if (state.turn && turnRegistry.get(state.options.session)?.bridge) {
+        const turn = host === "opencode" ? event.turnId ?? state.turn : state.turn;
+        const prompt = host === "opencode" ? event.prompt ?? state.prompt : state.prompt;
+        let messages = (event.messages || []).map((message, index) => visibleMessage(message, `${turn}:${index}`)).filter(Boolean);
+        if (turn && (host === "opencode" || turnRegistry.get(state.options.session)?.bridge)) {
             const text = messages.filter(message => message.role === "assistant").map(message => message.text).join("");
             messages = messages.filter(message => message.role !== "assistant");
-            if (text) messages.push({id:`${state.turn}:${state.turn}:assistant`,role:"assistant",text});
+            if (text) messages.push({id:`${turn}:${turn}:assistant`,role:"assistant",text});
         }
-        if (state.prompt) {
-            const user = messages.findIndex(message => message.role === "user" && message.text === state.prompt.text);
-            if (user >= 0) messages[user] = state.prompt;
-            else messages.unshift(state.prompt);
+        if (prompt) {
+            const user = messages.findIndex(message => message.role === "user" && message.text === prompt.text);
+            if (user >= 0) messages[user] = prompt;
+            else messages.unshift(prompt);
         }
-        await recordMessages(messages, runner, state.options, undefined, state.turn ? {turn_id:state.turn,source:host} : undefined);
-        state.history = [...(state.history || []), ...messages].slice(-8);
-        const shared = turnRegistry.get(state.options.session);
-        if (shared && shared.id === state.turn) shared.active = false;
         const lastAssistant = event.messages?.findLast(message => message.role === "assistant");
         state.aborted = lastAssistant?.stopReason === "aborted" && event.willContinue !== true;
-        if (host === "omp" && state.aborted) await release(state, "interrupt");
+        try {
+            await recordMessages(messages, runner, state.options, undefined, turn ? {turn_id:turn,source:host} : undefined);
+            state.history = [...(state.history || []), ...messages].slice(-8);
+            const shared = turnRegistry.get(state.options.session);
+            if (shared && shared.id === turn) shared.active = false;
+        } finally {
+            // Native interruption must stop renewal even if transcript storage fails.
+
+            if (["omp", "opencode"].includes(host) && state.aborted) await release(state, "interrupt");
+        }
     });
+    if (host === "opencode") {
+        api.on("agent_restored", async (event, ctx) => {
+            const state = stateFor(ctx);
+            if (!state || !event.turnId) return;
+            state.turn = event.turnId;
+            state.idle = false;
+            state.prompt = undefined;
+            turnRegistry.set(state.options.session, { id: state.turn, active: true });
+            // Restore identity without replaying admission or claiming a Task.
+            // Only an actual current lease authorizes background renewal.
+            const context = await runner(["context"], state.options);
+            state.ownedLease = Boolean(context.result?.lease);
+            if (state.ownedLease) renew(state, ctx);
+            else pause(state);
+            return state.ownedLease;
+        });
+        api.on("lease_owned", (_event, ctx) => Boolean(stateFor(ctx)?.ownedLease));
+        api.on("agent_settled", async (_event, ctx) => {
+            const state = stateFor(ctx);
+            if (!state) return false;
+            state.idle = true;
+            // Heartbeat returns changed tasks only, so an empty heartbeat is not
+            // evidence that a session owns no lease. Read scoped context once.
+            const context = await runner(["context"], state.options);
+            const owned = Boolean(context.result?.lease);
+            state.ownedLease = owned;
+            if (!owned) pause(state);
+            return owned;
+        });
+    }
     if (host === "pi") {
         // agent_end can precede auto-retry/compaction/follow-ups. Only release
         // when Pi reports a terminal settle, never during those continuations.

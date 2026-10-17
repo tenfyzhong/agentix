@@ -2,7 +2,7 @@
 
 Agentix exposes two protocols on the same listener. Local clients make one request per connection. Native host extensions register once and keep a bidirectional connection open. Both use UTF-8 JSON objects delimited by a newline; neither is JSON-RPC 2.0.
 
-The default listener is `unix://~/.local/share/agentix/control.sock`. `[server].endpoint` changes it; Pi/OMP extensions and the Claude plugin use `AGENTIX_CONTROL_ENDPOINT` for the corresponding override. Agentix owns the listener. Pi/OMP extensions connect from the original interactive process; Claude connects through its plugin MCP child. Neither starts a replacement agent process.
+The default listener is `unix://~/.local/share/agentix/control.sock`. `[server].endpoint` changes it; Pi/OMP extensions and the Claude/OpenCode plugins use `AGENTIX_CONTROL_ENDPOINT` for the corresponding override. Agentix owns the listener. Pi/OMP extensions connect from the original interactive process; Claude connects through its plugin MCP child. Neither starts a replacement agent process.
 
 ## Access and framing
 
@@ -56,7 +56,7 @@ agentix client history pi:native-id --limit 20
 agentix client command omp:native-id '{"command":"model","params":null}'
 ```
 
-The registry uses `SessionRef { agent, native_id }`. Public service IDs encode it as `pi:<native-id>`, `omp:<native-id>`, `claude:<native-id>`, or `codex:<native-id>`. Native IDs remain opaque, including any embedded colons. Unqualified IDs are accepted only when ownership is unambiguous. Extension frames and taskix provenance always use the native ID.
+The registry uses `SessionRef { agent, native_id }`. Public service IDs encode it as `pi:<native-id>`, `omp:<native-id>`, `claude:<native-id>`, `opencode:<native-id>`, or `codex:<native-id>`. Native IDs remain opaque, including any embedded colons. Unqualified IDs are accepted only when ownership is unambiguous. Extension frames and taskix provenance always use the native ID.
 
 ## Native registration, version 2
 
@@ -97,8 +97,9 @@ Agentix sends `{"id":"unique-rpc-id","method":"info","params":{}}`. The extensio
 | `queue_resume` | `{}` | `{ "message": "Queue resumed" }`; rejects uncertain delivery |
 | `queue_clear` | `{}` | A message; removes pending/uncertain work, retaining an active delivery if busy |
 | `command` | `name`, optional/nullable `value` | `CommandResult`: `body`, `choices` |
+| `interaction` | `rpc_id`, `response` | `{}`; resolves a pending native request, when supported |
 
-Pi/OMP commands include `status`, `model`, `reasoning`, `rename`, `compact`, `skills`, and `diff`, when their public APIs support them. Choices contain `label` and `value`; send the selected value through the same command. Advertise actual capabilities, using names from `SessionCapability`. Current remote queue capability names are `queue` and `queue_control`. Unknown names do not grant capabilities. Local third-party dialogs remain in the terminal; there is no bridge approval-response interface.
+Pi/OMP commands include `status`, `model`, `reasoning`, `rename`, `compact`, `skills`, and `diff`, when their public APIs support them. Choices contain `label` and `value`; send the selected value through the same command. Advertise actual capabilities, using names from `SessionCapability`. Current remote queue capability names are `queue` and `queue_control`. Unknown names do not grant capabilities. Pi/OMP third-party dialogs retain their terminal handling path. OpenCode exposes structured permission and question requests through the interaction extension described below.
 
 IM `/exit` requests termination through the attached backend's exit capability. Codex submits native `/exit` to its verified original CLI in the configured rmux or tmux, requiring an empty terminal composer. Unsupported backends reject `/exit`. `/detach` only disconnects the IM binding. The binding remains until a confirmed session-exit event.
 
@@ -123,6 +124,8 @@ An event has no RPC ID:
 | `TurnCompleted` | `session_id`, `turn_id`, `status`, nullable `error` |
 | `QueueChanged` | `session_id` |
 | `SessionExited` | `session_id` |
+| `InteractionRequested` | `rpc_id`, `method`, `session_id`, `turn_id`, nullable `item_id`, `kind`, `title`, `detail`, `available_decisions`, `payload`, nullable `auto_resolution_ms` |
+| `InteractionResolved` | `session_id`, `request_id` |
 
 `seq` increases by one per emitted event, beginning after the registration snapshot's sequence. Duplicate/older sequences and foreign instances are ignored. A gap, malformed payload, or foreign session invalidates the connection. Reconnect establishes a fresh metadata baseline; history reconciles missed output. The service also reconciles active bindings if its internal event broadcast lags, invalidating stale interactive actions first.
 
@@ -185,3 +188,93 @@ The engine records the source binding epoch before requesting the switch. It com
 ### Terminal draft preflight
 
 Claude bridges accept `terminal_input` with `clear: null` for inspection or `clear: "confirmed draft"` for conditional clearing. The response is `{ "draft": null }` for an empty input, or `{ "draft": "current text" }` when confirmation is needed. Changed content is returned without clearing. Unsupported or unrecognized terminal layouts fail before prompt delivery. Channel delivery returns no terminal draft. IM action tokens additionally fence the owner, conversation, binding epoch, backend generation and original client identity.
+
+## OpenCode
+
+The `opencode` backend targets OpenCode 2.0.32 or newer, with 2.0.32 as the
+validated baseline. Earlier 2.0 patches and 1.x are rejected; later native API
+changes require compatibility testing. The pinned upstream
+[2.x migration guide](https://github.com/anomalyco/opencode/blob/v2.0.32/services/www/src/docs/content/build/plugins/migrate-v1.mdx)
+describes the incompatible native plugin API. Its TUI plugin registers
+the original PID, a process-scoped client identity, and the current native session
+ID. The separate Taskix server plugin provides routing and tools. The Bridge
+needs no server companion. Both use native `{ id, setup(context) }` exports and
+returned cleanup functions. These plugins do not start a
+replacement TUI or read a developer's OpenCode database directly. IM-created
+terminals launch `--standalone` with the bridge endpoint and state root so their
+native server inherits the environment; existing TUI sessions can also register.
+
+The TUI SDK supplies native step/text/tool, execution, permission and form events.
+Delivered native inbox/user IDs serve as turn IDs in history and Taskix provenance.
+The canonical tagged-message contract generates self-contained package copies,
+retaining bounded ID-only associations. Compaction entries are separate types;
+synthetic part stamps and prompt fingerprints are unnecessary. Identical real
+prompts remain distinct. Admission alone does not activate queued Taskix context:
+native inbox delivery does. One busy execution may promote several user prompts;
+its terminal/idle boundary settles them together. Individual model/tool steps
+do not complete a turn. Native process exit can preserve an unfinished tail for
+resume. A failed assistant step remains active until a native execution terminal
+or idle marker; it is not itself a failed-turn boundary. History follows opaque
+native pagination cursors. A session
+change creates a fresh bridge incarnation; an ordinary resume carries no predecessor
+link. `/new` aborts active work, creates and navigates to a native session, and
+registers that replacement with the previous session ID for the IM handoff.
+
+Capabilities include prompt, streaming history, stop, queue controls, new session,
+status, rename, model, compact, diff and skills. Steering, fork and reasoning
+controls are not advertised. IM model changes call native `session.switchModel`;
+the original TUI can still send its locally selected model on its next prompt.
+
+`InteractionRequested` and `InteractionResolved` extend the existing v2 event
+union without changing registration. Connections that do not emit them retain
+their current behavior. Pending native request IDs belong to the registered
+connection; stale or ambiguous replies fail. OpenCode permission decisions remain
+`once`, `always`, and `reject`, preserving native rule scope. Reject denies the
+requested tool and supplies explicit rejection feedback; the assistant may then
+respond. `/stop` interrupts the whole execution. Question payloads
+preserve multiple questions, each question's `multiple` and `custom` flags, and
+options. IM collects all answers before replying; native resolution retires its
+controls. A rejected question calls native `session.form.cancel` with explicit
+feedback, allowing the assistant to respond; `/stop` interrupts the execution. String and
+multiselect fields map to IM questions, preserving option values and custom-input
+rules. Conditional forms, unsupported typed fields or validation constraints
+require the native terminal; IM offers rejection without discarding semantics.
+
+The sidecar JSONL journal lives under `AGENTIX_OPENCODE_STATE_DIR`, defaulting to
+`~/.local/share/agentix/opencode`, with owner-only permissions. Registration uses
+that root rather than OpenCode's database path. Queue and delivery receipts are
+separate for every native session. An interrupted in-flight receipt becomes
+uncertain on reload; it is never resent automatically. Incomplete final journal
+records are truncated, while complete corrupt records fail explicitly. Sidecar
+writes do not provide a per-record power-loss durability guarantee.
+
+OpenCode metadata/alias caches target 4,096 entries, with active identity pinning.
+The separate part-text cache retains at most 8,192 entries / 8 MiB and evicts old
+entries without pinning active text. History fetches
+at most twenty 200-message pages in a five-second total deadline. A turn that
+cannot be reconstructed within this limit reports `history_unavailable` rather
+than silently returning a complete-looking partial turn. Remote queue
+admission is 128 prompts / 8 MiB and 256 KiB per prompt. The sidecar checkpoints
+after 4,096 delta records or 1 MiB of deltas; hot receipts retain 2,048 entries /
+1 MiB except pinned active work. Older receipts move to hash-addressed disk
+archives and are looked up lazily for exact retry deduplication. Archives grow
+with distinct deliveries; the limits are not a lifetime session quota.
+
+Taskix persists minimal active ownership/context in native plugin storage so
+compaction and process restart do not attribute a reply to a later queued prompt.
+Prompt staging is bounded and does not start a lease timer before delivery.
+
+Bridge history, interaction replay and asynchronous route changes are fenced to
+their originating session incarnation. Foreign-session events are filtered before
+queueing; selected-session tool snapshots omit unused payloads. Selected-session
+event count remains uncapped while a bounded SDK operation is waiting (normally
+five seconds), so retained-cache bounds do not establish a total memory ceiling.
+
+Taskix event dispatch uses at most sixteen outstanding jobs globally and four per
+native session. It retains per-session ordering while allowing different sessions
+to progress concurrently below those limits. At capacity, backpressure pauses
+the shared native event stream. Wrappers with active work,
+owned leases or dispatcher work are not evicted to meet the inactive-session LRU
+limit. Failed activation can retry with the same native identity. Plugin cleanup
+preserves active source/context for native continuation while releasing timers;
+it does not synthesize a completed assistant reply.

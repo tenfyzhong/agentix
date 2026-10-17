@@ -7,6 +7,8 @@ CODEX ?= codex
 PI ?= pi
 OMP ?= omp
 CLAUDE ?= claude
+OPENCODE ?= opencode
+NODE ?= node
 HOSTS ?= codex pi omp claude
 VERSION ?= stable
 FORMULAE ?= agentix taskix
@@ -134,6 +136,7 @@ define check-plugin-hosts
 			pi) command -v "$(PI)" >/dev/null ;; \
 			omp) command -v "$(OMP)" >/dev/null ;; \
 			claude) command -v "$(CLAUDE)" >/dev/null ;; \
+			opencode) command -v "$(OPENCODE)" >/dev/null && command -v "$(NODE)" >/dev/null ;; \
 			*) echo "Unknown plugin host: $$host" >&2; exit 2 ;; \
 		esac || { echo "Missing $$host CLI; install it or adjust HOSTS" >&2; exit 1; }; \
 	done
@@ -144,6 +147,7 @@ remove-plugin:
 	@set -eu; \
 	for host in $(HOSTS); do \
 		case "$$host" in \
+			opencode) $(NODE) scripts/opencode-plugin.mjs remove ;; \
 			codex) \
 				$(CODEX) plugin remove taskix-manager@agentix || true; \
 				$(CODEX) plugin marketplace remove agentix || true ;; \
@@ -166,10 +170,11 @@ remove-plugin:
 plugin:
 	@case "$(SOURCE)" in local|main) ;; *) echo 'SOURCE must be local or main' >&2; exit 2 ;; esac
 	$(check-plugin-hosts)
-	$(MAKE) remove-plugin
+	$(if $(filter-out opencode,$(HOSTS)),$(MAKE) remove-plugin HOSTS="$(filter-out opencode,$(HOSTS))",@:)
 	@set -eu; \
 	for host in $(HOSTS); do \
 		case "$$host" in \
+			opencode) $(NODE) scripts/opencode-plugin.mjs install "$(SOURCE)" ;; \
 			codex) \
 				$(CODEX) plugin marketplace add $(if $(filter main,$(SOURCE)),tenfyzhong/agentix --ref main,./); \
 				$(CODEX) plugin add taskix-manager@agentix ;; \
@@ -203,5 +208,6 @@ help:
 		'  FORMULAE=agentix or FORMULAE=taskix selects one CLI (default: both)' \
 		'make plugin [SOURCE=local|main]  Install plugins for all four hosts (default: main)' \
 		'  HOSTS="codex pi omp claude" selects plugin hosts (default: all four)' \
+		'  HOSTS=opencode installs OpenCode 2.0.32+ server and TUI plugins explicitly' \
 		'make remove-plugin  Remove Agentix plugins for selected hosts' \
 		'make clean    Remove Cargo build artifacts'

@@ -9,12 +9,14 @@ pub enum AgentKind {
     #[serde(alias = "oh-my-pi")]
     Omp,
     Claude,
+    OpenCode,
 }
 impl AgentKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
+            Self::OpenCode => "opencode",
             Self::Codex => "codex",
             Self::Pi => "pi",
             Self::Omp => "omp",
@@ -24,6 +26,7 @@ impl AgentKind {
     pub const fn display_name(self) -> &'static str {
         match self {
             Self::Claude => "Claude Code",
+            Self::OpenCode => "OpenCode",
             Self::Codex => "Codex",
             Self::Pi => "Pi",
             Self::Omp => "OMP",
@@ -55,6 +58,7 @@ impl SessionRef {
         let (kind, native) = id.as_str().split_once(':')?;
         let agent = match kind {
             "claude" => AgentKind::Claude,
+            "opencode" => AgentKind::OpenCode,
             "codex" => AgentKind::Codex,
             "pi" => AgentKind::Pi,
             "omp" | "oh-my-pi" => AgentKind::Omp,

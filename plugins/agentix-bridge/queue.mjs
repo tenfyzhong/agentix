@@ -11,7 +11,10 @@ export class DurableQueue {
     #persist;
     #requests;
     #failures;
-    constructor(saved = {}, persist = () => {}) {
+    #lookup;
+    #receiptBytes = 0;
+    #receiptSizes = new Map();
+    constructor(saved = {}, persist = () => {}, lookup) {
         const state = structuredClone(saved);
         this.#queue = state.queue ?? [];
         this.#inflight = state.inflight ?? null;
@@ -21,20 +24,47 @@ export class DurableQueue {
         this.#requests = new Map(state.requests ?? []);
         this.#failures = new Map(state.failures ?? []);
         this.#persist = persist;
+        this.#lookup = lookup;
+        for (const id of this.#receipts.keys()) this.#measure(id);
     }
     state() {
         return structuredClone({ queue: this.#queue.slice(this.#head), paused: this.#paused, inflight: this.#inflight,
             uncertain: this.#uncertain, receipts: [...this.#receipts], requests: [...this.#requests], failures: [...this.#failures] });
     }
+    #measure(id) {
+        if (!this.#lookup) return;
+        this.#receiptBytes -= this.#receiptSizes.get(id) ?? 0;
+        const size = Buffer.byteLength(JSON.stringify([id, this.#receipts.get(id), this.#requests.get(id)]));
+        this.#receiptSizes.set(id, size);
+        this.#receiptBytes += size;
+    }
+    /** Archive immutable receipts before removing them from the resident working set. */
+    trimReceipts(limit, archive, byteLimit = 1024 * 1024) {
+        if (this.#receipts.size <= limit && this.#receiptBytes <= byteLimit) return;
+        const pinned = new Set(this.#queue.slice(this.#head).map(item => item.id));
+        if (this.#inflight) pinned.add(this.#inflight.id);
+        if (this.#uncertain) pinned.add(this.#uncertain.id);
+        for (const [id, receipt] of this.#receipts) {
+            if (this.#receipts.size <= limit && this.#receiptBytes <= byteLimit) break;
+            if (pinned.has(id)) continue;
+            archive(id, { receipt, request: this.#requests.get(id), failure: this.#failures.get(id) });
+            this.#receipts.delete(id);
+            this.#requests.delete(id);
+            this.#failures.delete(id);
+            this.#receiptBytes -= this.#receiptSizes.get(id) ?? 0;
+            this.#receiptSizes.delete(id);
+        }
+    }
     view() { return structuredClone({ items: this.#queue.slice(this.#head), paused: this.#paused, uncertain: this.#uncertain }); }
     receipt(id, intent) {
-        const original = this.#requests.get(id);
+        const archived = this.#receipts.has(id) ? undefined : this.#lookup?.(id);
+        const original = this.#requests.get(id) ?? archived?.request;
         if (original && intent && (original.method !== intent.method || original.text !== intent.text)) {
             throw failure('invalid_request', 'request_id already belongs to a different request');
         }
-        const rejected = this.#failures.get(id);
+        const rejected = this.#failures.get(id) ?? archived?.failure;
         if (rejected) throw failure(rejected.code, rejected.message);
-        return structuredClone(this.#receipts.get(id));
+        return structuredClone(this.#receipts.get(id) ?? archived?.receipt);
     }
     /** Replay old checkpoints and incremental records before applying crash recovery. */
     static restore(records) {
@@ -66,6 +96,7 @@ export class DurableQueue {
             this.#queue.push(delta.item);
             this.#receipts.set(delta.item.id, delta.item);
             this.#requests.set(delta.item.id, { method: 'queue', text: delta.item.text });
+            this.#measure(delta.item.id);
         } else if (delta.op === 'claim' && this.#queue[this.#head]?.id === delta.id) {
             this.#head++;
             if (this.#head >= 256 && this.#head * 2 >= this.#queue.length) {
@@ -74,6 +105,7 @@ export class DurableQueue {
         } else if (delta.op === 'remember') {
             this.#receipts.set(delta.id, delta.result);
             if (delta.intent) this.#requests.set(delta.id, delta.intent);
+            this.#measure(delta.id);
         } else if (delta.op === 'fail') this.#failures.set(delta.id, delta.error);
         else if (delta.op === 'clear') { this.#queue = []; this.#head = 0; }
         this.#paused = record.paused;
