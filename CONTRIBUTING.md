@@ -194,6 +194,7 @@ with `HOSTS`:
 
 ```sh
 make plugin HOSTS=pi
+make plugin SOURCE=local HOSTS=opencode
 make plugin SOURCE=main HOSTS="codex omp claude"
 make remove-plugin HOSTS="pi omp"
 ```
@@ -204,6 +205,16 @@ make remove-plugin HOSTS="pi omp"
 | Pi | Repository package containing Taskix Manager and Agentix Bridge | `git:github.com/tenfyzhong/agentix@main` |
 | OMP | Taskix Manager and Agentix Bridge | GitHub marketplace using the repository's default branch, currently `main` |
 | Claude Code | Taskix Manager and Agentix Bridge | GitHub marketplace with `@main` |
+| OpenCode (explicit `HOSTS=opencode`) | Taskix Manager server plugin and Agentix Bridge TUI plugin | Repository package from `main` |
+
+OpenCode 2.0.32+ installation is supported through `make plugin HOSTS=opencode
+SOURCE=local` or `SOURCE=main`. This stages dependency-free JavaScript packages
+and configures the Taskix server package in `opencode.json`/`opencode.jsonc` and
+the Bridge TUI package in `cli.json`/`cli.jsonc`, using the native `plugins` key.
+The Make target configures both entrypoints; installing a repository package
+alone does not perform that setup. Earlier 2.0 patches and OpenCode 1.x are not
+supported. The validated host baseline is 2.0.32; later API changes still require
+compatibility testing.
 
 OMP's marketplace CLI does not expose a branch selector. If the repository's
 default branch changes, its remote source handling must be updated accordingly.
@@ -255,7 +266,7 @@ node --test plugins/taskix-manager/tests/*.test.mjs
 python3 -m unittest discover -s scripts/tests -v
 ```
 
-Taskix Manager has no third-party npm dependencies. The taskix integration suite imports the actual Pi/OMP TypeScript entrypoints directly. Node.js 24+ and npm are required for the tests, including offline package fixtures.
+Taskix Manager's hook and Pi/OMP entrypoints use Node built-ins and have no third-party npm dependencies. The OpenCode server entrypoint also uses built-ins and plain JSON Schema, without Zod or a nested npm install. The taskix integration suite imports the actual Pi/OMP TypeScript entrypoints directly. Node.js 24+ and npm are required for the tests, including offline package fixtures.
 
 The optional desktop Obsidian smoke test is ignored by default and requires an explicitly selected open test vault. It creates and removes only its own temporary files and tab. Bring the selected vault window to the foreground before running it. See [task board validation](docs/task-board.md#validation) for the command and the [integration coverage map](docs/integration-coverage.md) for automated boundaries and separate live-system acceptance.
 

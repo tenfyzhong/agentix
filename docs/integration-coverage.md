@@ -10,7 +10,7 @@ Use the pinned Rust 1.95.0 toolchain, Node.js 24+, and npm:
 make check
 ```
 
-This runs formatting, Clippy with warnings denied, workspace tests, and the plugin's Node tests. Taskix Manager has no third-party npm dependencies. For a focused run:
+This runs formatting, Clippy with warnings denied, workspace tests, and the plugin's Node tests. Taskix Manager's hook and Pi/OMP entrypoints have no third-party npm dependencies; the OpenCode server also uses built-ins and plain JSON Schema without Zod. For a focused run:
 
 ```sh
 cargo test -p agentix-task -p taskix
@@ -19,7 +19,7 @@ node --test plugins/taskix-manager/tests/*.test.mjs
 
 Cargo's `plugin_entrypoints_execute_the_compiled_taskix` test runs [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) with the freshly compiled binary. It must not fall back to an installed taskix or the user's database. Set `TASKIX_TEST_HOOK_SHELL=fish` to additionally check hook commands through fish; Linux/macOS CI does this. Windows runs commands through `cmd.exe`.
 
-Plugin installation does not require npm dependency installation. The
+Hook and Pi/OMP plugin installation does not require additional npm dependencies. The
 [cold-install tests](../plugins/taskix-manager/tests/cold-install.test.mjs)
 execute hooks and load helpers and Pi/OMP adapters from directory copies and
 unpacked npm tarballs without `node_modules` or `vendor/`. They assert the exact
@@ -693,3 +693,87 @@ databases and mocked Obsidian APIs; they do not assert live deployment acceptanc
 Milestone Base tests also cover table/Kanban coexistence, table-only open-stage filters and unrestricted status boards,
 four-state column ordering, and upgrading renamed/customized tables without
 duplicating or resetting a saved status board.
+
+## OpenCode
+
+[OpenCode configuration tests](../crates/agentix/tests/opencode.rs) cover named
+backend defaults, home expansion and unsupported configuration fields.
+[Bridge contract tests](../plugins/agentix-bridge/tests/opencode-protocol.test.mjs)
+exercise the v2 interaction payloads. The [TUI runtime fixtures](../plugins/agentix-bridge/tests/opencode.test.mjs)
+cover original-process registration, native IDs, history pagination, streamed
+completion, permission/question replies, queued delivery recovery, session
+replacement and model isolation without provider credentials.
+
+[Taskix server tests](../plugins/taskix-manager/tests/opencode.test.mjs) exercise
+the separate server entrypoint and its per-session Taskix boundary. The
+[real Taskix integration](../plugins/taskix-manager/tests/integration.mjs) additionally
+verifies native executor identity, lease injection, retried tool-call idempotency,
+interruption cleanup and duplicate Bridge/server discussion capture against an
+isolated SQLite database.
+[Installer tests](../plugins/taskix-manager/tests/opencode-install.test.mjs)
+exercise explicit host selection and isolated OpenCode configuration files.
+[Native integration tests](../plugins/agentix-bridge/tests/opencode-native.test.mjs)
+load both installed plugins in an isolated OpenCode 2.0.32 TUI with a local fake
+provider and Taskix CLI fixture. The native run covers original-terminal and
+bridge prompts, streamed and paginated history, stop and queue recovery, permission replay after reconnect,
+questions, model/rename/compact/diff/skills controls, new-session handoff and native
+resume after restart. A simulated provider context-overflow response exercises native
+automatic compaction and verifies the original Bridge/Taskix turn identity. It also invokes the structured Taskix tool through a native
+model tool call and verifies identity/idempotency arguments at the CLI fixture. It uses no
+developer sessions or provider credentials. Run it with:
+
+```sh
+AGENTIX_TEST_AGENTIX=/absolute/path/to/current/target/debug/agentix AGENTIX_TEST_OPENCODE_NATIVE=1 node --test plugins/agentix-bridge/tests/opencode-native.test.mjs
+```
+
+The fixture uses tmux; override its executable with `AGENTIX_TEST_TMUX_BIN` and the
+OpenCode executable with `AGENTIX_TEST_OPENCODE` when needed. The installed plugins
+are dependency-free native 2.x packages. It does not establish live
+Telegram/Feishu/Slack or production provider acceptance.
+Form fixtures separately cover custom-input restrictions, option value mapping,
+unsupported constraints and native-terminal fallback.
+
+The native fixture additionally verifies the actual launch wrapper's endpoint/state
+propagation, same-directory concurrent TUI isolation, wrong-terminal replies, and
+SIGKILL/native-resume recovery of paused uncertain delivery without prompt replay.
+
+The [production closed-loop tests](../crates/agentix/src/opencode_closedloop_tests.rs)
+use the actual IM command/callback path through `WorkspaceManager`, tmux/rmux,
+`BridgeHub`, registry, Engine, installed OpenCode plugins and the real Taskix CLI
+with isolated SQLite. Only the Telegram HTTP and model provider services are
+fixtures. They cover native permissions, multiselect questions and replacement of
+the Engine/Hub/registry/listener/channel during a pending permission: the saved
+attachment is restored, a fresh action succeeds, and an old token is rejected.
+Run the opt-in native cases with installed OpenCode, Taskix and the selected
+multiplexer:
+
+```sh
+cargo test -p agentix --bin agentix opencode_native_telegram_engine_permission_and_multiselect_closed_loop -- --ignored --nocapture
+cargo test -p agentix --bin agentix opencode_native_rmux_telegram_closed_loop -- --ignored --nocapture
+```
+
+OpenCode 2.0.32 is the current validated minimum. The native/headless fixtures use
+the real 2.x `plugins` configuration, tagged history, inbox admissions/delivery,
+forms and plugin setup/cleanup. Taskix regressions cover queued-prompt ownership,
+compaction/restart recovery, bounded failed preadmission staging and per-call
+idempotency outside Code Mode. String/multiselect forms are supported in IM;
+conditional or unsupported typed/validated forms require the terminal.
+
+The installed 2.0.32 headless integration passed locally, covering native TCP
+registration, Taskix schema/skills, attachment history and compaction identity.
+The current production Telegram-to-Engine/BridgeHub/native-TUI/Taskix chain passed
+with both tmux and rmux (two tests, 34.02 seconds), including permission replay and
+multiselect answers. The final installed, uninstrumented native TUI control suite
+also passed with tmux (20.13 seconds) and rmux (20.12 seconds): original-terminal
+isolation, permissions/forms including rejection feedback, queue/crash recovery,
+compaction, history and session replacement. A denied shell tool was not executed,
+and the native session accepted subsequent prompts.
+The default Node suite passed 777 tests with 20 opt-in skips (797 total); the six
+affected Rust crates passed 1,126 tests with 19 ignored across 55 targets. Their
+Clippy checks, formatting and generated native-contract checks also passed.
+Linux ARM64's earlier Node 24.0.0/npm 11.3.0/OpenCode 1.19.3 headless
+run (40.59 seconds) is historical 1.x evidence only. The Linux and Windows native
+2.0.32 headless jobs are wired in CI; local macOS runs do not establish their
+results or a full Linux/Windows IM/TUI chain. No fixture proves live IM account
+delivery, production-provider behavior, complete branch coverage or absence of
+all performance regressions.

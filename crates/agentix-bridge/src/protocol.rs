@@ -89,6 +89,29 @@ impl From<wire::QueueItem> for core::QueuedPrompt {
 impl From<wire::Event> for core::AgentEvent {
     fn from(value: wire::Event) -> Self {
         match value {
+            wire::Event::InteractionRequested(v) => {
+                Self::InteractionRequested(core::InteractionRequest {
+                    rpc_id: serde_json::json!(v.rpc_id),
+                    method: v.method,
+                    session_id: v.session_id,
+                    turn_id: v.turn_id,
+                    item_id: v.item_id,
+                    kind: match v.kind.as_str() {
+                        "user_input" => core::InteractionKind::UserInput,
+                        "file_approval" => core::InteractionKind::FileApproval,
+                        _ => core::InteractionKind::CommandApproval,
+                    },
+                    title: v.title,
+                    detail: v.detail,
+                    available_decisions: v.available_decisions,
+                    payload: v.payload,
+                    auto_resolution_ms: v.auto_resolution_ms,
+                })
+            }
+            wire::Event::InteractionResolved(v) => Self::InteractionResolved {
+                session_id: v.session_id,
+                request_id: v.request_id,
+            },
             wire::Event::SessionSwitchStarted(v) => Self::SessionSwitchStarted {
                 session_id: v.session_id,
                 client_id: v.client_id,

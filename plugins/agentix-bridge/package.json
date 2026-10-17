@@ -1,7 +1,7 @@
 {
   "name": "agentix-bridge",
   "version": "0.2.0",
-  "description": "Connect live Pi, OMP, and Claude Code terminals to Agentix",
+  "description": "Connect live Pi, OMP, Claude Code, and OpenCode terminals to Agentix",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -21,7 +21,8 @@
     "claude/",
     ".claude-plugin/",
     ".mcp.json",
-    "hooks/"
+    "hooks/",
+    "opencode/"
   ],
   "scripts": {
     "test": "node --test tests/*.test.mjs"
@@ -39,5 +40,8 @@
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "esbuild": "0.28.2"
+  },
+  "exports": {
+    "./tui": "./opencode/tui.mjs"
   }
 }

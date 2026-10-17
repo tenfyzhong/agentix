@@ -72,7 +72,7 @@ This is one regression run with in-memory SQLite and local agent/channel fixture
 
 The `agentix::telemetry` tracing target emits structured Engine and control queue statistics every 30 seconds at INFO: pending and active counts, cumulative admitted/rejected/started/retired counts, total and maximum waiting and execution-slot times, and the oldest pending request's age. Slot time runs until worker retirement; DEBUG completion events include the handler's own duration and queue wait. Counter memory is constant. Queue counters reset on service restart. Queue rejection counts describe global-capacity refusals; per-conversation overload refusals appear in the persistent `rejected_inputs` count.
 
-The source maintenance worker also reports `uncertain_inputs` and `rejected_inputs` from runtime SQLite, so those counts survive restart. Codex and Pi/OMP/Claude bridge timeouts emit WARN events with the backend and method; count these events by backend to identify transport timeouts. No prompt body or session history is added to telemetry. Enable detailed events with `[logging].level = "info,agentix::telemetry=debug"`.
+The source maintenance worker also reports `uncertain_inputs` and `rejected_inputs` from runtime SQLite, so those counts survive restart. Codex and Pi/OMP/Claude/OpenCode bridge timeouts emit WARN events with the backend and method; count these events by backend to identify transport timeouts. No prompt body or session history is added to telemetry. Enable detailed events with `[logging].level = "info,agentix::telemetry=debug"`.
 
 Idle queues and queues with all workers occupied skip binding/action snapshot creation. When work can start, routes are resolved afresh, preserving attachment and replacement fences. This removes unnecessary cloning without retaining potentially stale snapshots; no unmeasured CPU speedup is claimed.
 
@@ -316,3 +316,98 @@ cargo test -p agentix-codex --all-features --release --lib observed_snapshot_dif
 The ordinary regression covers full-field equality, absent versus empty values,
 duplicate IDs, repeated new items, filtering native input, and output order on both
 the small-snapshot and indexed paths.
+
+## OpenCode working set and Taskix overhead
+
+The opt-in reusable measurement exercises the production OpenCode bridge state
+and Taskix server adapter with deterministic SDK responses and isolated temporary
+state. It records CPU/time, post-GC RSS, peak parent RSS, retained cache counts,
+SDK calls, filesystem writes and Taskix subprocess counts. It makes no provider
+requests or live IM calls. Reproduce the current limits with:
+
+```sh
+AGENTIX_OPENCODE_PERFORMANCE=1 node --test plugins/agentix-bridge/tests/opencode-performance.test.mjs
+OPENCODE_PERF_TASKIX=/absolute/path/to/taskix OPENCODE_PERF_TASKIX_ONLY=1 AGENTIX_OPENCODE_PERFORMANCE=1 node --test plugins/agentix-bridge/tests/opencode-performance.test.mjs
+```
+
+`OPENCODE_PERF_ROOT` selects the comparison checkout's `plugins` directory.
+The historical OpenCode 1.19.3 paired measurement below predates the 2.x migration.
+It is not a before/after comparison for OpenCode 2.0.32.
+
+The optional actual-CLI scenario uses a fresh HOME, config, document vault and
+SQLite database, with Jev and memory disabled. The recorded binary was a debug
+`taskix 0.0.0-dev+3add9529a43c.dirty`; its 40 native tool callbacks run without
+Jobs or owned leases. Three alternating before/after samples on macOS arm64 with
+Node 26.9.0 give these medians. [Raw samples](benchmarks/opencode-audit.json)
+record each run. The baseline is a frozen copy of the prior uncommitted OpenCode
+implementation, not `main` (which had no OpenCode backend). That frozen checkout
+is not a published commit; the raw samples preserve its measurements, while the
+commands above reproduce the current workload. The paired snapshot predates the final prompt-byte/media-retention
+repair; current harness runs verify the updated limits separately:
+
+| Workload | Before | After | Scope |
+| --- | ---: | ---: | --- |
+| Native tool phase elapsed time | 767.33 ms | 204.06 ms | 40 native tool callbacks plus initialization/bootstrap |
+| Cumulative Taskix child elapsed time | 756.68 ms | 196.41 ms | Time awaiting actual CLI subprocesses |
+| Actual Taskix CLI calls | 47 | 8 | Per-tool heartbeats: 40 to 0; context calls: 1 to 2 |
+| Parent Node CPU | 66.51 ms | 22.40 ms | Excludes Taskix child CPU |
+| Parent peak RSS | 53.25 MiB | 52.09 MiB | CLI-only scenario, separate from cache stress |
+| Queue stress processing time | 874 ms | 1,876 ms | 5,000 receipts and 10,000 state updates |
+| Queue stress CPU | 752 ms | 1,689 ms | Includes filesystem/checkpoint/archive maintenance |
+| Queue stress filesystem writes | 6.77 MB | 18.66 MB | After path creates seven checkpoints |
+| Synthetic sequence peak RSS | 153.14 MiB | 114.83 MiB | Cumulative process peak across stress phases |
+
+The actual tool path reduces subprocess overhead; working-set limits reduce
+retained memory. Checkpointing and hash-addressed receipt archives add write cost and
+make the synthetic queue phase slower. These results do not establish an overall
+zero-regression claim or predict provider/IM latency. Warm filesystem state,
+process startup and workload shape affect the samples; parent CPU/RSS do not
+include child-process resource use.
+
+The retained bridge metadata and aliases are bounded at 4,096 entries, and part
+state at 8,192 parts / 8 MiB of text, with active identities pinned. History reads
+have a twenty-page / 200-message page bound and a five-second total deadline.
+Queue admission is 128 prompts / 8 MiB, with 256 KiB per prompt. Checkpoints
+trigger after 4,096 delta records or 1 MiB of deltas, independently of checkpoint
+size. Hot receipts retain 2,048 entries / 1 MiB except active pinned work; older
+receipts remain in lazy hash-addressed disk archives to preserve exact retry
+deduplication. Archive disk use still grows with distinct deliveries; there is
+no receipt-eviction policy or lifetime session quota.
+
+The Taskix stress fixture opens 100 native sessions and 2,000 tool callbacks.
+Inactive wrappers are LRU-limited to 64 and retain no heartbeat timer. A separate
+owned-lease fixture verifies 20 renewal ticks survive idle events and session
+churn, retaining one renewal timer. Active owned work is not evicted merely to
+meet the idle limit. These bounds constrain idle overhead, while the number and
+size of simultaneously active sessions remain workload-dependent.
+
+OpenCode 2.x uses bounded ID-only turn associations rather than the historical
+prompt-fingerprint and user-part caches. Native plugin storage retains minimal
+active Taskix context/ownership for compacted-history recovery.
+
+### OpenCode 2.0.32 current measurements
+
+[Three current-only full and actual-CLI samples](benchmarks/opencode-2.0.32.json)
+use Node 26.9.0 on macOS ARM64 and fixtures matching the 2.0.32 native API. There
+is no paired 2.x baseline. These measure the plugin Node process and, separately,
+actual Taskix CLI invocation time in isolated state. They do not profile the
+OpenCode TUI or provider, and Node CPU/RSS excludes child processes.
+
+| Workload | Median | Scope |
+| --- | ---: | --- |
+| 12,000 step/text events | 45.21 ms | 66.91 ms parent CPU; bounded metadata/text state |
+| 2,400-tool history | 6.77 ms | 13 SDK fixture calls |
+| 5,000 receipts / 10,000 updates | 1,854.74 ms | 1,652.67 ms CPU; seven checkpoints |
+| Queue logical filesystem writes | 18,656,608 bytes | Synchronous filesystem API bytes, not physical disk I/O |
+| Queue restore | 47.73 ms | Oldest archived delivery still deduplicates |
+| Full synthetic workload peak RSS | 126.14 MiB | Parent Node process |
+| Actual Taskix CLI tool phase | 169.93 ms | 40 callbacks; eight CLI calls, zero per-tool heartbeats, two context calls |
+| Actual Taskix CLI cumulative time | 162.04 ms | Time awaiting CLI children |
+| CLI-only parent CPU / peak RSS | 19.52 ms / 52.36 MiB | Separate Node process |
+
+The 100-session/2,000-tool fixture retains no idle heartbeat timers; inactive
+wrappers remain LRU-bounded. A separate owned-lease fixture renews twenty times
+with one timer and preserves active ownership through session churn. Queue
+archives still grow with distinct deliveries. These results verify current
+bounds and costs without claiming zero regression or predicting IM/provider
+latency.

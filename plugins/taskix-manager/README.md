@@ -8,8 +8,9 @@
 | Claude Code | `.claude-plugin/plugin.json` | Default `hooks/hooks.json` plus manifest `hooks/claude.json` |
 | Pi | `package.json` → `pi.extensions` | `extensions/pi.ts` |
 | OMP | `package.json` → `omp.extensions` | `extensions/omp.ts` |
+| OpenCode 2.0.32+ | Taskix package default export | `opencode/server.mjs` |
 
-Codex and Claude share the common lifecycle hooks. Codex explicitly loads the shared file and a separate Interrupt hook; its manifest replaces default discovery, so each hook loads once. Claude merges default discovery of the shared file with its manifest-selected `hooks/claude.json`, which only adds PostToolUseFailure. Do not repeat the shared file in Claude’s manifest. Pi and OMP each select exactly one extension, so neither loads the other host's entrypoint. Pi declares the shared `skills/` directory in its manifest. OMP installs the marketplace plugin and discovers its shared `skills/` directory. The npm `files` list includes all four host manifests, hooks, extensions, runtime, skills, Taskix Sync and its board styles, and this technical reference.
+Codex and Claude share the common lifecycle hooks. Codex explicitly loads the shared file and a separate Interrupt hook; its manifest replaces default discovery, so each hook loads once. Claude merges default discovery of the shared file with its manifest-selected `hooks/claude.json`, which only adds PostToolUseFailure. Do not repeat the shared file in Claude’s manifest. Pi and OMP each select exactly one extension, so neither loads the other host's entrypoint. Pi declares the shared `skills/` directory in its manifest. OMP installs the marketplace plugin and discovers its shared `skills/` directory. The npm `files` list includes host manifests, hooks, extensions, OpenCode entrypoints, runtime, skills, Taskix Sync and its board styles, and this technical reference.
 
 ## Runtime boundaries
 
@@ -17,7 +18,7 @@ Codex and Claude share the common lifecycle hooks. Codex explicitly loads the sh
 | --- | --- |
 | `jev.mjs` | Provider requests, confidence checks and semantic routing advice |
 | `routing-context.mjs` | Pure, bounded rendering of fallback hints; no I/O or task writes |
-| `runtime.mjs` | Shared Codex/Claude/Pi/OMP orchestration, deadlines, receipts and heartbeats |
+| `runtime.mjs` | Shared Codex/Claude/Pi/OMP/OpenCode orchestration, deadlines, receipts and heartbeats |
 | `taskix-cli.mjs` | Shell-free CLI execution, host identity arguments and error handling |
 | `discussion.mjs` | Discussion selection and its standalone command-line entrypoint |
 
@@ -57,3 +58,24 @@ With the existing `TASKIX_JEV_ENABLED` configuration, prompt routing also classi
 All assessments reuse the existing filtered Job/Task facts and visible conversation excerpts, 30,000-byte request ceiling, eight-second deadline, score gates and current-Job revision check. No raw tool results, source files, lease credentials or reasoning are collected. Explicit terminal Task recovery reads only that named Task and projects the same title/status/reason fields within existing bounds; normal prompt candidate discovery is unchanged. Shared instructions are sent once rather than repeated for every Job. Each assessment makes one provider request; disabled configuration makes no CLI or HTTP calls.
 
 Results contain guarded command arguments, never execute them, and defer to the main Agent on uncertainty, failure, oversize or stale evidence. Actual CLI lease, dependency, Plan and transition guards remain authoritative. `ready` is not `done` and never authorizes self-approval. Prompt metrics include the work-scope question when it can change the selected policy; lifecycle checkpoints have separate request-kind statistics. See [command examples](skills/taskix-manager/references/commands.md#optional-lifecycle-classification).
+
+## OpenCode server boundary
+
+OpenCode 2.0.32+ loads the Taskix Manager package's default export separately
+from the Bridge package's `./tui` export. Both use native `{ id, setup(context) }`
+plugins. Taskix registers prompt/context hooks, a plain JSON Schema tool and an
+abortable native event subscription. The tool is registered outside Code Mode
+so each invocation keeps its own native call ID for idempotency.
+
+Prompt preparation only stages context. A queued prompt becomes active on native
+inbox delivery; admitting a later prompt does not replace the running turn's
+Taskix context. Discussion provenance uses the delivered native inbox/user ID.
+Minimal active ownership/context state is saved in native plugin storage for
+restart and compacted-history recovery. Cleanup aborts event consumption and
+stops lease timers. Native execution terminal events settle promoted turns;
+individual model/tool steps do not.
+
+Use `make plugin HOSTS=opencode SOURCE=local` or `SOURCE=main`. It configures both
+packages without third-party npm dependencies or Zod. Earlier 2.0 patches and
+OpenCode 1.x are unsupported; 2.0.32 is the validated baseline.
+See the [OpenCode guide](https://github.com/tenfyzhong/agentix/wiki/OpenCode) for installation.

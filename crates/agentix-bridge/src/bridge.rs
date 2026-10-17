@@ -38,6 +38,7 @@ pub(super) struct Connection {
     session: SessionId,
     snapshot: Arc<StdMutex<wire::SessionInfo>>,
     pub(super) online: Arc<AtomicBool>,
+    interactions: Arc<StdMutex<HashSet<String>>>,
     reader_task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Connection {
@@ -60,7 +61,9 @@ impl Connection {
         let snapshot = Arc::new(StdMutex::new(record.snapshot.clone()));
         let pending = Arc::new(StdMutex::new(PendingResponses::new()));
         let online = Arc::new(AtomicBool::new(true));
+        let interactions = Arc::new(StdMutex::new(HashSet::new()));
         let task = {
+            let interactions = interactions.clone();
             let pending = pending.clone();
             let online = online.clone();
             let instance = instance.clone();
@@ -95,6 +98,17 @@ impl Connection {
                             break;
                         }
                         last_seq = frame.seq;
+                        match &event {
+                            AgentEvent::InteractionRequested(request) => {
+                                if let Some(id) = request.rpc_id.as_str() {
+                                    interactions.lock().unwrap().insert(id.to_owned());
+                                }
+                            }
+                            AgentEvent::InteractionResolved { request_id, .. } => {
+                                interactions.lock().unwrap().remove(request_id);
+                            }
+                            _ => {}
+                        }
                         let _ = events.send(event);
                     }
                 }
@@ -119,6 +133,7 @@ impl Connection {
             pending,
             snapshot,
             online,
+            interactions,
             reader_task: task,
         })
     }
@@ -309,6 +324,7 @@ impl AgentAdapter for BridgeAdapter {
     fn display_name(&self) -> &'static str {
         match self.flavor {
             BridgeKind::Claude => "Claude Code",
+            BridgeKind::OpenCode => "OpenCode",
             BridgeKind::Codex => "Codex",
             BridgeKind::Pi => "Pi",
             BridgeKind::Omp => "OMP",
@@ -506,8 +522,33 @@ impl AgentAdapter for BridgeAdapter {
     async fn interrupt(&self, session: &SessionId, _turn: &str) -> Result<(), AgentError> {
         self.request(session, "stop", json!({})).await.map(|_| ())
     }
-    async fn resolve_interaction(&self, _decision: InteractionDecision) -> Result<(), AgentError> {
-        Err(rejected("terminal dialogs must be answered locally"))
+    async fn resolve_interaction(&self, decision: InteractionDecision) -> Result<(), AgentError> {
+        let id = decision
+            .rpc_id
+            .as_str()
+            .ok_or_else(|| rejected("invalid interaction ID"))?;
+        let connections = self.server.connections(self.flavor).await;
+        let mut matches = connections
+            .iter()
+            .filter(|connection| connection.interactions.lock().unwrap().contains(id));
+        let connection = matches
+            .next()
+            .ok_or_else(|| rejected("interaction is no longer pending"))?;
+        if matches.next().is_some() {
+            return Err(rejected("interaction ID is ambiguous"));
+        }
+        // Claim before awaiting the host: duplicate IM actions can arrive while
+        // its response is pending, and a dispatched reply must never be replayed.
+        if !connection.interactions.lock().unwrap().remove(id) {
+            return Err(rejected("interaction is no longer pending"));
+        }
+        connection
+            .request(
+                "interaction",
+                json!({"rpc_id": id, "response": decision.response}),
+            )
+            .await?;
+        Ok(())
     }
 }
 

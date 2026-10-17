@@ -162,6 +162,13 @@ pub use agentix_core::ChannelKind as ImChannel;
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum AgentConfig {
+    #[serde(rename = "opencode")]
+    OpenCode {
+        #[serde(default = "default_opencode_command")]
+        command: PathBuf,
+        #[serde(default = "default_opencode_state_dir")]
+        state_dir: PathBuf,
+    },
     Claude {
         #[serde(default = "default_claude_command")]
         command: PathBuf,
@@ -274,11 +281,19 @@ impl std::fmt::Debug for SlackConfig {
     }
 }
 
+fn default_opencode_command() -> PathBuf {
+    PathBuf::from("opencode")
+}
+fn default_opencode_state_dir() -> PathBuf {
+    PathBuf::from("~/.local/share/agentix/opencode")
+}
+
 impl AgentConfig {
     #[must_use]
     pub const fn kind(&self) -> agentix_core::AgentKind {
         match self {
             Self::Claude { .. } => agentix_core::AgentKind::Claude,
+            Self::OpenCode { .. } => agentix_core::AgentKind::OpenCode,
             Self::Codex { .. } => agentix_core::AgentKind::Codex,
             Self::Pi { .. } => agentix_core::AgentKind::Pi,
             Self::OhMyPi { .. } => agentix_core::AgentKind::Omp,
@@ -438,7 +453,11 @@ impl Config {
 
         for agent in self.agent.iter_mut().chain(self.agents.iter_mut()) {
             match agent {
-                AgentConfig::Claude {
+                AgentConfig::OpenCode {
+                    command,
+                    state_dir: session_dir,
+                }
+                | AgentConfig::Claude {
                     command,
                     session_dir,
                 } => {

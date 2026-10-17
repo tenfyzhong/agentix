@@ -7,6 +7,20 @@ use super::{
     interaction_key, json,
 };
 
+impl InputProgress {
+    fn from_request(request: &InteractionRequest) -> Self {
+        let questions = input_questions(request);
+        Self {
+            answers: vec![None; questions.len()],
+            reject_rpc_id: (request.payload.get("rejectable").and_then(Value::as_bool)
+                == Some(true))
+            .then(|| request.rpc_id.clone()),
+            questions,
+            current: 0,
+        }
+    }
+}
+
 impl Engine {
     pub(super) async fn clear_reply_inputs(&self, conversation: &ConversationRef) {
         self.cancel_directory_draft(conversation).await;
@@ -151,12 +165,7 @@ impl Engine {
         let mut actions = Vec::new();
         let action_group = Uuid::new_v4().simple().to_string();
         let input = if request.kind == InteractionKind::UserInput {
-            let questions = input_questions(request);
-            let progress = InputProgress {
-                answers: vec![None; questions.len()],
-                questions,
-                current: 0,
-            };
+            let progress = InputProgress::from_request(request);
             if delivery == DeliveryClass::Live {
                 actions = self
                     .input_actions(
@@ -383,6 +392,7 @@ impl Engine {
                     .to_owned();
                 let pending = self.interactions.pending.lock().await.remove(&interaction);
                 self.agent.resolve_interaction(decision).await?;
+                self.finish_queued_question(&interaction).await?;
                 if let Some(pending) = pending {
                     self.show_local_approval_resolution(conversation, pending, &selected)
                         .await?;
@@ -397,6 +407,10 @@ impl Engine {
                 answer,
             } => {
                 self.answer_input(conversation, owner_id, &interaction, &answer)
+                    .await?;
+            }
+            UiAction::SubmitInput(interaction) => {
+                self.answer_input(conversation, owner_id, &interaction, "")
                     .await?;
             }
             UiAction::BeginCustomInput(interaction) => {
@@ -493,29 +507,76 @@ impl Engine {
                 .await;
             actions.push(ActionButton {
                 disabled: false,
-                label: option.label.clone(),
+                label: if progress.answers[progress.current]
+                    .as_ref()
+                    .is_some_and(|selected| selected.contains(&option.label))
+                {
+                    format!("✓ {}", option.label)
+                } else {
+                    option.label.clone()
+                },
                 token,
                 style: ActionStyle::Primary,
             });
         }
-        let token = self
-            .issue_action(
-                conversation,
-                owner_id,
-                group_id,
-                UiAction::BeginCustomInput(interaction.clone()),
-            )
-            .await;
-        actions.push(ActionButton {
-            disabled: false,
-            label: if question.options.is_empty() {
-                "Answer…".into()
-            } else {
-                "Other…".into()
-            },
-            token,
-            style: ActionStyle::Default,
-        });
+        if question.custom {
+            let token = self
+                .issue_action(
+                    conversation,
+                    owner_id,
+                    group_id,
+                    UiAction::BeginCustomInput(interaction.clone()),
+                )
+                .await;
+            actions.push(ActionButton {
+                disabled: false,
+                label: if question.options.is_empty() {
+                    "Answer…".into()
+                } else {
+                    "Other…".into()
+                },
+                token,
+                style: ActionStyle::Default,
+            });
+        }
+        if question.multiple {
+            let token = self
+                .issue_action(
+                    conversation,
+                    owner_id,
+                    group_id,
+                    UiAction::SubmitInput(interaction.clone()),
+                )
+                .await;
+            actions.push(ActionButton {
+                disabled: false,
+                label: "Submit".into(),
+                token,
+                style: ActionStyle::Primary,
+            });
+        }
+        if let Some(rpc_id) = &progress.reject_rpc_id {
+            let token = self
+                .issue_action(
+                    conversation,
+                    owner_id,
+                    group_id,
+                    UiAction::Resolve {
+                        interaction: interaction.clone(),
+                        decision: InteractionDecision {
+                            rpc_id: rpc_id.clone(),
+                            response: json!({"decision":"reject"}),
+                        },
+                    },
+                )
+                .await;
+            actions.push(ActionButton {
+                disabled: false,
+                label: "Reject".into(),
+                token,
+                style: ActionStyle::Default,
+            });
+        }
         actions
     }
 
@@ -598,8 +659,22 @@ impl Engine {
         let Some(slot) = progress.answers.get_mut(progress.current) else {
             return Err(EngineError::InvalidAction);
         };
-        *slot = Some(answer.to_owned());
-        progress.current += 1;
+        let multiple = progress.questions[progress.current].multiple;
+        if multiple && !answer.is_empty() {
+            let selected = slot.get_or_insert_with(Vec::new);
+            if let Some(index) = selected.iter().position(|value| value == answer) {
+                selected.remove(index);
+            } else {
+                selected.push(answer.to_owned());
+            }
+        } else {
+            if multiple {
+                slot.get_or_insert_with(Vec::new);
+            } else {
+                *slot = Some(vec![answer.to_owned()]);
+            }
+            progress.current += 1;
+        }
         if progress.current < progress.questions.len() {
             let action_group = Uuid::new_v4().simple().to_string();
             pending.view.body = input_progress_body(progress, false);

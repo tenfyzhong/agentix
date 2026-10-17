@@ -75,9 +75,9 @@ Supply `--prompt` with the original user request, including its language and lin
 
 Git and gh delivery requests such as `git commit`, `git push`, `gh pr create`, and `gh pr edit` also supplement a pending Job when they concern its changes, even if the prompt only says "commit" or "create a PR". Resolve that ownership before creating a Job or choosing a review policy. Use the conversation and repository/worktree evidence to confirm the delivery; if `context.previous_job` is absent, inspect the current Project with `job list --pending-review` rather than assuming the request is independent. Tool names alone do not establish relevance. For a match, run `job followup` before delivery work, then add new Tasks to the same ACTIVE Job with the old Tasks as dependencies. Preserve the whole Job's review policy: a Git-only supplement to an implementation Job still requires review. Only independent operational Jobs use `none`; unrelated requests and requests after COMPLETED get new Jobs.
 
-Replace `HOST` with `codex`, `claude`, `pi`, or `omp`, and use the actual host session ID. Creation records the Job creator and initial Task provenance in managed `agent` and `session_id` frontmatter; claiming replaces the Task provenance with its latest owner.
+Replace `HOST` with `codex`, `claude`, `pi`, `omp`, or `opencode`, and use the actual host session ID. Creation records the Job creator and initial Task provenance in managed `agent` and `session_id` frontmatter; claiming replaces the Task provenance with its latest owner.
 
-The examples include alternative state transitions: after retry/reopen/release, claim again before publishing a Plan or starting. The Pi/OMP taskix tool accepts `{ "args": ["task", "start", "task_ID"] }` or `done`; its adapter supplies session, executor, current lease token, and write idempotency key. Full Task IDs and unambiguous Task prefixes support this automatic token attachment. The adapter resolves prefixes before checking ownership; ambiguous identifiers are rejected. Job/Project deletion through this tool also receives a write idempotency key, so retrying the same host call returns the original result. For shell calls, supply identity and any retry key explicitly. New claims return a new token, including after session resume. Start preserves that token.
+The examples include alternative state transitions: after retry/reopen/release, claim again before publishing a Plan or starting. The Pi/OMP/OpenCode taskix tool accepts `{ "args": ["task", "start", "task_ID"] }` or `done`; its adapter supplies session, executor, current lease token, and write idempotency key. Full Task IDs and unambiguous Task prefixes support this automatic token attachment. The adapter resolves prefixes before checking ownership; ambiguous identifiers are rejected. Job/Project deletion through this tool also receives a write idempotency key, so retrying the same host call returns the original result. For shell calls, supply identity and any retry key explicitly. New claims return a new token, including after session resume. Start preserves that token.
 
 Register the known task graph before implementation. In the example, replace `task_FIRST` and `task_SECOND` with the IDs returned by the two adds; `task depend task_SECOND task_FIRST` makes the second Task wait for the first. Each add creates a note immediately. Dependency commands update its managed `dependencies` frontmatter list; no Plan is published during this decomposition step.
 
@@ -180,7 +180,7 @@ Before creation/follow-up, call the packaged read-only helper using the absolute
 node /absolute/plugin/path/discussion.mjs HOST_SESSION < selection-request.json
 ```
 
-The JSON request is `{"current_turn":"TURN_ID","target":{"title":"Final title","goal":"Acceptance goal","prompt":"Verbatim current request"}}`. Add `target.job_id` for an existing Job. Pi/OMP's structured `taskix` tool also accepts `args: ["conversation", "classify", "{...target JSON...}"]` and supplies the current turn ID. No `conversation classify` subcommand exists in the standalone CLI.
+The JSON request is `{"current_turn":"TURN_ID","target":{"title":"Final title","goal":"Acceptance goal","prompt":"Verbatim current request"}}`. Add `target.job_id` for an existing Job. Pi/OMP/OpenCode's structured `taskix` tool also accepts `args: ["conversation", "classify", "{...target JSON...}"]` and supplies the current turn ID. No `conversation classify` subcommand exists in the standalone CLI.
 
 For `status: selected`, append the returned `args` unchanged to creation/follow-up or ACTIVE attachment as appropriate. For `status: agent`, read all relevant original candidates and decide locally; uncertainty never means attaching every turn. Creation and follow-up accept repeated `--conversation-turn TURN_ID` and `--conversation-revision REV`. ACTIVE attachment uses repeated `--turn TURN_ID`. Existing Job writes also support `--expect-revision`. The helper's `--conversation-target` guards a new delivery's title, goal, and current prompt. Candidate/target conflicts reject the whole write; refresh and reassess. Always include the current implementation turn along with related preceding discussion. A new Prompt is taken from the earliest selected user input; follow-up keeps the original Prompt.
 
@@ -224,7 +224,7 @@ are best-effort, so reports describe stored observations, not all host prompts.
 
 ## Optional lifecycle classification
 
-The shared plugin helper supports all four hosts and performs no lifecycle writes:
+The shared plugin helper supports Codex, Claude Code, Pi, OMP, and OpenCode and performs no lifecycle writes:
 
 ```sh
 node /absolute/plugin/path/lifecycle.mjs HOST_SESSION < assessment.json
@@ -239,7 +239,7 @@ node /absolute/plugin/path/lifecycle.mjs HOST_SESSION < assessment.json
 }
 ```
 
-Use `kind: "outcome"` and an owned `task_id` for execution result assessment, or `kind: "review_policy"` for changed Job scope. An explicit `task_id` also scopes recovery, including terminal Tasks omitted from the normal candidate list. Without one, recovery selects among the existing unfinished candidates. Pi/OMP accept `args: ["lifecycle", "classify", JSON.stringify(input)]`; the standalone CLI has no `lifecycle classify` subcommand.
+Use `kind: "outcome"` and an owned `task_id` for execution result assessment, or `kind: "review_policy"` for changed Job scope. An explicit `task_id` also scopes recovery, including terminal Tasks omitted from the normal candidate list. Without one, recovery selects among the existing unfinished candidates. Pi/OMP/OpenCode accept `args: ["lifecycle", "classify", JSON.stringify(input)]`; the standalone CLI has no `lifecycle classify` subcommand.
 
 On `status: selected`, use `args` without removing revision guards and supply normal ownership credentials plus listed `required_arguments`. A `ready` result requires actual acceptance verification and contains no done command. A `status: agent` result uses the existing main-Agent workflow. The same Jev enablement, endpoint, threshold, context limits and deadline apply. Assessments are separate from prompt-routing metrics.
 
@@ -247,7 +247,7 @@ On `status: selected`, use `args` without removing revision guards and supply no
 
 Before the final Task makes an ACTIVE Job ready, call the shared helper with
 `{"kind":"completion","job_id":"JOB_ID","task_id":"TASK_ID","prompt":"verbatim current request","history":[]}`.
-Use the same shell entry point or Pi/OMP `lifecycle classify` operation above.
+Use the same shell entry point or Pi/OMP/OpenCode `lifecycle classify` operation above.
 Jev returns `pending_review` (`review_policy: required`) or `completed`
 (`review_policy: none`) based on the entire Job. Execute the returned `task done TASK_ID --review-policy required|none
 --expect-job-revision JOB_REV --expect-revision TASK_REV` arguments with the normal

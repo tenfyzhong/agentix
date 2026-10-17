@@ -1,6 +1,6 @@
 # Session Lifecycle and Message Flows
 
-This document describes the implemented Codex, Pi, OMP, and Claude Code paths in
+This document describes the implemented Codex, Pi, OMP, Claude Code, and OpenCode paths in
 this source tree. The diagrams distinguish native session lifetime, IM attachment,
 and turn lifetime: completing a turn does not exit its session, and detaching an
 IM conversation does not terminate the native process.
@@ -13,7 +13,7 @@ See [Architecture](architecture.md) for component boundaries and
 Engine routes backend-qualified session IDs to the appropriate adapter.
 SessionService manages saved bindings and recovery; TurnCoordinator merges live
 and historical content into turn buffers. Backend capabilities determine available
-commands and actions. A running Codex, Pi, or OMP turn can expose Stop; Claude does
+commands and actions. A running Codex, Pi, OMP, or OpenCode turn can expose Stop; Claude does
 not advertise remote stop. Reasoning visibility follows the configured display
 policy and the content actually supplied by the backend.
 
@@ -298,7 +298,7 @@ render scheduling, and channel delivery add their own latency.
 
 ## Shared native Bridge lifecycle
 
-Pi and OMP load an extension in the original process. Claude loads an MCP child
+Pi, OMP, and OpenCode load an extension in the original process. OpenCode uses delivered inbox IDs and tagged history for turn identity; its Taskix server plugin is separate. Claude loads an MCP child
 that uses the same Bridge transport. All connect outward to Agentix's local
 control endpoint. BridgeHub is the authoritative live connection registry;
 listing sessions does not scan all native history files. A second live instance
@@ -462,19 +462,68 @@ it does not advertise remote Stop, steer, or a FIFO submission queue. A pending
 receipt guards concurrent prompt delivery. Acknowledgment loss can produce an
 uncertain result, which must not be automatically resent.
 
+## OpenCode
+
+OpenCode 2.0.32+ registers the original TUI process and native session through
+BridgeTransport. A process-scoped client identity survives session replacement;
+each session incarnation has a fresh instance. Its 250 ms route check reads local
+reactive state only. SDK history reads happen on attachment/reconciliation or
+explicit history requests, and completed-turn finalization, rather than periodic
+idle-history polling.
+
+```mermaid
+flowchart TD
+    TUI["TUI ready / active native route"] --> REGISTER["Register original PID, client and session"]
+    REGISTER --> PROMPT["Terminal or IM native prompt"]
+    PROMPT --> ID["Delivered native inbox/user identity"]
+    ID --> STREAM["Native step / text / tool events"]
+    STREAM --> ASK["Permission or question request"]
+    ASK --> ANSWER["IM reply or original TUI resolution"]
+    ANSWER --> STREAM
+    STREAM --> IDLE["Native execution terminal / idle marker"]
+    IDLE --> QUEUE["Finish receipt; deliver next queued prompt if unpaused"]
+    REGISTER --> NEW["IM /new: abort, create, navigate"]
+    NEW --> REPLACE["Register replacement with predecessor and same client"]
+    REGISTER --> LOSS["Transport or process loss: Offline"]
+    LOSS --> RECOVER["Reconnect / native resume: reconcile history and pending requests"]
+    RECOVER --> REGISTER
+```
+
+Permissions preserve native `once`, `always`, and `reject` decisions. Questions
+preserve multiple selection and explicit custom-input restrictions; answering
+locally resolves the IM controls. Service restart invalidates old action tokens
+and replays still-pending requests through a newly registered bridge. `/new`
+links the replacement only for that client; ordinary resume carries no handoff.
+
+Native compaction entries are separate tagged messages and do not create user
+turns. Queue admission does not activate a Taskix discussion: native inbox
+delivery does. Real user IDs remain distinct even for identical text or attachments.
+One busy execution may include several promoted or steered users; its terminal
+event settles them together. Model/tool step completion is not a turn boundary.
+An unfinished execution can survive native process exit for resume. Minimal
+Taskix ownership/context persists in native plugin storage when compaction omits
+old users from the model context.
+
+The sidecar saves queue/delivery state independently of OpenCode storage. A
+process killed during delivery resumes with a paused, uncertain receipt and
+retains queued work. It does not automatically submit the uncertain prompt again;
+explicit queue inspection/clearing is required. Disk receipt archives retain
+exact retry deduplication while in-memory caches and delta journals are bounded.
+See [host protocol](host-protocol.md#opencode) for limits and recovery details.
+
 ## Timing and behavior comparison
 
-| Mechanism | Codex Proxy | Pi | OMP | Claude |
-| --- | --- | --- | --- | --- |
-| Live discovery source | Successful native RPC ownership | Bridge registration | Bridge registration | Hook identity plus Bridge registration |
-| Ordinary message updates | Direct events or targeted history reads | Native text/tool events | Native text/tool events | Prompt/completion hooks; optional Channel reply |
-| Completion boundary | App-server turn completion | `agent_settled` | Terminal `agent_end` | `Stop`, `StopFailure`, or `SessionEnd` |
-| Idle history polling | None | None | None | No periodic transcript read; mailbox fallback scan remains |
-| Content read spacing | 100ms for ordinary observer reads | Not applicable | Not applicable | Not applicable |
-| Bridge reconnect retry | Not applicable to Codex transport | 1 second | 1 second | 1 second while active |
-| Native exit signal | Last ownership removed after closure | `session_shutdown` | `session_shutdown` | `SessionEnd`; abrupt transport loss reports Offline |
-| Remote Stop | Supported | Supported | Supported | Not advertised |
-| Remote new-session operation | Native/session-switch orchestration | Registered command calling `newSession` | Restricted terminal `/new` | Restricted terminal `/clear` when supported |
+| Mechanism | Codex Proxy | Pi | OMP | Claude | OpenCode |
+| --- | --- | --- | --- | --- | --- |
+| Live discovery source | Successful native RPC ownership | Bridge registration | Bridge registration | Hook identity plus Bridge registration | TUI route plus Bridge registration |
+| Ordinary message updates | Direct events or targeted history reads | Native text/tool events | Native text/tool events | Prompt/completion hooks; optional Channel reply | Native message/part/tool events |
+| Completion boundary | App-server turn completion | `agent_settled` | Terminal `agent_end` | `Stop`, `StopFailure`, or `SessionEnd` | Native session idle; compaction replay remains one user turn |
+| Idle history polling | None | None | None | No periodic transcript read; mailbox fallback scan remains | None; local route check every 250 ms |
+| Content read spacing | 100ms for ordinary observer reads | Not applicable | Not applicable | Not applicable | On demand; bounded paged SDK reads |
+| Bridge reconnect retry | Not applicable to Codex transport | 1 second | 1 second | 1 second while active | 1 second while loaded |
+| Native exit signal | Last ownership removed after closure | `session_shutdown` | `session_shutdown` | `SessionEnd`; abrupt transport loss reports Offline | Native deletion; abrupt process loss reports Offline |
+| Remote Stop | Supported | Supported | Supported | Not advertised | Supported |
+| Remote new-session operation | Native/session-switch orchestration | Registered command calling `newSession` | Restricted terminal `/new` | Restricted terminal `/clear` when supported | SDK abort/create/route navigation |
 
 Shared explicit IM session switches have a 30-second replacement startup deadline,
 excluding a pending Codex checkout decision in IM. Codex native
@@ -495,6 +544,10 @@ operations, not total user-visible latency.
   [host differences](../plugins/agentix-bridge/host.mjs),
   [native session projection](../plugins/agentix-bridge/session.mjs),
   [terminal new-session control](../plugins/agentix-bridge/new-session.mjs).
+- OpenCode: [TUI runtime](../plugins/agentix-bridge/opencode/runtime.mjs),
+  [native turn contract](../plugins/shared/opencode-turns.mjs),
+  [Taskix server](../plugins/taskix-manager/opencode/runtime.mjs), and
+  [setup and controls](https://github.com/tenfyzhong/agentix/wiki/OpenCode).
 - Claude: [MCP server lifecycle](../plugins/agentix-bridge/claude/server.mjs),
   [hook mailbox](../plugins/agentix-bridge/claude/mailbox.mjs),
   [session and receipts](../plugins/agentix-bridge/claude/session.mjs),

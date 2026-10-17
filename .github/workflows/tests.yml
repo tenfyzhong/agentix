@@ -53,6 +53,59 @@ jobs:
           # Avoid starving the bounded metrics worker during concurrent suite startup.
           node --test --test-concurrency=1 plugins/taskix-manager/tests/*.test.mjs plugins/agentix-bridge/tests/*.test.mjs
 
+  native-opencode:
+    name: Native OpenCode TCP host (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install protobuf compiler (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          sudo apt-get update
+          sudo apt-get install --yes protobuf-compiler
+      - name: Install protobuf compiler (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Install protobuf compiler (Windows)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-protoc-windows
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-opencode-${{ matrix.os }}
+      - name: Build current native launcher and task host
+        run: cargo build --locked -p agentix -p taskix
+      - name: Install pinned OpenCode and select exact binaries
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/opencode" --no-audit --no-fund @opencode/cli@2.0.32
+          node --input-type=module -e '
+            import { appendFileSync } from "node:fs";
+            import { join } from "node:path";
+            import { execFileSync } from "node:child_process";
+            const binary = join(process.env.RUNNER_TEMP, "opencode/node_modules/@opencode/cli/bin/opencode.exe");
+            if (execFileSync(binary, ["--version"], {encoding:"utf8"}).trim() !== "opencode v2.0.32") throw new Error("Unexpected OpenCode version");
+            const suffix = process.platform === "win32" ? ".exe" : "";
+            appendFileSync(process.env.GITHUB_ENV, `AGENTIX_TEST_OPENCODE=${binary}\nAGENTIX_TEST_AGENTIX=${join(process.cwd(), "target/debug/agentix" + suffix)}\nAGENTIX_TEST_TASKIX=${join(process.cwd(), "target/debug/taskix" + suffix)}\n`);
+          '
+      - name: Test installed OpenCode server, skills and tool schema over TCP
+        env:
+          AGENTIX_TEST_OPENCODE_NATIVE: '1'
+        run: node --test --test-name-pattern=native_opencode plugins/taskix-manager/tests/opencode-install.test.mjs
+
   bottles:
     name: Bottle packaging (${{ matrix.os }})
     strategy:
