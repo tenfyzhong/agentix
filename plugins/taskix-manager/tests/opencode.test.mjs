@@ -352,7 +352,7 @@ test('opencode2 registers the bundled skill with its real reference base path', 
         cleanup = await f.start();
     const skill = f.skills.get('taskix-manager');
     assert.ok(skill);
-    assert.match(skill.path, /skills\/taskix-manager\/SKILL\.md$/);
+    assert.match(skill.path, /skills[\\/]taskix-manager[\\/]SKILL\.md$/);
     assert.match(skill.content, /references\/commands\.md/);
     assert.match(skill.description, /Manage Taskix/);
     await cleanup();
