@@ -17,16 +17,25 @@ const config =
     process.env.OPENCODE_CONFIG_DIR ||
     join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode");
 const destination = join(config, ".agentix-plugin");
-const remotePackages = {
-    server: "github:tenfyzhong/agentix#main::path:plugins/taskix-manager",
-    tui: "github:tenfyzhong/agentix#main::path:plugins/agentix-bridge",
-};
-const [action, source = "main"] = process.argv.slice(2);
+const [action, mode = "main", branch] = process.argv.slice(2);
+// The local path remains available to isolated native tests, not make plugin.
+const source = mode === "--remote" ? "remote" : mode;
+const ref = mode === "--remote" ? branch : "main";
 if (
     !["install", "remove"].includes(action) ||
-    !["local", "main"].includes(source)
+    !["local", "main", "--remote"].includes(mode) ||
+    !ref || /[\s#:]|^--/.test(ref)
 )
-    throw new Error("Usage: opencode-plugin.mjs install [local|main] | remove");
+    throw new Error(
+        "Usage: opencode-plugin.mjs install --remote BRANCH | install [local|main] | remove",
+    );
+const remotePackages = {
+    server: `github:tenfyzhong/agentix#${ref}::path:plugins/taskix-manager`,
+    tui: `github:tenfyzhong/agentix#${ref}::path:plugins/agentix-bridge`,
+};
+function ownedRemote(ref) {
+    return /^github:tenfyzhong\/agentix#[^:]+::path:plugins\/(taskix-manager|agentix-bridge)$/.test(ref);
+}
 
 // Tokenize JSONC so edits retain comments, whitespace and unrelated values exactly.
 function parse(text, key) {
@@ -91,7 +100,7 @@ function edit(text, key, entry) {
         return (
             typeof ref !== "string" ||
             (!ref.startsWith(pathToFileURL(destination).href + "/") &&
-                !Object.values(remotePackages).includes(ref))
+                !ownedRemote(ref))
         );
     });
     if (!entry && plugins.length === before.length) return text;
@@ -141,7 +150,7 @@ const updates = [
         "cli",
         "plugins",
         action === "install"
-            ? source === "main"
+            ? source !== "local"
                 ? remotePackages.tui
                 : pathToFileURL(join(destination, "plugins/agentix-bridge")).href
             : undefined,
@@ -150,7 +159,7 @@ const updates = [
         "opencode",
         "plugins",
         action === "install"
-            ? source === "main"
+            ? source !== "local"
                 ? remotePackages.server
                 : pathToFileURL(join(destination, "plugins/taskix-manager")).href
             : undefined,
@@ -178,7 +187,7 @@ try {
         }
         await writeFile(update.staged, update.text);
     }
-    if (action === "install" && source === "main") {
+    if (action === "install" && source !== "local") {
         // Native installation validates and caches both packages before live config
         // changes. Its temporary config must not inherit project/custom config.
         const stagingConfig = join(transaction, "remote-config");
@@ -260,7 +269,7 @@ try {
         await rename(update.staged, update.path);
         committed.push(update);
     }
-    if (action === "remove" || source === "main") {
+    if (action === "remove" || source !== "local") {
         try {
             await rename(destination, previous);
             movedPackage = true;

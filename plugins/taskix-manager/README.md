@@ -81,12 +81,13 @@ Dispatch allows sixteen outstanding event jobs globally and four per session,
 with native-stream backpressure and per-session ordering. Active work, leases and
 dispatcher work pin wrappers against the inactive-session LRU limit.
 
-Use `make plugin HOSTS=opencode SOURCE=main` for native GitHub package references,
-or `SOURCE=local` to copy the current checkout and register local `file://` paths.
-Both modes configure the server and TUI packages without third-party runtime npm
-dependencies or Zod. Switching modes replaces previous installer-owned references;
-remote installation removes the old local copy only after both packages install.
-Use `opencode plugin update` for remote updates and `make remove-plugin HOSTS=opencode`
-to remove either installation mode. Earlier 2.0 patches and
-OpenCode 1.x are unsupported; 2.0.32 is the validated baseline.
+Use `make plugin HOSTS=opencode` to install native GitHub package references from
+the remote branch matching the current checkout. Push the branch before installing;
+`SOURCE` overrides and detached HEAD are unsupported for installation. The server
+and TUI packages have no third-party runtime npm dependencies or Zod. Installation
+replaces Agentix registrations from previous branches and removes legacy local
+copies after both packages install. Use `opencode plugin update` for remote updates
+and `make remove-plugin HOSTS=opencode` to remove all installer-owned branch references
+and legacy local registrations. Earlier 2.0 patches and OpenCode 1.x are unsupported;
+2.0.32 is the validated baseline.
 See the [OpenCode guide](https://github.com/tenfyzhong/agentix/wiki/OpenCode) for installation.
