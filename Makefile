@@ -12,7 +12,8 @@ NODE ?= node
 HOSTS ?= codex pi omp claude opencode
 VERSION ?= stable
 FORMULAE ?= agentix taskix
-SOURCE ?= main
+override PLUGIN_BRANCH := $(shell git symbolic-ref --quiet --short HEAD)
+export PLUGIN_BRANCH
 PROFILE ?= release
 BREW_FORMULAE = $(addprefix tenfyzhong/tap/,$(FORMULAE))
 DEBUG_TARGET_DIR = $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
@@ -134,7 +135,7 @@ define check-plugin-hosts
 		case "$$host" in \
 			codex) command -v "$(CODEX)" >/dev/null ;; \
 			pi) command -v "$(PI)" >/dev/null ;; \
-			omp) command -v "$(OMP)" >/dev/null ;; \
+			omp) command -v "$(NODE)" >/dev/null && command -v "$(OMP)" >/dev/null ;; \
 			claude) command -v "$(CLAUDE)" >/dev/null ;; \
 			opencode) command -v "$(OPENCODE)" >/dev/null && command -v "$(NODE)" >/dev/null ;; \
 			*) echo "Unknown plugin host: $$host" >&2; exit 2 ;; \
@@ -154,12 +155,14 @@ remove-plugin:
 			pi) \
 				$(PI) remove . || true; \
 				$(PI) remove git:github.com/tenfyzhong/agentix || true; \
-				$(PI) remove git:github.com/tenfyzhong/agentix@main || true ;; \
+				$(PI) remove git:github.com/tenfyzhong/agentix@main || true; \
+				if [ -n "$$PLUGIN_BRANCH" ] && [ "$$PLUGIN_BRANCH" != main ]; then $(PI) remove "git:github.com/tenfyzhong/agentix@$$PLUGIN_BRANCH" || true; fi ;; \
 			omp) \
 				$(OMP) plugin uninstall agentix-plugins || true; \
 				$(OMP) plugin uninstall taskix-manager@agentix || true; \
 				$(OMP) plugin uninstall agentix-bridge@agentix || true; \
-				$(OMP) plugin marketplace remove agentix || true ;; \
+				$(OMP) plugin marketplace remove agentix || true; \
+				$(NODE) scripts/omp-plugin.mjs remove ;; \
 			claude) \
 				$(CLAUDE) plugin uninstall taskix-manager@agentix || true; \
 				$(CLAUDE) plugin uninstall agentix-bridge@agentix || true; \
@@ -168,24 +171,24 @@ remove-plugin:
 	done
 
 plugin:
-	@case "$(SOURCE)" in local|main) ;; *) echo 'SOURCE must be local or main' >&2; exit 2 ;; esac
+	@test "$(origin SOURCE)" = undefined || { echo 'SOURCE is no longer supported; plugins use the current remote branch' >&2; exit 2; }
+	@test -n "$$PLUGIN_BRANCH" || { echo 'Plugin installation requires a checked-out Git branch' >&2; exit 2; }
+	@git ls-remote --exit-code --heads https://github.com/tenfyzhong/agentix.git "refs/heads/$$PLUGIN_BRANCH" >/dev/null || { echo 'Current branch is unavailable on the plugin remote' >&2; exit 2; }
 	$(check-plugin-hosts)
 	$(if $(filter-out opencode,$(HOSTS)),$(MAKE) remove-plugin HOSTS="$(filter-out opencode,$(HOSTS))",@:)
 	@set -eu; \
 	for host in $(HOSTS); do \
 		case "$$host" in \
-			opencode) $(NODE) scripts/opencode-plugin.mjs install "$(SOURCE)" ;; \
+			opencode) $(NODE) scripts/opencode-plugin.mjs install --remote "$$PLUGIN_BRANCH" ;; \
 			codex) \
-				$(CODEX) plugin marketplace add $(if $(filter main,$(SOURCE)),tenfyzhong/agentix --ref main,./); \
+				$(CODEX) plugin marketplace add tenfyzhong/agentix --ref "$$PLUGIN_BRANCH"; \
 				$(CODEX) plugin add taskix-manager@agentix ;; \
 			pi) \
-				$(PI) install $(if $(filter main,$(SOURCE)),git:github.com/tenfyzhong/agentix@main,.) ;; \
+				$(PI) install "git:github.com/tenfyzhong/agentix@$$PLUGIN_BRANCH" ;; \
 			omp) \
-				$(OMP) plugin marketplace add $(if $(filter main,$(SOURCE)),tenfyzhong/agentix,./); \
-				$(OMP) plugin install taskix-manager@agentix; \
-				$(OMP) plugin install agentix-bridge@agentix ;; \
+				OMP="$(OMP)" $(NODE) scripts/omp-plugin.mjs install "$$PLUGIN_BRANCH" ;; \
 			claude) \
-				$(CLAUDE) plugin marketplace add $(if $(filter main,$(SOURCE)),tenfyzhong/agentix@main,./); \
+				$(CLAUDE) plugin marketplace add "tenfyzhong/agentix@$$PLUGIN_BRANCH"; \
 				$(CLAUDE) plugin install taskix-manager@agentix; \
 				$(CLAUDE) plugin install agentix-bridge@agentix ;; \
 		esac; \
@@ -206,7 +209,7 @@ help:
 		'  VERSION=local builds the selected profile before installing local binaries' \
 		'  PROFILE=release|debug (default: release), CARGO_TARGET_DIR selects build output' \
 		'  FORMULAE=agentix or FORMULAE=taskix selects one CLI (default: both)' \
-		'make plugin [SOURCE=local|main]  Install plugins for all five hosts (default: main)' \
+		'make plugin         Install remote plugins from the current Git branch for all five hosts' \
 		'  HOSTS="codex pi omp claude opencode" selects plugin hosts (default: all five)' \
 		'  HOSTS=opencode selects only the OpenCode 2.0.32+ server and TUI plugins' \
 		'make remove-plugin  Remove Agentix plugins for selected hosts' \

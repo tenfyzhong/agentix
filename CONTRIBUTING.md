@@ -187,54 +187,52 @@ overwrite arbitrary files when Homebrew reports a link conflict.
 
 ## Installing plugins
 
-Run `make plugin` (or `make plugin SOURCE=main`) to install from GitHub.
-Run `make plugin SOURCE=local` to install from the current checkout. Both commands
-default to all five hosts: Codex, Pi, OMP, Claude Code, and OpenCode. Select one or
-more with `HOSTS`:
+Run `make plugin` to install from the GitHub branch matching the current checkout's
+branch name. The branch must already exist on `tenfyzhong/agentix`; unpushed changes
+are not installed. Detached HEAD and the removed `SOURCE` option fail before cleanup.
+The default hosts are Codex, Pi, OMP, Claude Code, and OpenCode. Select with `HOSTS`:
 
 ```sh
 make plugin HOSTS=pi
-make plugin SOURCE=local HOSTS=opencode
-make plugin SOURCE=main HOSTS="codex omp claude"
+make plugin HOSTS=opencode
+make plugin HOSTS="codex omp claude"
 make remove-plugin HOSTS="pi omp"
 ```
 
-| Host | Installed integration | Remote source |
+| Host | Installed integration | Remote source (`BRANCH` is the current branch) |
 | --- | --- | --- |
-| Codex | Taskix Manager | GitHub marketplace with `--ref main` |
-| Pi | Repository package containing Taskix Manager and Agentix Bridge | `git:github.com/tenfyzhong/agentix@main` |
-| OMP | Taskix Manager and Agentix Bridge | GitHub marketplace using the repository's default branch, currently `main` |
-| Claude Code | Taskix Manager and Agentix Bridge | GitHub marketplace with `@main` |
-| OpenCode | Taskix Manager server plugin and Agentix Bridge TUI plugin | Native GitHub packages from `main` |
+| Codex | Taskix Manager | GitHub marketplace with `--ref BRANCH` |
+| Pi | Taskix Manager and Agentix Bridge | `git:github.com/tenfyzhong/agentix@BRANCH` |
+| OMP | Taskix Manager and Agentix Bridge | Remote branch cloned into a managed marketplace cache |
+| Claude Code | Taskix Manager and Agentix Bridge | GitHub marketplace with `@BRANCH` |
+| OpenCode | Taskix Manager server plugin and Agentix Bridge TUI plugin | Native GitHub packages with `#BRANCH` |
 
-OpenCode 2.0.32+ is included by default. Use `HOSTS=opencode` to install only its
-plugins. `SOURCE=main` uses `opencode plugin add` with native GitHub subdirectory
-package references for `plugins/taskix-manager` and `plugins/agentix-bridge`.
-It installs both packages using temporary configuration before publishing the
-GitHub references to the Taskix server's `opencode.json`/`opencode.jsonc` and the
-Bridge TUI's `cli.json`, using the native `plugins` key. OpenCode manages the
-package cache; run `opencode plugin update` to update remote plugins.
-
-`SOURCE=local` copies dependency-free JavaScript packages into `.agentix-plugin`
-inside the OpenCode configuration directory and registers local `file://` paths.
-Before publication, it loads both staged entrypoints and their imports without
-activating them. Use this mode to test changes from the current checkout.
-Switching modes removes previous installer-owned registrations; successful remote
-installation also removes the old local copy. Removal handles both modes and
-preserves unrelated plugins. Downloaded OpenCode cache entries are left managed
-by OpenCode, including after an unsuccessful install or removal.
+OpenCode 2.0.32+ uses `opencode plugin add` with native GitHub subdirectory
+references for `plugins/taskix-manager` and `plugins/agentix-bridge`. Both packages
+install using temporary configuration before publishing references to the Taskix
+server's `opencode.json`/`opencode.jsonc` and the Bridge TUI's `cli.json`, using
+`plugins`. OpenCode manages its package cache; use `opencode plugin update` for
+remote updates. Installing replaces Agentix references from any previous branch
+and removes legacy `.agentix-plugin` local copies after successful publication.
+Removal cleans these remote and legacy registrations while preserving unrelated
+plugins. Downloaded OpenCode cache entries remain managed by OpenCode.
 
 Earlier 2.0 patches and OpenCode 1.x are unsupported. The validated host baseline
 is 2.0.32; later API changes require compatibility testing. Reported publication
 failures roll back package/configuration changes, preserving file modes and original
 symlinks. This is not crash-atomic or safe for concurrent installer invocations.
 
-OMP's marketplace CLI does not expose a branch selector. If the repository's
-default branch changes, its remote source handling must be updated accordingly.
-Local marketplace paths use `./`, which OMP requires for relative paths.
+OMP's marketplace CLI has no branch selector. The installer clones the requested
+remote branch into `$XDG_CACHE_HOME/agentix/omp-marketplace` (default:
+`~/.cache/agentix/omp-marketplace`) and registers that directory. This never uses
+the working checkout's files. Rerun `make plugin HOSTS=omp` to fetch updates;
+`make remove-plugin HOSTS=omp` unregisters the plugins and removes this cache.
 
-All selected host CLIs must be on PATH; missing commands, unknown hosts, an empty selection,
-or an invalid source fail before cleanup. Unselected hosts are untouched.
+All selected host CLIs must be on PATH (OMP also requires Node.js). Missing commands,
+unknown hosts, an empty selection, or an unavailable remote branch fail before cleanup.
+Unselected hosts are untouched. Pi removal includes legacy local/main registrations
+and the current branch. OpenCode removal recognizes Agentix references on any branch,
+including when run from detached HEAD.
 
 Installation first removes the selected hosts' Agentix registrations, except
 OpenCode, which retains its prior package/configuration for publication rollback.

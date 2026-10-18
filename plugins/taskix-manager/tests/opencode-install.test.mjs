@@ -765,3 +765,19 @@ test("opencode_remote_migration_preserves_jsonc_and_unowned_package_references",
     assert.doesNotMatch(text, /file:/);
     assert.equal((await stat(join(f.config, "opencode.jsonc"))).mode & 0o777, 0o600);
 });
+
+for (const branch of ["feature/plugin-test", "local"]) {
+    test(`opencode_remote_branch_${branch}_replaces_and_removes_other_branches`, { skip: process.platform === "win32" }, async t => {
+        const f = await fixture(t);
+        const env = await remoteCLI(f);
+        assert.equal(f.runWithEnv(env, "install", "main").status, 0);
+        const result = f.runWithEnv(env, "install", "--remote", branch);
+        assert.equal(result.status, 0, result.stderr);
+        for (const [name, ref] of Object.entries(remotePackages)) {
+            assert.deepEqual(JSON.parse(await readFile(join(f.config, name), "utf8")).plugins, [ref.replace("#main::", `#${branch}::`)]);
+        }
+        assert.equal(f.run("remove").status, 0);
+        for (const name of Object.keys(remotePackages))
+            assert.deepEqual(JSON.parse(await readFile(join(f.config, name), "utf8")).plugins, []);
+    });
+}
