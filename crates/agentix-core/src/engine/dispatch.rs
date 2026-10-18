@@ -76,6 +76,7 @@ impl From<&UiAction> for ActionRoute {
             UiAction::Resolve { interaction, .. }
             | UiAction::BeginInput(interaction)
             | UiAction::SelectInput { interaction, .. }
+            | UiAction::SubmitInput(interaction)
             | UiAction::BeginCustomInput(interaction) => {
                 route.session = Some(interaction.session_id.clone());
             }

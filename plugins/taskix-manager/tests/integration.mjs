@@ -1198,3 +1198,60 @@ for (const [choice, expected] of [["completed", "COMPLETED"], ["pending_review",
     }
     assert.equal((await f.run(["job", "show", f.job.id])).status, expected);
 });
+
+test('OpenCode native hooks use real Taskix leases and deduplicate Bridge discussion records', async t => {
+    const {setupOpenCode} = await import('../opencode/runtime.mjs');
+    const session = 'ses_opencode_integration', turn = 'msg_native_integration';
+    const f = await fixture(t, session);
+    const handlers = new Map(), events = [];
+    let nativeTool, wake;
+    const storage=new Map();
+    const cleanup = await setupOpenCode({
+        storage:{get:async key=>storage.get(key),set:async(key,value)=>{storage.set(key,value);},remove:async key=>{storage.delete(key);}},
+        session:{get:async()=>({location:{directory:f.dir}}),hook:async(name,fn)=>{handlers.set(name,fn);}},
+        tool:{transform:async edit=>edit({add:tool=>{nativeTool=tool;}})},
+        skill:{transform:async()=>{}},
+        event:{async *subscribe({signal}){
+            signal.addEventListener('abort',()=>wake?.(),{once:true});
+            while(!signal.aborted){
+                if(!events.length)await new Promise(resolve=>{wake=resolve;});
+                const item=events.shift();if(!item)continue;
+                try{yield item.frame;}finally{item.done();}
+            }
+        }},
+    }, {
+        maxConcurrentEvents:1,
+        timers:{setInterval(){return 1;},clearInterval(){}},
+        routing:{env:{TASKIX_JEV_ENABLED:'false',TASKIX_MEMORY_ENABLED:'false'}},
+    });
+    f.cleanup.push(cleanup);
+    const prompt=(messageID,text)=>handlers.get('prompt')({sessionID:session,messageID,prompt:{text},delivery:'steer'});
+    await prompt(turn,'Implement OpenCode');
+    const execute = async (id,args) => JSON.parse((await nativeTool.execute({args},{sessionID:session,messageID:turn,id,signal:new AbortController().signal})).content).result;
+    const event=(type,data)=>new Promise(done=>{events.push({frame:{type,data},done});wake?.();});
+    await event('session.inbox.delivered',{sessionID:session,inboxID:turn});
+    const args = ['task','add','--job',f.job.id,'--title','OpenCode integration'];
+    const task = await execute('call_add',args);
+    assert.equal((await execute('call_add',args)).id,task.id);
+    const claim = await execute('call_claim',['task','claim',task.id]);
+    assert.equal(claim.lease.executor_ref,`agent:opencode:${session}`);
+    await execute('call_plan',['plan','create',task.id,'--body','Validate the native session integration.']);
+    await execute('call_start',['task','start',task.id]);
+    await event('session.step.started',{sessionID:session,assistantMessageID:'asst_native'});
+    await event('session.text.ended',{sessionID:session,assistantMessageID:'asst_native',ordinal:0,text:'Implemented'});
+    await event('session.execution.succeeded',{sessionID:session});
+    const capture = join(f.dir,'bridge-capture.json');
+    await writeFile(capture, JSON.stringify({turn_id:turn,source:'opencode',messages:[
+        {id:`${turn}:${turn}:user`,role:'user',text:'Implement OpenCode'},
+        {id:`${turn}:${turn}:assistant`,role:'assistant',text:'Implemented'},
+    ]}));
+    await f.run(['hook','record','--file',capture],{session});
+    const discussion = await f.run(['conversation','list','--full'],{session});
+    const recorded = discussion.turns.find(t=>t.turn_id===turn);
+    assert.ok(recorded);
+    assert.equal(recorded.messages.length,2);
+    await prompt('msg_abort','Continue');
+    await event('session.inbox.delivered',{sessionID:session,inboxID:'msg_abort'});
+    await event('session.execution.interrupted',{sessionID:session,reason:'user'});
+    assert.equal((await f.run(['task','show',task.id])).lease,null);
+});

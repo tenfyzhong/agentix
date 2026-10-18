@@ -521,6 +521,23 @@ pub(super) fn input_questions(request: &InteractionRequest) -> Vec<InputQuestion
                 header,
                 question: prompt,
                 options,
+                multiple: question
+                    .get("multiple")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                required: question
+                    .get("required")
+                    .and_then(Value::as_bool)
+                    .unwrap_or_else(|| {
+                        !question
+                            .get("multiple")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                    }),
+                custom: question
+                    .get("custom")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
                 secret: question
                     .get("isSecret")
                     .and_then(Value::as_bool)
@@ -539,6 +556,9 @@ pub(super) fn input_questions(request: &InteractionRequest) -> Vec<InputQuestion
             },
             options: Vec::new(),
             secret: false,
+            multiple: false,
+            required: true,
+            custom: true,
         });
     }
     questions
@@ -590,6 +610,10 @@ pub(super) fn input_progress_body(progress: &InputProgress, awaiting_custom: boo
         }
         current.push_str(if awaiting_custom {
             "\n\nReply with your custom answer. Use `/cancel` to return to the choices."
+        } else if question.multiple {
+            "\n\nToggle choices, then choose Submit."
+        } else if !question.custom {
+            "\n\nChoose an option below."
         } else if question.options.is_empty() {
             "\n\nChoose Answer… to type your response."
         } else {
@@ -621,8 +645,12 @@ pub(super) fn completed_input_body(progress: &InputProgress) -> String {
     format!("**Answered**\n{answers}")
 }
 
-pub(super) fn displayed_answer<'a>(question: &InputQuestion, answer: &'a str) -> &'a str {
-    if question.secret { "[hidden]" } else { answer }
+pub(super) fn displayed_answer(question: &InputQuestion, answer: &[String]) -> String {
+    if question.secret {
+        "[hidden]".into()
+    } else {
+        answer.join(", ")
+    }
 }
 
 pub(super) fn input_response(progress: &InputProgress) -> Value {
@@ -633,7 +661,7 @@ pub(super) fn input_response(progress: &InputProgress) -> Value {
         .filter_map(|(question, answer)| {
             answer
                 .as_ref()
-                .map(|answer| (question.id.clone(), json!({"answers": [answer]})))
+                .map(|answer| (question.id.clone(), json!({"answers": answer})))
         })
         .collect::<serde_json::Map<_, _>>();
     json!({"answers": answers})
@@ -641,7 +669,9 @@ pub(super) fn input_response(progress: &InputProgress) -> Value {
 
 pub(super) fn decision_label(decision: &str) -> String {
     match decision {
-        "accept" => "Allow once",
+        "accept" | "once" => "Allow once",
+        "always" => "Always allow",
+        "reject" => "Reject",
         "acceptForSession" => "Allow for session",
         "decline" => "Decline",
         "cancel" => "Cancel",

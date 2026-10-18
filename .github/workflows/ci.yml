@@ -48,15 +48,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - name: Install tmux (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes tmux fish
+          sudo apt-get install --yes tmux fish protobuf-compiler
       - name: Install tmux (macOS)
         if: runner.os == 'macOS'
-        run: brew install tmux fish
+        run: brew install tmux fish protobuf
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.95.0
@@ -67,6 +67,37 @@ jobs:
         run: |
           cargo test -p agentix-multiplexer -p agentix-tmux
           node --test plugins/agentix-bridge/tests/*.test.mjs
+      - name: Install pinned OpenCode
+        run: |
+          npm install --prefix "$RUNNER_TEMP/opencode" --no-audit --no-fund @opencode/cli@2.0.32
+          node --input-type=module -e '
+            import { appendFileSync } from "node:fs";
+            import { join } from "node:path";
+            import { execFileSync } from "node:child_process";
+            const binary = join(process.env.RUNNER_TEMP, "opencode/node_modules/@opencode/cli/bin/opencode.exe");
+            if (execFileSync(binary, ["--version"], {encoding:"utf8"}).trim() !== "opencode v2.0.32") throw new Error("Unexpected OpenCode version");
+            appendFileSync(process.env.GITHUB_ENV, `AGENTIX_TEST_OPENCODE=${binary}\nAGENTIX_TEST_AGENTIX=${join(process.cwd(), "target/debug/agentix")}\nAGENTIX_TEST_TASKIX=${join(process.cwd(), "target/debug/taskix")}\n`);
+          '
+      - name: Build current native launcher and task host
+        run: cargo build --locked -p agentix -p taskix
+      - name: Test native OpenCode terminal lifecycle
+        env:
+          AGENTIX_TEST_OPENCODE_NATIVE: '1'
+        run: |
+          export AGENTIX_TEST_TMUX_BIN="$(command -v tmux)"
+          node --test plugins/agentix-bridge/tests/opencode-native.test.mjs
+      - name: Test OpenCode resource bounds with the current Taskix CLI
+        if: runner.os == 'Linux'
+        env:
+          AGENTIX_OPENCODE_PERFORMANCE: '1'
+          OPENCODE_PERF_TASKIX: ${{ github.workspace }}/target/debug/taskix
+        run: node --test plugins/agentix-bridge/tests/opencode-performance.test.mjs
+      - name: Test native OpenCode Telegram engine interactions
+        env:
+          AGENTIX_TEST_OPENCODE_NATIVE: '1'
+        run: |
+          export AGENTIX_TEST_TMUX="$(command -v tmux)"
+          cargo test -p agentix --bin agentix opencode_native_telegram_engine_permission_and_multiselect_closed_loop -- --ignored --nocapture
       - name: Test fish panes, foreground detection and exit recovery
         env:
           AGENTIX_TEST_TMUX: '1'

@@ -2,7 +2,7 @@
   "name": "agentix-plugins",
   "version": "0.2.0",
   "private": true,
-  "description": "Agentix extensions installed directly from GitHub with Pi and OMP.",
+  "description": "Agentix extensions for Pi, OMP, and OpenCode.",
   "license": "MIT",
   "keywords": [
     "pi-package"
@@ -25,5 +25,10 @@
       "./plugins/taskix-manager/extensions/omp.ts",
       "./plugins/agentix-bridge/extensions/omp.ts"
     ]
+  },
+  "type": "module",
+  "exports": {
+    ".": "./plugins/taskix-manager/opencode/server.mjs",
+    "./tui": "./plugins/agentix-bridge/opencode/tui.mjs"
   }
 }

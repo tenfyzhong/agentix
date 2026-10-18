@@ -72,7 +72,7 @@ This is one regression run with in-memory SQLite and local agent/channel fixture
 
 The `agentix::telemetry` tracing target emits structured Engine and control queue statistics every 30 seconds at INFO: pending and active counts, cumulative admitted/rejected/started/retired counts, total and maximum waiting and execution-slot times, and the oldest pending request's age. Slot time runs until worker retirement; DEBUG completion events include the handler's own duration and queue wait. Counter memory is constant. Queue counters reset on service restart. Queue rejection counts describe global-capacity refusals; per-conversation overload refusals appear in the persistent `rejected_inputs` count.
 
-The source maintenance worker also reports `uncertain_inputs` and `rejected_inputs` from runtime SQLite, so those counts survive restart. Codex and Pi/OMP/Claude bridge timeouts emit WARN events with the backend and method; count these events by backend to identify transport timeouts. No prompt body or session history is added to telemetry. Enable detailed events with `[logging].level = "info,agentix::telemetry=debug"`.
+The source maintenance worker also reports `uncertain_inputs` and `rejected_inputs` from runtime SQLite, so those counts survive restart. Codex and Pi/OMP/Claude/OpenCode bridge timeouts emit WARN events with the backend and method; count these events by backend to identify transport timeouts. No prompt body or session history is added to telemetry. Enable detailed events with `[logging].level = "info,agentix::telemetry=debug"`.
 
 Idle queues and queues with all workers occupied skip binding/action snapshot creation. When work can start, routes are resolved afresh, preserving attachment and replacement fences. This removes unnecessary cloning without retaining potentially stale snapshots; no unmeasured CPU speedup is claimed.
 
@@ -316,3 +316,120 @@ cargo test -p agentix-codex --all-features --release --lib observed_snapshot_dif
 The ordinary regression covers full-field equality, absent versus empty values,
 duplicate IDs, repeated new items, filtering native input, and output order on both
 the small-snapshot and indexed paths.
+
+## OpenCode working set and Taskix overhead
+
+The opt-in reusable measurement exercises the production OpenCode bridge state
+and Taskix server adapter with deterministic SDK responses and isolated temporary
+state. It records CPU/time, post-GC RSS, peak parent RSS, retained cache counts,
+SDK calls, filesystem writes and Taskix subprocess counts. It makes no provider
+requests or live IM calls. Reproduce the current limits with:
+
+```sh
+AGENTIX_OPENCODE_PERFORMANCE=1 node --test plugins/agentix-bridge/tests/opencode-performance.test.mjs
+OPENCODE_PERF_TASKIX=/absolute/path/to/taskix OPENCODE_PERF_TASKIX_ONLY=1 AGENTIX_OPENCODE_PERFORMANCE=1 node --test plugins/agentix-bridge/tests/opencode-performance.test.mjs
+```
+
+`OPENCODE_PERF_ROOT` selects the comparison checkout's `plugins` directory.
+The historical OpenCode 1.19.3 paired measurement below predates the 2.x migration.
+It is not a before/after comparison for OpenCode 2.0.32.
+
+The optional actual-CLI scenario uses a fresh HOME, config, document vault and
+SQLite database, with Jev and memory disabled. The recorded binary was a debug
+`taskix 0.0.0-dev+3add9529a43c.dirty`; its 40 native tool callbacks run without
+Jobs or owned leases. Three alternating before/after samples on macOS arm64 with
+Node 26.9.0 give these medians. [Raw samples](benchmarks/opencode-audit.json)
+record each run. The baseline is a frozen copy of the prior uncommitted OpenCode
+implementation, not `main` (which had no OpenCode backend). That frozen checkout
+is not a published commit; the raw samples preserve its measurements, while the
+commands above run the corrected current 2.x fixture and do not reproduce that
+unpublished 1.x baseline. These historical callbacks are host hook notifications,
+not forty requested Taskix tool executions. The paired snapshot also predates the
+prompt-byte/media-retention repair:
+
+| Workload | Before | After | Scope |
+| --- | ---: | ---: | --- |
+| Historical hook phase elapsed time | 767.33 ms | 204.06 ms | 40 host hook callbacks plus initialization/bootstrap; not actual requested tool commands |
+| Cumulative Taskix child elapsed time | 756.68 ms | 196.41 ms | Time awaiting actual CLI subprocesses |
+| Actual Taskix CLI calls | 47 | 8 | Per-tool heartbeats: 40 to 0; context calls: 1 to 2 |
+| Parent Node CPU | 66.51 ms | 22.40 ms | Excludes Taskix child CPU |
+| Parent peak RSS | 53.25 MiB | 52.09 MiB | CLI-only scenario, separate from cache stress |
+| Queue stress processing time | 874 ms | 1,876 ms | 5,000 receipts and 10,000 state updates |
+| Queue stress CPU | 752 ms | 1,689 ms | Includes filesystem/checkpoint/archive maintenance |
+| Queue stress filesystem writes | 6.77 MB | 18.66 MB | After path creates seven checkpoints |
+| Synthetic sequence peak RSS | 153.14 MiB | 114.83 MiB | Cumulative process peak across stress phases |
+
+The historical hook path reduces heartbeat subprocess overhead; its measurements
+do not establish the cost of executing forty Taskix commands. Checkpointing and
+hash-addressed receipt archives add write cost and
+make the synthetic queue phase slower. These results do not establish an overall
+zero-regression claim or predict provider/IM latency. Warm filesystem state,
+process startup and workload shape affect the samples; parent CPU/RSS do not
+include child-process resource use.
+
+Bridge metadata/alias caches target 4,096 entries with active identity pinning.
+The part-text cache retains at most 8,192 entries / 8 MiB and evicts old entries
+without active-text pinning. History reads have a twenty-page / 200-message page bound and a five-second total deadline.
+Queue admission is 128 prompts / 8 MiB, with 256 KiB per prompt. Checkpoints
+trigger after 4,096 delta records or 1 MiB of deltas, independently of checkpoint
+size. Hot receipts retain 2,048 entries / 1 MiB except active pinned work; older
+receipts remain in lazy hash-addressed disk archives to preserve exact retry
+deduplication. Archive disk use still grows with distinct deliveries; there is
+no receipt-eviction policy or lifetime session quota.
+
+The Taskix stress fixture opens 100 native sessions and 2,000 tool callbacks.
+Inactive wrappers are LRU-limited to 64 and retain no heartbeat timer. A separate
+owned-lease fixture verifies 20 renewal ticks survive idle events and session
+churn, retaining one renewal timer. Active owned work is not evicted merely to
+meet the idle limit. These bounds constrain idle overhead, while the number and
+size of simultaneously active sessions remain workload-dependent.
+
+OpenCode 2.x uses bounded ID-only turn associations rather than the historical
+prompt-fingerprint and user-part caches. Native plugin storage retains minimal
+active Taskix context/ownership for compacted-history recovery.
+
+### OpenCode 2.0.32 corrected current measurements
+
+[Three corrected full and actual-CLI samples](benchmarks/opencode-2.0.32-review.json)
+use Node 26.9.0 on macOS ARM64 with source hashes unchanged across all six runs.
+The fixture directly invokes the registered native Taskix tool forty times with
+`args: ["context"]` and verifies forty requested CLI calls. It uses isolated
+Taskix state, with Jev and memory disabled. There is no paired 2.x baseline.
+
+The [earlier 2.x dataset](benchmarks/opencode-2.0.32.json) is retained as historical
+audit evidence: its forty old-hook callbacks were no-ops after the API migration.
+Its eight CLI calls measured setup/lifecycle only. The former 169.93 ms figure
+therefore does not measure forty actual tool executions and must not be compared
+to the corrected tool phase as a performance regression or improvement.
+
+| Workload | Median | Scope |
+| --- | ---: | --- |
+| 12,000 step/text events | 46.30 ms | Deterministic native event fixtures |
+| 2,400-tool history | 5.58 ms | 13 SDK fixture reads |
+| 5,000 receipts / 10,000 updates | 1,782.86 ms | Seven checkpoints |
+| Queue logical filesystem writes | 18,656,608 bytes | Filesystem API bytes, not physical disk I/O |
+| Queue restore | 46.63 ms | Archived oldest-delivery deduplication verified |
+| Full synthetic workload peak RSS | 130.67 MiB | Parent Node process |
+| Forty actual Taskix context tools | 1,297.24 ms | 88 CLI calls; zero per-tool heartbeats |
+| Cumulative actual CLI elapsed time | 1,287.67 ms | Time awaiting child processes |
+| CLI-only parent CPU / peak RSS | 68.16 ms / 55.02 MiB | Separate Node process |
+
+The 88 CLI calls comprise two setup, six lifecycle, forty ownership-context
+checks and forty explicitly requested context commands. This preserves current
+ownership and requested behavior; it does not claim eight calls for forty actual
+tools. The 2,000-tool synthetic session fixture invokes the registered tool and
+verifies 4,000 mock tool-runner calls plus 200 lifecycle contexts (100.46 ms).
+Its deterministic acknowledgment path uses one concurrent event job; separate
+regressions exercise the production sixteen-global/four-per-session event pool.
+
+The stress fixture retains no idle heartbeat timers, while a separate owned-lease
+fixture renews twenty times with one timer. Active leases/work pin wrappers
+against inactive-session LRU eviction. Bridge selected-session event count is
+still uncapped during bounded SDK waits; unused tool payloads are excluded, but
+cache limits do not establish a total memory ceiling. Receipt archives have no
+lifetime disk quota and grow with distinct deliveries.
+
+These samples measure the plugin Node parent and actual Taskix CLI elapsed time.
+Node CPU/RSS excludes Taskix children. They do not profile native OpenCode TUI,
+provider resources or external IM latency, and establish no zero-regression or
+complete memory-bound claim.

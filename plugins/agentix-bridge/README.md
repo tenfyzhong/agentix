@@ -28,3 +28,20 @@ The bridge observes terminal session-switch lifecycle events as well. `client_id
 When testing unpublished bridge changes in OMP, install this plugin directory with `omp plugin install ./plugins/agentix-bridge` from the repository checkout after removing any previously installed marketplace copy. Restart OMP to load the updated extension. Rebuilding or restarting Agentix alone does not update a bridge already loaded inside OMP. The packed plugin includes `new-session.mjs` for native session control.
 
 OMP marketplace installations copy plugin files into a cache, even when the marketplace source is a local checkout. To refresh that installed copy after editing the checkout, run `omp plugin marketplace update agentix` followed by `omp plugin install agentix-bridge@agentix --force`, then restart OMP. Installing a marketplace copy replaces a previous local plugin link; check the actual installed path before assuming edits are loaded automatically.
+
+## OpenCode
+
+OpenCode 2.0.32+ uses `opencode/tui.mjs` through the package's `./tui` export.
+The bridge registers the original TUI process and follows its active native
+session. SDK events supply streamed text, tools, native permissions and questions;
+SDK calls provide prompts, history, stop, session replacement and supported controls.
+Queue receipts are stored separately under `AGENTIX_OPENCODE_STATE_DIR` (default
+`~/.local/share/agentix/opencode`); OpenCode's database is not modified.
+
+The Taskix Manager package's default server entrypoint is a separate OpenCode plugin.
+Both export native 2.x `{ id, setup(context) }` objects and return cleanup functions;
+the Bridge needs no server companion. Native tagged history and delivered inbox
+IDs supply turn identity. The validated minimum is 2.0.32; earlier patches are not
+supported and later host changes need continued compatibility testing.
+See the [OpenCode guide](https://github.com/tenfyzhong/agentix/wiki/OpenCode) and
+[wire contract](../../docs/host-protocol.md#opencode) for installation and lifecycle details.

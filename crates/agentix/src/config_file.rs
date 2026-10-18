@@ -46,8 +46,13 @@ impl TryFrom<ConfigFile> for Config {
                     bail!("do not combine [agent.<backend>] with [[agents]]");
                 }
                 for (name, value) in backends {
-                    if !matches!(name.as_str(), "codex" | "pi" | "omp" | "claude") {
-                        bail!("unknown agent backend '{name}'; expected codex, pi, omp, or claude");
+                    if !matches!(
+                        name.as_str(),
+                        "codex" | "pi" | "omp" | "claude" | "opencode"
+                    ) {
+                        bail!(
+                            "unknown agent backend '{name}'; expected codex, pi, omp, claude, or opencode"
+                        );
                     }
                     let toml::Value::Table(mut fields) = value else {
                         bail!("agent.{name} must be a table");

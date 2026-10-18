@@ -495,7 +495,7 @@ for (const previous_job of [null, { id: "job_delivery", status: "PENDING_REVIEW"
             registerExtension({ on: (name, fn) => handlers.set(name, fn), registerTool() {} }, host, async args => {
                 calls.push(args);
                 return { result: { previous_job } };
-            });
+            }, undefined, undefined, { env: {} });
             const ctx = { cwd: "/work", sessionManager: { getSessionId: () => "s" } };
             for (const prompt of ["提交之前的改动", "创建 PR", "Push the previous changes", "Commit an unrelated repository"]) {
                 const result = await handlers.get("before_agent_start")({ prompt }, ctx);

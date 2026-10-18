@@ -123,7 +123,7 @@ export interface TurnCompleted {
     status: TurnStatus;
     error: string | null;
 }
-export type Event = { SessionExited: SessionExited } | { QueueChanged: QueueChanged } | { TurnStarted: TurnStarted } | { AgentMessageDelta: AgentMessageDelta } | { ItemStarted: ItemStarted } | { ItemCompleted: ItemCompleted } | { TurnCompleted: TurnCompleted } | { SessionSwitchStarted: SessionSwitchStarted } | { SessionSwitchFailed: SessionSwitchFailed };
+export type Event = { SessionExited: SessionExited } | { QueueChanged: QueueChanged } | { TurnStarted: TurnStarted } | { AgentMessageDelta: AgentMessageDelta } | { ItemStarted: ItemStarted } | { ItemCompleted: ItemCompleted } | { TurnCompleted: TurnCompleted } | { SessionSwitchStarted: SessionSwitchStarted } | { SessionSwitchFailed: SessionSwitchFailed } | { InteractionRequested: InteractionRequested } | { InteractionResolved: InteractionResolved };
 export interface EventFrame {
     instance: string;
     seq: number;
@@ -143,4 +143,21 @@ export interface SessionSwitchFailed {
     session_id: string;
     client_id: string;
     reason: string;
+}
+export interface InteractionRequested {
+    rpc_id: string;
+    method: string;
+    session_id: string;
+    turn_id: string;
+    item_id: string | null;
+    kind: "command_approval" | "file_approval" | "user_input";
+    title: string;
+    detail: string;
+    available_decisions: Array<string>;
+    payload: Record<string, unknown>;
+    auto_resolution_ms: number | null;
+}
+export interface InteractionResolved {
+    session_id: string;
+    request_id: string;
 }

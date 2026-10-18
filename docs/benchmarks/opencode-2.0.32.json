@@ -1,0 +1,535 @@
+{
+  "description": "Current-only resource validation against OpenCode 2.0.32 native plugin API fixtures, plus isolated actual Taskix CLI subprocesses. This is not a before/after performance comparison.",
+  "captured_at": "2026-10-17T17:28:08.656333+00:00",
+  "benchmark": "plugins/agentix-bridge/tests/opencode-performance.test.mjs",
+  "historical_evidence": "opencode-audit.json retains separate OpenCode 1.19.3 history; fixture and host APIs changed, so these datasets must not be treated as one paired experiment.",
+  "environment": {
+    "node": "v26.9.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "fixture_contract": "OpenCode 2.0.32 native API",
+    "actual_taskix": "debug 0.0.0-dev+3add9529a43c.dirty",
+    "cli_path_normalization": "Absolute local Taskix path replaced with target/debug/taskix; numerical samples preserved."
+  },
+  "methodology": {
+    "rounds_per_mode": 3,
+    "sequence": "full-1, cli-only-1, full-2, cli-only-2, full-3, cli-only-3; one child exits before the next begins",
+    "process": "Fresh Node child with --expose-gc for each run; no timing threshold or live provider credentials",
+    "cpu_ms": "Node parent user+system CPU only; final phase GC included; Taskix subprocess CPU excluded",
+    "rss_bytes": "Node parent post-GC RSS; full-mode values retain allocations from earlier phases",
+    "max_rss_kib": "Cumulative Node parent high-water RSS in KiB; CLI-only mode isolates it from synthetic stress; Taskix subprocess RSS excluded",
+    "fs_write_bytes": "Logical bytes passed to synchronous writeFileSync/appendFileSync during the journal phase, with nested append writes counted once; not APFS physical writes or fsync latency",
+    "cli_total_elapsed_ms": "Sum of real execFile request-to-exit intervals, including isolated init and project registration, session hooks and cleanup",
+    "isolation": "Real CLI receives only explicit PATH, HOME, LANG, XDG paths, TASKIX_CONFIG and disabled TASKIX_MEMORY_ENABLED/TASKIX_JEV_ENABLED. Config, vault and SQLite are temporary; no user Job or lease is used.",
+    "native_callbacks": "Taskix host fixture attempts native before-tool callbacks; OpenCode 2 plugin installs none, so no per-tool heartbeat subprocess is executed.",
+    "sdk": "Deterministic native 2.0.32 session/message/inbox/step/text/execution shapes; opaque history cursor plus explicit order is rejected; continued desc pages use cursor.next. No OpenCode TUI, renderer, network or real model resource profile is measured.",
+    "assertions": "Bounded cache counts/bytes, finite replay journal and logical writes, oldest receipt deduplication after restart, 100-session LRU/timer cleanup and 20 owned-lease renewal cycles. Latencies are diagnostics only."
+  },
+  "reproduction": {
+    "full": "AGENTIX_OPENCODE_PERFORMANCE=1 OPENCODE_PERF_TASKIX=/absolute/path/to/taskix node --test plugins/agentix-bridge/tests/opencode-performance.test.mjs",
+    "cli_only": "AGENTIX_OPENCODE_PERFORMANCE=1 OPENCODE_PERF_TASKIX_ONLY=1 OPENCODE_PERF_TASKIX=/absolute/path/to/taskix node --test plugins/agentix-bridge/tests/opencode-performance.test.mjs",
+    "raw_child": "OPENCODE_PERF_CHILD=1 OPENCODE_PERF_TASKIX=/absolute/path/to/taskix node --expose-gc plugins/agentix-bridge/tests/opencode-performance.test.mjs"
+  },
+  "medians": {
+    "full": {
+      "results": [
+        {
+          "name": "bridge_12000_messages_and_text_parts",
+          "elapsed_ms": 45.21,
+          "cpu_ms": 66.91,
+          "rss_bytes": 84869120,
+          "rss_delta_bytes": 31506432,
+          "max_rss_kib": 83008,
+          "heap_delta_bytes": 10291688,
+          "messages": 4096,
+          "parts": 8150,
+          "retained_text_bytes": 8388350
+        },
+        {
+          "name": "native_history_2400_tool_messages_one_complete_turn",
+          "elapsed_ms": 6.77,
+          "cpu_ms": 13.8,
+          "rss_bytes": 84213760,
+          "rss_delta_bytes": 311296,
+          "max_rss_kib": 83008,
+          "heap_delta_bytes": 1943176,
+          "native_history_calls": 13,
+          "tool_items": 2400
+        },
+        {
+          "name": "journal_5000_receipts_and_10000_state_updates",
+          "elapsed_ms": 1854.74,
+          "cpu_ms": 1652.67,
+          "rss_bytes": 123289600,
+          "rss_delta_bytes": 39075840,
+          "max_rss_kib": 120544,
+          "heap_delta_bytes": 340144,
+          "journal_bytes": 1618873,
+          "total_queue_storage_bytes": 6138532,
+          "additional_requests_rejected": 0,
+          "fs_write_bytes": 18656608,
+          "fs_write_calls": 19049,
+          "checkpoint_write_bytes": 7364129,
+          "checkpoints": 7
+        },
+        {
+          "name": "journal_restore_and_earliest_receipt",
+          "elapsed_ms": 47.73,
+          "cpu_ms": 51.28,
+          "rss_bytes": 131366912,
+          "rss_delta_bytes": 7700480,
+          "max_rss_kib": 128288,
+          "heap_delta_bytes": 44896,
+          "hot_receipts": 958,
+          "journal_bytes": 1618873,
+          "total_queue_storage_bytes": 6139651
+        },
+        {
+          "name": "taskix_100_sessions_2000_tool_callbacks",
+          "elapsed_ms": 102.34,
+          "cpu_ms": 104.93,
+          "rss_bytes": 132251648,
+          "rss_delta_bytes": 884736,
+          "max_rss_kib": 129152,
+          "heap_delta_bytes": 488104,
+          "heartbeat_cli_calls": 0,
+          "context_cli_calls": 200,
+          "idle_timers": 0,
+          "idle_sessions_shutdown": 36,
+          "disposed_timers": 0
+        },
+        {
+          "name": "taskix_owned_lease_survives_idle_and_session_churn",
+          "elapsed_ms": 99.22,
+          "cpu_ms": 102.32,
+          "rss_bytes": 131874816,
+          "rss_delta_bytes": 98304,
+          "max_rss_kib": 129168,
+          "heap_delta_bytes": 157912,
+          "owned_heartbeat_calls": 20,
+          "owned_shutdowns_before_dispose": 0,
+          "retained_renewal_timers": 1
+        },
+        {
+          "name": "actual_taskix_cli_1_session_40_native_tool_callbacks",
+          "elapsed_ms": 197.94,
+          "cpu_ms": 17.5,
+          "rss_bytes": 132202496,
+          "rss_delta_bytes": 327680,
+          "max_rss_kib": 129168,
+          "heap_delta_bytes": 231160,
+          "cli_invocations": 8,
+          "heartbeat_cli_calls": 0,
+          "context_cli_calls": 2,
+          "cli_total_elapsed_ms": 193.66
+        }
+      ],
+      "aggregate": {
+        "sum_phase_cpu_ms": 2025.05,
+        "peak_rss_mib": 126.140625
+      }
+    },
+    "cli-only": {
+      "results": [
+        {
+          "name": "actual_taskix_cli_1_session_40_native_tool_callbacks",
+          "elapsed_ms": 169.93,
+          "cpu_ms": 19.52,
+          "rss_bytes": 54902784,
+          "rss_delta_bytes": 1245184,
+          "max_rss_kib": 53616,
+          "heap_delta_bytes": 548120,
+          "cli_invocations": 8,
+          "heartbeat_cli_calls": 0,
+          "context_cli_calls": 2,
+          "cli_total_elapsed_ms": 162.04
+        }
+      ],
+      "aggregate": {
+        "sum_phase_cpu_ms": 19.52,
+        "peak_rss_mib": 52.359375
+      }
+    }
+  },
+  "samples": {
+    "full": [
+      {
+        "fixture_contract": "OpenCode 2.0.32 native API",
+        "node": "v26.9.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "results": [
+          {
+            "name": "bridge_12000_messages_and_text_parts",
+            "elapsed_ms": 51.58,
+            "cpu_ms": 77.66,
+            "rss_bytes": 84852736,
+            "rss_delta_bytes": 31391744,
+            "max_rss_kib": 82992,
+            "heap_delta_bytes": 10291688,
+            "messages": 4096,
+            "parts": 8150,
+            "retained_text_bytes": 8388350
+          },
+          {
+            "name": "native_history_2400_tool_messages_one_complete_turn",
+            "elapsed_ms": 7.77,
+            "cpu_ms": 16.23,
+            "rss_bytes": 84213760,
+            "rss_delta_bytes": 311296,
+            "max_rss_kib": 82992,
+            "heap_delta_bytes": 1943176,
+            "native_history_calls": 13,
+            "tool_items": 2400
+          },
+          {
+            "name": "journal_5000_receipts_and_10000_state_updates",
+            "elapsed_ms": 1854.74,
+            "cpu_ms": 1652.67,
+            "rss_bytes": 123289600,
+            "rss_delta_bytes": 39075840,
+            "max_rss_kib": 120544,
+            "heap_delta_bytes": 340144,
+            "journal_bytes": 1618873,
+            "total_queue_storage_bytes": 6138532,
+            "additional_requests_rejected": 0,
+            "fs_write_bytes": 18656608,
+            "fs_write_calls": 19049,
+            "checkpoint_write_bytes": 7364129,
+            "checkpoints": 7
+          },
+          {
+            "name": "journal_restore_and_earliest_receipt",
+            "elapsed_ms": 47.73,
+            "cpu_ms": 51.28,
+            "rss_bytes": 131366912,
+            "rss_delta_bytes": 8011776,
+            "max_rss_kib": 128288,
+            "heap_delta_bytes": 45088,
+            "hot_receipts": 958,
+            "journal_bytes": 1618873,
+            "total_queue_storage_bytes": 6139651
+          },
+          {
+            "name": "taskix_100_sessions_2000_tool_callbacks",
+            "elapsed_ms": 102.73,
+            "cpu_ms": 105.8,
+            "rss_bytes": 132251648,
+            "rss_delta_bytes": 884736,
+            "max_rss_kib": 129152,
+            "heap_delta_bytes": 486160,
+            "heartbeat_cli_calls": 0,
+            "context_cli_calls": 200,
+            "idle_timers": 0,
+            "idle_sessions_shutdown": 36,
+            "disposed_timers": 0
+          },
+          {
+            "name": "taskix_owned_lease_survives_idle_and_session_churn",
+            "elapsed_ms": 106.45,
+            "cpu_ms": 103.98,
+            "rss_bytes": 131874816,
+            "rss_delta_bytes": -393216,
+            "max_rss_kib": 129168,
+            "heap_delta_bytes": 157912,
+            "owned_heartbeat_calls": 20,
+            "owned_shutdowns_before_dispose": 0,
+            "retained_renewal_timers": 1
+          },
+          {
+            "name": "actual_taskix_cli_1_session_40_native_tool_callbacks",
+            "elapsed_ms": 266.17,
+            "cpu_ms": 17.43,
+            "rss_bytes": 132202496,
+            "rss_delta_bytes": 294912,
+            "max_rss_kib": 129168,
+            "heap_delta_bytes": 231160,
+            "cli_binary": "target/debug/taskix",
+            "cli_invocations": 8,
+            "heartbeat_cli_calls": 0,
+            "context_cli_calls": 2,
+            "cli_total_elapsed_ms": 261.52,
+            "cpu_scope": "parent_node_only_excludes_taskix_children",
+            "isolation": "temporary_HOME_config_vault_SQLite_no_inherited_credentials"
+          }
+        ]
+      },
+      {
+        "fixture_contract": "OpenCode 2.0.32 native API",
+        "node": "v26.9.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "results": [
+          {
+            "name": "bridge_12000_messages_and_text_parts",
+            "elapsed_ms": 45.21,
+            "cpu_ms": 66.39,
+            "rss_bytes": 85262336,
+            "rss_delta_bytes": 31653888,
+            "max_rss_kib": 83408,
+            "heap_delta_bytes": 10292616,
+            "messages": 4096,
+            "parts": 8150,
+            "retained_text_bytes": 8388350
+          },
+          {
+            "name": "native_history_2400_tool_messages_one_complete_turn",
+            "elapsed_ms": 6.47,
+            "cpu_ms": 13.69,
+            "rss_bytes": 84623360,
+            "rss_delta_bytes": 311296,
+            "max_rss_kib": 83408,
+            "heap_delta_bytes": 1939888,
+            "native_history_calls": 13,
+            "tool_items": 2400
+          },
+          {
+            "name": "journal_5000_receipts_and_10000_state_updates",
+            "elapsed_ms": 1750.2,
+            "cpu_ms": 1595.87,
+            "rss_bytes": 127451136,
+            "rss_delta_bytes": 42827776,
+            "max_rss_kib": 124528,
+            "heap_delta_bytes": 340096,
+            "journal_bytes": 1618873,
+            "total_queue_storage_bytes": 6138532,
+            "additional_requests_rejected": 0,
+            "fs_write_bytes": 18656608,
+            "fs_write_calls": 19049,
+            "checkpoint_write_bytes": 7364129,
+            "checkpoints": 7
+          },
+          {
+            "name": "journal_restore_and_earliest_receipt",
+            "elapsed_ms": 46.32,
+            "cpu_ms": 49.95,
+            "rss_bytes": 135233536,
+            "rss_delta_bytes": 7700480,
+            "max_rss_kib": 132064,
+            "heap_delta_bytes": 44896,
+            "hot_receipts": 958,
+            "journal_bytes": 1618873,
+            "total_queue_storage_bytes": 6139651
+          },
+          {
+            "name": "taskix_100_sessions_2000_tool_callbacks",
+            "elapsed_ms": 102.34,
+            "cpu_ms": 104.93,
+            "rss_bytes": 136003584,
+            "rss_delta_bytes": 770048,
+            "max_rss_kib": 132816,
+            "heap_delta_bytes": 488376,
+            "heartbeat_cli_calls": 0,
+            "context_cli_calls": 200,
+            "idle_timers": 0,
+            "idle_sessions_shutdown": 36,
+            "disposed_timers": 0
+          },
+          {
+            "name": "taskix_owned_lease_survives_idle_and_session_churn",
+            "elapsed_ms": 98.18,
+            "cpu_ms": 100.83,
+            "rss_bytes": 136151040,
+            "rss_delta_bytes": 147456,
+            "max_rss_kib": 132960,
+            "heap_delta_bytes": 153744,
+            "owned_heartbeat_calls": 20,
+            "owned_shutdowns_before_dispose": 0,
+            "retained_renewal_timers": 1
+          },
+          {
+            "name": "actual_taskix_cli_1_session_40_native_tool_callbacks",
+            "elapsed_ms": 188.04,
+            "cpu_ms": 19.16,
+            "rss_bytes": 136478720,
+            "rss_delta_bytes": 327680,
+            "max_rss_kib": 133280,
+            "heap_delta_bytes": 228016,
+            "cli_binary": "target/debug/taskix",
+            "cli_invocations": 8,
+            "heartbeat_cli_calls": 0,
+            "context_cli_calls": 2,
+            "cli_total_elapsed_ms": 183.47,
+            "cpu_scope": "parent_node_only_excludes_taskix_children",
+            "isolation": "temporary_HOME_config_vault_SQLite_no_inherited_credentials"
+          }
+        ]
+      },
+      {
+        "fixture_contract": "OpenCode 2.0.32 native API",
+        "node": "v26.9.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "results": [
+          {
+            "name": "bridge_12000_messages_and_text_parts",
+            "elapsed_ms": 44.96,
+            "cpu_ms": 66.91,
+            "rss_bytes": 84869120,
+            "rss_delta_bytes": 31506432,
+            "max_rss_kib": 83008,
+            "heap_delta_bytes": 10291048,
+            "messages": 4096,
+            "parts": 8150,
+            "retained_text_bytes": 8388350
+          },
+          {
+            "name": "native_history_2400_tool_messages_one_complete_turn",
+            "elapsed_ms": 6.77,
+            "cpu_ms": 13.8,
+            "rss_bytes": 84082688,
+            "rss_delta_bytes": 180224,
+            "max_rss_kib": 83008,
+            "heap_delta_bytes": 1943368,
+            "native_history_calls": 13,
+            "tool_items": 2400
+          },
+          {
+            "name": "journal_5000_receipts_and_10000_state_updates",
+            "elapsed_ms": 1945.75,
+            "cpu_ms": 1711.16,
+            "rss_bytes": 121061376,
+            "rss_delta_bytes": 36978688,
+            "max_rss_kib": 119264,
+            "heap_delta_bytes": 342456,
+            "journal_bytes": 1618873,
+            "total_queue_storage_bytes": 6138532,
+            "additional_requests_rejected": 0,
+            "fs_write_bytes": 18656608,
+            "fs_write_calls": 19049,
+            "checkpoint_write_bytes": 7364129,
+            "checkpoints": 7
+          },
+          {
+            "name": "journal_restore_and_earliest_receipt",
+            "elapsed_ms": 49.26,
+            "cpu_ms": 52.29,
+            "rss_bytes": 127549440,
+            "rss_delta_bytes": 6438912,
+            "max_rss_kib": 124560,
+            "heap_delta_bytes": 44672,
+            "hot_receipts": 958,
+            "journal_bytes": 1618873,
+            "total_queue_storage_bytes": 6139651
+          },
+          {
+            "name": "taskix_100_sessions_2000_tool_callbacks",
+            "elapsed_ms": 99.63,
+            "cpu_ms": 102.73,
+            "rss_bytes": 128581632,
+            "rss_delta_bytes": 1015808,
+            "max_rss_kib": 125568,
+            "heap_delta_bytes": 488104,
+            "heartbeat_cli_calls": 0,
+            "context_cli_calls": 200,
+            "idle_timers": 0,
+            "idle_sessions_shutdown": 36,
+            "disposed_timers": 0
+          },
+          {
+            "name": "taskix_owned_lease_survives_idle_and_session_churn",
+            "elapsed_ms": 99.22,
+            "cpu_ms": 102.32,
+            "rss_bytes": 128679936,
+            "rss_delta_bytes": 98304,
+            "max_rss_kib": 125664,
+            "heap_delta_bytes": 157944,
+            "owned_heartbeat_calls": 20,
+            "owned_shutdowns_before_dispose": 0,
+            "retained_renewal_timers": 1
+          },
+          {
+            "name": "actual_taskix_cli_1_session_40_native_tool_callbacks",
+            "elapsed_ms": 197.94,
+            "cpu_ms": 17.5,
+            "rss_bytes": 129171456,
+            "rss_delta_bytes": 491520,
+            "max_rss_kib": 126144,
+            "heap_delta_bytes": 232440,
+            "cli_binary": "target/debug/taskix",
+            "cli_invocations": 8,
+            "heartbeat_cli_calls": 0,
+            "context_cli_calls": 2,
+            "cli_total_elapsed_ms": 193.66,
+            "cpu_scope": "parent_node_only_excludes_taskix_children",
+            "isolation": "temporary_HOME_config_vault_SQLite_no_inherited_credentials"
+          }
+        ]
+      }
+    ],
+    "cli-only": [
+      {
+        "fixture_contract": "OpenCode 2.0.32 native API",
+        "node": "v26.9.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "results": [
+          {
+            "name": "actual_taskix_cli_1_session_40_native_tool_callbacks",
+            "elapsed_ms": 167.55,
+            "cpu_ms": 19.52,
+            "rss_bytes": 54902784,
+            "rss_delta_bytes": 1228800,
+            "max_rss_kib": 53616,
+            "heap_delta_bytes": 548120,
+            "cli_binary": "target/debug/taskix",
+            "cli_invocations": 8,
+            "heartbeat_cli_calls": 0,
+            "context_cli_calls": 2,
+            "cli_total_elapsed_ms": 160.01,
+            "cpu_scope": "parent_node_only_excludes_taskix_children",
+            "isolation": "temporary_HOME_config_vault_SQLite_no_inherited_credentials"
+          }
+        ]
+      },
+      {
+        "fixture_contract": "OpenCode 2.0.32 native API",
+        "node": "v26.9.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "results": [
+          {
+            "name": "actual_taskix_cli_1_session_40_native_tool_callbacks",
+            "elapsed_ms": 169.93,
+            "cpu_ms": 19.29,
+            "rss_bytes": 54919168,
+            "rss_delta_bytes": 1277952,
+            "max_rss_kib": 53632,
+            "heap_delta_bytes": 548192,
+            "cli_binary": "target/debug/taskix",
+            "cli_invocations": 8,
+            "heartbeat_cli_calls": 0,
+            "context_cli_calls": 2,
+            "cli_total_elapsed_ms": 162.04,
+            "cpu_scope": "parent_node_only_excludes_taskix_children",
+            "isolation": "temporary_HOME_config_vault_SQLite_no_inherited_credentials"
+          }
+        ]
+      },
+      {
+        "fixture_contract": "OpenCode 2.0.32 native API",
+        "node": "v26.9.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "results": [
+          {
+            "name": "actual_taskix_cli_1_session_40_native_tool_callbacks",
+            "elapsed_ms": 192.67,
+            "cpu_ms": 23.41,
+            "rss_bytes": 54689792,
+            "rss_delta_bytes": 1245184,
+            "max_rss_kib": 53408,
+            "heap_delta_bytes": 547640,
+            "cli_binary": "target/debug/taskix",
+            "cli_invocations": 8,
+            "heartbeat_cli_calls": 0,
+            "context_cli_calls": 2,
+            "cli_total_elapsed_ms": 183.89,
+            "cpu_scope": "parent_node_only_excludes_taskix_children",
+            "isolation": "temporary_HOME_config_vault_SQLite_no_inherited_credentials"
+          }
+        ]
+      }
+    ]
+  }
+}
