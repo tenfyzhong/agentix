@@ -578,9 +578,9 @@ process.stdout.write(JSON.stringify({schema_version:1,ok:true,result:{}})+'\\n')
         serviceEnvironment = { ...env };
         execFileSync(
             process.execPath,
-            ["scripts/opencode-plugin.mjs", "install", "local"],
+            ["scripts/opencode-plugin.mjs", "install", process.env.AGENTIX_TEST_OPENCODE_SOURCE || "local"],
             {
-                env: { ...process.env, ...env, OPENCODE_CONFIG_DIR: config },
+                env: { ...env, OPENCODE: opencode, OPENCODE_CONFIG_DIR: config },
                 stdio: "pipe",
             },
         );

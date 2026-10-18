@@ -205,24 +205,29 @@ make remove-plugin HOSTS="pi omp"
 | Pi | Repository package containing Taskix Manager and Agentix Bridge | `git:github.com/tenfyzhong/agentix@main` |
 | OMP | Taskix Manager and Agentix Bridge | GitHub marketplace using the repository's default branch, currently `main` |
 | Claude Code | Taskix Manager and Agentix Bridge | GitHub marketplace with `@main` |
-| OpenCode | Taskix Manager server plugin and Agentix Bridge TUI plugin | Repository package from `main` |
+| OpenCode | Taskix Manager server plugin and Agentix Bridge TUI plugin | Native GitHub packages from `main` |
 
 OpenCode 2.0.32+ is included by default. Use `HOSTS=opencode` to install only its
-plugins, with `SOURCE=local` or `SOURCE=main`. This stages dependency-free JavaScript
-packages and configures the Taskix server package in `opencode.json`/`opencode.jsonc` and
-the Bridge TUI package in `cli.json`, using the native `plugins` key.
-The Make target configures both entrypoints; installing a repository package
-alone does not perform that setup. Earlier 2.0 patches and OpenCode 1.x are not
-supported. The validated host baseline is 2.0.32; later API changes still require
-compatibility testing. Reported publication failures roll back the selected
-package and configuration, preserving existing file modes and original symlinks.
-This is not crash-atomic or safe for concurrent installer invocations.
+plugins. `SOURCE=main` uses `opencode plugin add` with native GitHub subdirectory
+package references for `plugins/taskix-manager` and `plugins/agentix-bridge`.
+It installs both packages using temporary configuration before publishing the
+GitHub references to the Taskix server's `opencode.json`/`opencode.jsonc` and the
+Bridge TUI's `cli.json`, using the native `plugins` key. OpenCode manages the
+package cache; run `opencode plugin update` to update remote plugins.
 
-Before publication, the installer loads both staged plugin entrypoints and their
-imports without activating them. An incomplete or incompatible source fails before
-replacing the installed package or configuration. For unreleased OpenCode changes,
-use `make plugin SOURCE=local HOSTS=opencode` from the checkout containing them;
-the default `SOURCE=main` fetches the remote main branch.
+`SOURCE=local` copies dependency-free JavaScript packages into `.agentix-plugin`
+inside the OpenCode configuration directory and registers local `file://` paths.
+Before publication, it loads both staged entrypoints and their imports without
+activating them. Use this mode to test changes from the current checkout.
+Switching modes removes previous installer-owned registrations; successful remote
+installation also removes the old local copy. Removal handles both modes and
+preserves unrelated plugins. Downloaded OpenCode cache entries are left managed
+by OpenCode, including after an unsuccessful install or removal.
+
+Earlier 2.0 patches and OpenCode 1.x are unsupported. The validated host baseline
+is 2.0.32; later API changes require compatibility testing. Reported publication
+failures roll back package/configuration changes, preserving file modes and original
+symlinks. This is not crash-atomic or safe for concurrent installer invocations.
 
 OMP's marketplace CLI does not expose a branch selector. If the repository's
 default branch changes, its remote source handling must be updated accordingly.

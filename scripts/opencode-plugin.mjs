@@ -9,7 +9,7 @@ import {
     writeFile,
 } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -17,6 +17,10 @@ const config =
     process.env.OPENCODE_CONFIG_DIR ||
     join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode");
 const destination = join(config, ".agentix-plugin");
+const remotePackages = {
+    server: "github:tenfyzhong/agentix#main::path:plugins/taskix-manager",
+    tui: "github:tenfyzhong/agentix#main::path:plugins/agentix-bridge",
+};
 const [action, source = "main"] = process.argv.slice(2);
 if (
     !["install", "remove"].includes(action) ||
@@ -86,7 +90,8 @@ function edit(text, key, entry) {
               : item;
         return (
             typeof ref !== "string" ||
-            !ref.startsWith(pathToFileURL(destination).href + "/")
+            (!ref.startsWith(pathToFileURL(destination).href + "/") &&
+                !Object.values(remotePackages).includes(ref))
         );
     });
     if (!entry && plugins.length === before.length) return text;
@@ -136,14 +141,18 @@ const updates = [
         "cli",
         "plugins",
         action === "install"
-            ? pathToFileURL(join(destination, "plugins/agentix-bridge")).href
+            ? source === "main"
+                ? remotePackages.tui
+                : pathToFileURL(join(destination, "plugins/agentix-bridge")).href
             : undefined,
     )),
     ...(await configs(
         "opencode",
         "plugins",
         action === "install"
-            ? pathToFileURL(join(destination, "plugins/taskix-manager")).href
+            ? source === "main"
+                ? remotePackages.server
+                : pathToFileURL(join(destination, "plugins/taskix-manager")).href
             : undefined,
     )),
 ];
@@ -169,94 +178,89 @@ try {
         }
         await writeFile(update.staged, update.text);
     }
-    if (action === "install") {
-        const temporary = await mkdtemp(join(tmpdir(), "agentix-opencode-"));
-        try {
-            let repository = fileURLToPath(new URL("../", import.meta.url));
-            if (source === "main") {
-                repository = join(temporary, "repository");
-                execFileSync(
-                    "git",
-                    [
-                        "clone",
-                        "--depth",
-                        "1",
-                        "--branch",
-                        "main",
-                        "https://github.com/tenfyzhong/agentix.git",
-                        repository,
-                    ],
-                    { stdio: "inherit" },
-                );
-            }
-            const stage = join(transaction, "package");
-            await mkdir(stage);
-            for (const path of [
-                "plugins/taskix-manager",
-                "plugins/agentix-bridge",
-            ]) {
-                await cp(join(repository, path), join(stage, path), {
-                    recursive: true,
-                    filter: (path) =>
-                        !/[\\/](node_modules|tests)([\\/]|$)/.test(path),
-                });
-            }
-            // Native V2 local directories resolve literal index/tui files, while named
-            // npm packages resolve exports. Keep both install paths on the same modules.
-            await writeFile(
-                join(stage, "plugins/taskix-manager/index.js"),
-                "export { default } from './opencode/server.mjs';\n",
-            );
-            await writeFile(
-                join(stage, "plugins/agentix-bridge/tui.js"),
-                "export { default } from './opencode/tui.mjs';\n",
-            );
-            const pkg = JSON.parse(
-                await readFile(join(repository, "package.json"), "utf8"),
-            );
-            delete pkg.workspaces;
-            delete pkg.devDependencies;
-            await writeFile(
-                join(stage, "package.json"),
-                JSON.stringify(pkg, null, 2) + "\n",
-            );
-            // Validate the staged entrypoints and their imports before replacing
-            // any installed files. Remote main may not contain OpenCode support yet.
-            try {
-                for (const entry of [
-                    "plugins/taskix-manager/index.js",
-                    "plugins/agentix-bridge/tui.js",
-                ]) {
-                    const plugin = await import(pathToFileURL(join(stage, entry)).href);
-                    if (typeof plugin.default?.setup !== "function")
-                        throw new Error(`Invalid native plugin entrypoint: ${entry}`);
-                }
-            } catch (cause) {
-                throw new Error(
-                    `Cannot load OpenCode plugins from SOURCE=${source}; ` +
-                    "the source is incomplete or incompatible. Use SOURCE=local " +
-                    "from a checkout containing OpenCode support until it is available on main.",
-                    { cause },
-                );
-            }
-            // Keep the previous package until all config publication succeeds.
-            try {
-                await rename(destination, previous);
-                movedPackage = true;
-            } catch (error) {
-                if (error.code !== "ENOENT") throw error;
-            }
-            await rename(stage, destination);
-            publishedPackage = true;
-        } finally {
-            await rm(temporary, { recursive: true, force: true });
+    if (action === "install" && source === "main") {
+        // Native installation validates and caches both packages before live config
+        // changes. Its temporary config must not inherit project/custom config.
+        const stagingConfig = join(transaction, "remote-config");
+        await mkdir(stagingConfig);
+        const env = { ...process.env, OPENCODE_CONFIG_DIR: stagingConfig };
+        delete env.OPENCODE_CONFIG;
+        delete env.OPENCODE_CONFIG_CONTENT;
+        for (const ref of Object.values(remotePackages)) {
+            execFileSync(process.env.OPENCODE || "opencode", ["plugin", "add", ref], {
+                cwd: stagingConfig,
+                env,
+                stdio: "inherit",
+                timeout: 180000,
+            });
         }
+    }
+    if (action === "install" && source === "local") {
+        const repository = fileURLToPath(new URL("../", import.meta.url));
+        const stage = join(transaction, "package");
+        await mkdir(stage);
+        for (const path of [
+            "plugins/taskix-manager",
+            "plugins/agentix-bridge",
+        ]) {
+            await cp(join(repository, path), join(stage, path), {
+                recursive: true,
+                filter: (path) =>
+                    !/[\\/](node_modules|tests)([\\/]|$)/.test(path),
+            });
+        }
+        // Native V2 local directories resolve literal index/tui files, while named
+        // npm packages resolve exports. Keep both install paths on the same modules.
+        await writeFile(
+            join(stage, "plugins/taskix-manager/index.js"),
+            "export { default } from './opencode/server.mjs';\n",
+        );
+        await writeFile(
+            join(stage, "plugins/agentix-bridge/tui.js"),
+            "export { default } from './opencode/tui.mjs';\n",
+        );
+        const pkg = JSON.parse(
+            await readFile(join(repository, "package.json"), "utf8"),
+        );
+        delete pkg.workspaces;
+        delete pkg.devDependencies;
+        await writeFile(
+            join(stage, "package.json"),
+            JSON.stringify(pkg, null, 2) + "\n",
+        );
+        // Validate the staged entrypoints and their imports before replacing
+        // any installed files.
+        try {
+            for (const entry of [
+                "plugins/taskix-manager/index.js",
+                "plugins/agentix-bridge/tui.js",
+            ]) {
+                const plugin = await import(pathToFileURL(join(stage, entry)).href);
+                if (typeof plugin.default?.setup !== "function")
+                    throw new Error(`Invalid native plugin entrypoint: ${entry}`);
+            }
+        } catch (cause) {
+            throw new Error(
+                `Cannot load OpenCode plugins from SOURCE=${source}; ` +
+                "the source is incomplete or incompatible. Use a checkout containing complete OpenCode support.",
+                { cause },
+            );
+        }
+        // Keep the previous package until all config publication succeeds.
+        try {
+            await rename(destination, previous);
+            movedPackage = true;
+        } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+        }
+        await rename(stage, destination);
+        publishedPackage = true;
     }
     for (const update of updates) {
         await rename(update.staged, update.path);
         committed.push(update);
     }
-    if (action === "remove") {
+    if (action === "remove" || source === "main") {
         try {
             await rename(destination, previous);
             movedPackage = true;
