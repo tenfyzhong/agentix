@@ -775,7 +775,12 @@ and active/queued-wrapper retention. Installer fault injection covers update,
 fresh install and removal failures during configuration publication, including
 regular-file modes and original symlinks. Incomplete remote-source tests cover
 missing server/TUI entrypoints and transitive imports on first install and update,
-with existing configuration and packages preserved before publication.
+with existing configuration and packages preserved before publication. CLI plugin
+publication targets only `cli.json`, even when an inactive `cli.jsonc` exists.
+Text-stream regressions cover byte/count payload eviction and bounded offset
+retention without replaying streamed prefixes; after offset metadata eviction,
+uncertain terminal-text replay is suppressed. Form regressions cover required
+multiselect submission and omission of optional single-value fields.
 Rollback is for reported operation
 failures; it is not crash-atomic or a concurrent-installer guarantee.
 

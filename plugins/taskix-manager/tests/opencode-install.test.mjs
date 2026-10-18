@@ -52,7 +52,7 @@ test("opencode_installs_native_v2_directory_plugins_without_dependencies", async
     const f = await fixture(t);
     const initial =
         '{// keep this comment\n "theme": "dark", "plugins": ["unrelated-cli",],\n "keybinds": {"leader":"ctrl+x",},\n}\n';
-    await writeFile(join(f.config, "cli.jsonc"), initial);
+    await writeFile(join(f.config, "cli.json"), initial);
     await writeFile(
         join(f.config, "opencode.json"),
         JSON.stringify({
@@ -63,7 +63,7 @@ test("opencode_installs_native_v2_directory_plugins_without_dependencies", async
     for (let attempt = 0; attempt < 2; attempt++) {
         const result = f.run("install", "local");
         assert.equal(result.status, 0, result.stderr);
-        const cli = await readFile(join(f.config, "cli.jsonc"), "utf8");
+        const cli = await readFile(join(f.config, "cli.json"), "utf8");
         assert.match(cli, /\/\/ keep this comment/);
         assert.match(cli, /"keybinds": \{"leader":"ctrl\+x",\}/);
         assert.equal((cli.match(/plugins\/agentix-bridge/g) || []).length, 1);
@@ -105,7 +105,7 @@ test("opencode_installs_native_v2_directory_plugins_without_dependencies", async
         { code: "ENOENT" },
     );
     assert.equal(f.run("remove").status, 0);
-    const removed = await readFile(join(f.config, "cli.jsonc"), "utf8");
+    const removed = await readFile(join(f.config, "cli.json"), "utf8");
     assert.match(removed, /unrelated-cli/);
     assert.doesNotMatch(removed, /agentix-plugin/);
     assert.deepEqual(
@@ -747,3 +747,18 @@ test("native_opencode_environment_keeps_network_plumbing_and_discards_credential
     ])
         assert.equal(env[key], undefined);
 });
+
+for (const both of [false, true]) {
+    test(`opencode_ignores_cli_jsonc_${both ? 'alongside_json' : 'alone'}`, async (t) => {
+        const f = await fixture(t);
+        const inactive = '{"plugins":["inactive-plugin"]}';
+        await writeFile(join(f.config, 'cli.jsonc'), inactive);
+        if (both) await writeFile(join(f.config, 'cli.json'), '{"plugins":["active-plugin"]}');
+        const result = f.run('install', 'local');
+        assert.equal(result.status, 0, result.stderr);
+        const active = JSON.parse(await readFile(join(f.config, 'cli.json'), 'utf8'));
+        assert.ok(active.plugins.some(p => p.includes('plugins/agentix-bridge')));
+        if (both) assert.ok(active.plugins.includes('active-plugin'));
+        assert.equal(await readFile(join(f.config, 'cli.jsonc'), 'utf8'), inactive);
+    });
+}

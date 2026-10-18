@@ -687,7 +687,7 @@ async fn doctor(config: &Config) -> Result<()> {
             AgentConfig::OpenCode { command, state_dir } => {
                 let output = tokio::time::timeout(
                     Duration::from_secs(10),
-                    tokio::process::Command::new(command)
+                    tokio::process::Command::from(opencode_command(command))
                         .arg("--version")
                         .output(),
                 )
@@ -801,12 +801,21 @@ fn opencode_workspace_args(command: &Path, state_dir: &Path, endpoint: &str) -> 
     ]
 }
 
+fn opencode_command(command: &Path) -> std::process::Command {
+    // Resolve npm .cmd shims through PATHEXT as well as native executables.
+    let executable = resolve_executable(command).map_or_else(
+        || command.to_owned(),
+        |path| std::fs::canonicalize(&path).unwrap_or(path),
+    );
+    std::process::Command::new(executable)
+}
+
 fn opencode_launch_command(
     command: &Path,
     state_dir: &Path,
     endpoint: &str,
 ) -> std::process::Command {
-    let mut child = std::process::Command::new(command);
+    let mut child = opencode_command(command);
     // Keep the IM session server under the terminal lifetime and launcher environment.
     child
         .arg("--standalone")
@@ -1350,11 +1359,10 @@ fn resolve_executable_in(
             .collect()
     };
     candidates.into_iter().find_map(|candidate| {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if candidate.extension().is_some() {
-            return None;
+        // npm installs an extensionless POSIX shim alongside its Windows
+        // shim. With PATHEXT, prefer an executable suffix over that shell file.
+        if candidate.extension().is_some() || extensions.is_empty() {
+            return candidate.is_file().then_some(candidate);
         }
         extensions
             .iter()

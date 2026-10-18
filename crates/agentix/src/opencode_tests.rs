@@ -71,3 +71,56 @@ fn opencode_doctor_resolves_windows_executable_extensions() {
         Some(command)
     );
 }
+
+#[test]
+fn opencode_launch_resolves_relative_executable_path() {
+    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let file = root.path().join("opencode");
+    std::fs::write(&file, b"fixture").unwrap();
+    let relative = file.strip_prefix(std::env::current_dir().unwrap()).unwrap();
+    let command = opencode_launch_command(relative, root.path(), "tcp://localhost:1234");
+    assert_eq!(
+        command.get_program(),
+        std::fs::canonicalize(file).unwrap().as_os_str()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn opencode_launch_resolves_cmd_shim() {
+    let root = tempfile::tempdir().unwrap();
+    let shim = root.path().join("opencode.cmd");
+    std::fs::write(&shim, b"@echo 2.0.32\r\n").unwrap();
+    let mut command = opencode_launch_command(
+        &root.path().join("opencode"),
+        root.path(),
+        "tcp://localhost:1234",
+    );
+    assert_eq!(
+        command.get_program(),
+        std::fs::canonicalize(&shim).unwrap().as_os_str()
+    );
+    let output = opencode_command(&root.path().join("opencode"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "2.0.32");
+    assert!(command.output().unwrap().status.success());
+}
+
+#[test]
+fn opencode_windows_resolution_prefers_cmd_over_npm_shell_shim() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("opencode"), b"#!/bin/sh").unwrap();
+    let shim = root.path().join("opencode.CMD");
+    std::fs::write(&shim, b"@echo fixture").unwrap();
+    assert_eq!(
+        resolve_executable_in(
+            Path::new("opencode"),
+            &[root.path().to_owned()],
+            &[".EXE".into(), ".CMD".into()]
+        ),
+        Some(shim)
+    );
+}

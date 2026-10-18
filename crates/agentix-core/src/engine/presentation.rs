@@ -525,6 +525,15 @@ pub(super) fn input_questions(request: &InteractionRequest) -> Vec<InputQuestion
                     .get("multiple")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                required: question
+                    .get("required")
+                    .and_then(Value::as_bool)
+                    .unwrap_or_else(|| {
+                        !question
+                            .get("multiple")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                    }),
                 custom: question
                     .get("custom")
                     .and_then(Value::as_bool)
@@ -548,6 +557,7 @@ pub(super) fn input_questions(request: &InteractionRequest) -> Vec<InputQuestion
             options: Vec::new(),
             secret: false,
             multiple: false,
+            required: true,
             custom: true,
         });
     }

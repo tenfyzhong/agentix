@@ -540,6 +540,7 @@ export class OpenCodeBridge {
                           header: field.title ?? request.title,
                           question:
                               field.description ?? field.title ?? request.title,
+                          required: field.required === true,
                           multiple: field.type === 'multiselect',
                           custom: field.custom ?? !field.options?.length,
                           options: (field.options || []).map((option) => ({
@@ -617,25 +618,22 @@ export class OpenCodeBridge {
             this.prune();
         } else if (type === 'session.text.started') {
             const key = p.assistantMessageID + ':' + p.ordinal;
-            if (!this.parts.has(key)) this.parts.set(key, '');
+            if (
+                !this.parts.has(key) &&
+                !this.parts.textLengths.has(key) &&
+                !this.parts.textLengthsEvicted
+            )
+                this.parts.set(key, '');
         } else if (
             type === 'session.text.delta' ||
             type === 'session.text.ended'
         ) {
             const root = this.aliases.get(p.assistantMessageID);
             if (!root) return;
-            const key = p.assistantMessageID + ':' + p.ordinal,
-                previous = this.parts.get(key) ?? '';
-            let delta;
-            if (type.endsWith('.delta')) {
-                delta = p.delta;
-                this.parts.set(key, previous + delta);
-            } else {
-                delta = p.text.startsWith(previous)
-                    ? p.text.slice(previous.length)
-                    : '';
-                this.parts.set(key, p.text);
-            }
+            const key = p.assistantMessageID + ':' + p.ordinal;
+            const delta = type.endsWith('.delta')
+                ? this.parts.appendText(key, p.delta)
+                : this.parts.endText(key, p.text);
             if (delta)
                 this.emit({
                     AgentMessageDelta: {
@@ -918,6 +916,26 @@ export class OpenCodeBridge {
                 }
                 const values = params.response.answers?.[field.key]?.answers;
                 if (
+                    values === undefined ||
+                    (Array.isArray(values) && values.length === 0)
+                ) {
+                    if (field.required)
+                        throw failure(
+                            'invalid_request',
+                            'A required form answer is missing',
+                        );
+                    continue;
+                }
+                if (
+                    field.required &&
+                    Array.isArray(values) &&
+                    values.every(value => typeof value === 'string' && !value.trim())
+                )
+                    throw failure(
+                        'invalid_request',
+                        'A required form answer is missing',
+                    );
+                if (
                     !Array.isArray(values) ||
                     values.some((v) => typeof v !== 'string') ||
                     (field.type === 'string' && values.length !== 1)
@@ -1083,10 +1101,43 @@ export class OpenCodeBridge {
 }
 class PartCache extends Map {
     bytes = 0;
+    textLengths = new Map();
+    textLengthsEvicted = false;
+    rememberText(id, length) {
+        this.textLengths.delete(id);
+        this.textLengths.set(id, length);
+        if (this.textLengths.size > 8192) {
+            this.textLengths.delete(this.textLengths.keys().next().value);
+            this.textLengthsEvicted = true;
+        }
+    }
+    appendText(id, delta) {
+        const previous = this.get(id);
+        const length = this.textLengths.get(id);
+        if (typeof previous === 'string') this.set(id, previous + delta);
+        else if (length !== undefined)
+            this.rememberText(id, length + delta.length);
+        else if (!this.textLengthsEvicted) this.set(id, delta);
+        return delta;
+    }
+    endText(id, text) {
+        const previous = this.get(id);
+        const length = this.textLengths.get(id);
+        // Payload eviction must not reset an already streamed offset. If the
+        // bounded offset cache also evicted it, suppress an uncertain replay.
+        let delta = '';
+        if (typeof previous === 'string') {
+            if (text.startsWith(previous)) delta = text.slice(previous.length);
+        } else if (length !== undefined) delta = text.slice(length);
+        else if (!this.textLengthsEvicted) delta = text;
+        this.set(id, text);
+        return delta;
+    }
     weight(value) {
         return typeof value === 'string' ? Buffer.byteLength(value) : 0;
     }
     set(id, value) {
+        if (typeof value === 'string') this.rememberText(id, value.length);
         if (super.has(id)) this.bytes -= this.weight(super.get(id));
         super.delete(id);
         super.set(id, value);
@@ -1102,5 +1153,7 @@ class PartCache extends Map {
     clear() {
         super.clear();
         this.bytes = 0;
+        this.textLengths.clear();
+        this.textLengthsEvicted = false;
     }
 }

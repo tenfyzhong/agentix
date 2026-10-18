@@ -13220,3 +13220,68 @@ async fn opencode_multiple_question_keeps_custom_and_deselection_before_next_que
         }})
     );
 }
+
+#[tokio::test]
+async fn opencode_required_multiselect_and_optional_single_constraints() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine.handle_agent_event(AgentEvent::InteractionRequested(user_input_request("constraints", &serde_json::json!([
+        {"id":"required", "question":"Choose", "required":true, "multiple":true, "custom":false, "options":[{"label":"A"}]},
+        {"id":"optional", "question":"Optional", "required":false, "options":[{"label":"B"}]}
+    ])))).await.unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(
+        !view
+            .actions
+            .iter()
+            .any(|a| a.label == "Submit" && !a.disabled)
+    );
+    click_action(
+        &engine,
+        "pick",
+        view.actions
+            .iter()
+            .find(|a| a.label == "A")
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    let view = channel.updated().last().unwrap().1.clone();
+    click_action(
+        &engine,
+        "submit",
+        view.actions
+            .iter()
+            .find(|a| a.label == "Submit" && !a.disabled)
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    let view = channel.updated().last().unwrap().1.clone();
+    click_action(
+        &engine,
+        "skip",
+        view.actions
+            .iter()
+            .find(|a| a.label == "Skip")
+            .unwrap()
+            .token
+            .clone(),
+    )
+    .await;
+    assert_eq!(
+        agent.interaction_decisions()[0].response,
+        serde_json::json!({"answers":{"required":{"answers":["A"]},"optional":{"answers":[]}}})
+    );
+}

@@ -111,7 +111,7 @@ function edit(text, key, entry) {
 }
 async function configs(name, key, entry) {
     const files = [];
-    for (const extension of ["json", "jsonc"]) {
+    for (const extension of name === "cli" ? ["json"] : ["json", "jsonc"]) {
         const path = join(config, name + "." + extension);
         try {
             files.push({ path, text: await readFile(path, "utf8") });

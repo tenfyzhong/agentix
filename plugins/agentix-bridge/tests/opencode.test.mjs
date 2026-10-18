@@ -1082,3 +1082,52 @@ test('opencode2_tool_dispatch_snapshots_only_consumed_fields_without_reading_lar
         2,
     );
 });
+
+for (const evict of ['bytes', 'count']) {
+    test(`opencode2_evicted_text_${evict}_does_not_replay_streamed_prefix`, async (t) => {
+        const f = fixture(t);
+        await f.bridge.start();
+        await f.user('u');
+        await f.emit('session.step.started', { sessionID: 'ses_one', assistantMessageID: 'a' });
+        const text = evict === 'bytes' ? 'x'.repeat(8 * 1024 * 1024 + 1) : 'prefix';
+        const data = { sessionID: 'ses_one', assistantMessageID: 'a', ordinal: 0 };
+        await f.emit('session.text.delta', { ...data, delta: text });
+        if (evict === 'count')
+            for (let i = 0; i < 8192; i++) f.bridge.parts.set('tool:' + i, true);
+        await f.emit('session.text.delta', { ...data, delta: 'next' });
+        await f.emit('session.text.ended', { ...data, text: text + 'next-final' });
+        await f.emit('session.text.ended', { ...data, text: text + 'next-final' });
+        assert.equal(f.events.filter(e => e.AgentMessageDelta).map(e => e.AgentMessageDelta.delta).join(''), text + 'next-final');
+        assert.ok(f.bridge.parts.bytes <= 8 * 1024 * 1024);
+    });
+}
+
+test('opencode2_forms_preserve_required_and_allow_optional_omission', async (t) => {
+    const f = fixture(t);
+    await f.bridge.start();
+    await f.emit('form.created', { form: { id: 'constraints', sessionID: 'ses_one', title: 'Form', fields: [
+        { key: 'required', type: 'multiselect', required: true, options: [{label:'A',value:'a'}] },
+        { key: 'optional', type: 'string', required: false },
+    ] } });
+    const questions = f.events.at(-1).InteractionRequested.payload.questions;
+    assert.equal(questions[0].required, true);
+    assert.equal(questions[1].required, false);
+    await assert.rejects(f.bridge.command('interaction', { rpc_id:'constraints', response:{ answers:{ required:{answers:[]} } } }), /required/i);
+    assert.ok(f.bridge.pending.has('constraints'));
+    await f.bridge.command('interaction', { rpc_id:'constraints', response:{ answers:{ required:{answers:['A']}, optional:{answers:[]} } } });
+    assert.deepEqual(f.calls.at(-1)[1].answer, { required:['a'] });
+});
+
+test('opencode2_text_offset_cache_is_bounded_and_does_not_replay_unknown_evicted_parts', async (t) => {
+    const f = fixture(t);
+    await f.bridge.start();
+    await f.user('u');
+    await f.emit('session.step.started', { sessionID: 'ses_one', assistantMessageID: 'a' });
+    const data = { sessionID:'ses_one', assistantMessageID:'a', ordinal:0 };
+    await f.emit('session.text.delta', { ...data, delta:'already streamed' });
+    for (let i = 0; i < 8192; i++) f.bridge.parts.set('text:' + i, 'x');
+    await f.emit('session.text.started', data);
+    await f.emit('session.text.ended', { ...data, text:'already streamed' });
+    assert.equal(f.events.filter(e => e.AgentMessageDelta).map(e => e.AgentMessageDelta.delta).join(''), 'already streamed');
+    assert.ok(f.bridge.parts.textLengths.size <= 8192);
+});

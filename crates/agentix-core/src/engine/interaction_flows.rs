@@ -539,7 +539,10 @@ impl Engine {
                 style: ActionStyle::Default,
             });
         }
-        if question.multiple {
+        let has_selection = progress.answers[progress.current]
+            .as_ref()
+            .is_some_and(|answers| !answers.is_empty());
+        if !question.required || (question.multiple && has_selection) {
             let token = self
                 .issue_action(
                     conversation,
@@ -550,7 +553,7 @@ impl Engine {
                 .await;
             actions.push(ActionButton {
                 disabled: false,
-                label: "Submit".into(),
+                label: if question.multiple { "Submit" } else { "Skip" }.into(),
                 token,
                 style: ActionStyle::Primary,
             });
@@ -659,7 +662,19 @@ impl Engine {
         let Some(slot) = progress.answers.get_mut(progress.current) else {
             return Err(EngineError::InvalidAction);
         };
-        let multiple = progress.questions[progress.current].multiple;
+        let question = &progress.questions[progress.current];
+        let multiple = question.multiple;
+        if question.required
+            && answer.trim().is_empty()
+            && (!multiple || slot.as_ref().is_none_or(Vec::is_empty))
+        {
+            self.interactions
+                .pending
+                .lock()
+                .await
+                .insert(interaction.clone(), pending);
+            return Err(EngineError::InvalidAction);
+        }
         if multiple && !answer.is_empty() {
             let selected = slot.get_or_insert_with(Vec::new);
             if let Some(index) = selected.iter().position(|value| value == answer) {
@@ -671,7 +686,11 @@ impl Engine {
             if multiple {
                 slot.get_or_insert_with(Vec::new);
             } else {
-                *slot = Some(vec![answer.to_owned()]);
+                *slot = Some(if answer.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![answer.to_owned()]
+                });
             }
             progress.current += 1;
         }

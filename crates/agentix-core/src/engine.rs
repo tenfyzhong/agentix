@@ -263,6 +263,8 @@ struct InputProgress {
     current: usize,
 }
 
+// Independent field constraints from native forms, not mutually exclusive states.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone)]
 struct InputQuestion {
     id: String,
@@ -271,6 +273,7 @@ struct InputQuestion {
     options: Vec<InputOption>,
     secret: bool,
     multiple: bool,
+    required: bool,
     custom: bool,
 }
 
