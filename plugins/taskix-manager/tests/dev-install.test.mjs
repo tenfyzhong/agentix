@@ -7,14 +7,17 @@ import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
-const hosts = ["codex", "pi", "omp", "claude"];
+const hosts = ["codex", "pi", "omp", "claude", "opencode"];
+const cleanupHosts = hosts.filter(host => host !== "opencode");
 const removals = {
     codex: ["codex plugin remove taskix-manager@agentix", "codex plugin marketplace remove agentix"],
     pi: ["pi remove .", "pi remove git:github.com/tenfyzhong/agentix", "pi remove git:github.com/tenfyzhong/agentix@main"],
     omp: ["omp plugin uninstall agentix-plugins", "omp plugin uninstall taskix-manager@agentix", "omp plugin uninstall agentix-bridge@agentix", "omp plugin marketplace remove agentix"],
     claude: ["claude plugin uninstall taskix-manager@agentix", "claude plugin uninstall agentix-bridge@agentix", "claude plugin marketplace remove agentix"],
+    opencode: ["node scripts/opencode-plugin.mjs remove"],
 };
 function installs(host, remote) {
+    if (host === "opencode") return [`node scripts/opencode-plugin.mjs install ${remote ? "main" : "local"}`];
     if (host === "pi") return [`pi install ${remote ? "git:github.com/tenfyzhong/agentix@main" : "."}`];
     const source = remote ? (host === "codex" ? "tenfyzhong/agentix --ref main" : host === "claude" ? "tenfyzhong/agentix@main" : "tenfyzhong/agentix") : "./";
     return [
@@ -33,9 +36,9 @@ async function fixture(t) {
         const path = join(bin, command);
         await writeFile(path, `#!/bin/sh
 echo "${command} $*" >> "$INSTALL_FIXTURE_DIR/calls"
-if [ "${command}" = "$INSTALL_FAIL_HOST" ]; then
+if [ "${command}" = "$INSTALL_FAIL_HOST" ] || { [ "${command}" = "node" ] && [ "$INSTALL_FAIL_HOST" = "opencode" ]; }; then
     case "$*" in
-        "plugin add "*|"plugin install "*|"install "*) [ "$INSTALL_FAIL" != "install" ] || exit 8 ;;
+        "plugin add "*|"plugin install "*|"install "*|"scripts/opencode-plugin.mjs install "*) [ "$INSTALL_FAIL" != "install" ] || exit 8 ;;
         "plugin remove "*|"plugin uninstall "*|"remove "*) [ "$INSTALL_FAIL" != "remove" ] || exit 7 ;;
     esac
 fi
@@ -54,7 +57,7 @@ exit 0
 }
 
 
-test("remove_plugin_cleans_all_four_hosts", { skip: process.platform === "win32" }, async t => {
+test("remove_plugin_cleans_all_five_hosts", { skip: process.platform === "win32" }, async t => {
     const f = await fixture(t);
     assert.equal(f.run("remove-plugin").status, 0);
     assert.deepEqual(await f.calls(), hosts.flatMap(host => removals[host]));
@@ -64,7 +67,7 @@ for (const target of ["plugin", "plugin SOURCE=main", "plugin SOURCE=local"]) {
     test(`${target}_installs_all_hosts`, { skip: process.platform === "win32" }, async t => {
         const f = await fixture(t);
         const remote = ["plugin", "plugin SOURCE=main"].includes(target);
-        const expected = [...hosts.flatMap(host => removals[host]), ...hosts.flatMap(host => installs(host, remote))];
+        const expected = [...cleanupHosts.flatMap(host => removals[host]), ...hosts.flatMap(host => installs(host, remote))];
         for (let attempt = 1; attempt <= 2; attempt++) {
             const result = f.run(target);
             assert.equal(result.status, 0, result.stderr);
@@ -78,7 +81,9 @@ for (const host of hosts) {
         const f = await fixture(t);
         const args = ["plugin", `HOSTS=${host}`];
         assert.equal(f.run(args, "remove", host).status, 0);
-        assert.deepEqual(await f.calls(), [...removals[host], ...installs(host, true)]);
+        assert.deepEqual(await f.calls(), [
+            ...(host === "opencode" ? [] : removals[host]), ...installs(host, true),
+        ]);
         assert.notEqual(f.run(args, "install", host).status, 0);
     });
 }
@@ -96,6 +101,14 @@ test("missing_selected_cli_fails_before_cleanup", { skip: process.platform === "
     assert.notEqual(f.run(["plugin", "HOSTS=opencode", "OPENCODE=/nonexistent/agentix-test-opencode"]).status, 0);
     await assert.rejects(f.calls(), { code: "ENOENT" });
 });
+
+for (const command of ["OPENCODE", "NODE"]) {
+    test(`missing_default_${command.toLowerCase()}_fails_before_cleanup`, { skip: process.platform === "win32" }, async t => {
+        const f = await fixture(t);
+        assert.notEqual(f.run(["plugin", `${command}=/nonexistent/agentix-test-${command.toLowerCase()}`]).status, 0);
+        await assert.rejects(f.calls(), { code: "ENOENT" });
+    });
+}
 
 test("multiple_selected_hosts_leave_other_hosts_untouched", { skip: process.platform === "win32" }, async t => {
     const f = await fixture(t);
@@ -116,7 +129,7 @@ test("removed_aliases_fail_without_changing_plugins", { skip: process.platform =
 });
 
 for (const source of ["local", "main"]) {
-    test(`explicit_opencode_${source}_does_not_touch_default_hosts`, async t => {
+    test(`explicit_opencode_${source}_does_not_touch_other_hosts`, async t => {
         const f = await fixture(t);
         const result = f.run(["plugin", "HOSTS=opencode", `SOURCE=${source}`, "NODE=node"]);
         assert.equal(result.status, 0, result.stderr);

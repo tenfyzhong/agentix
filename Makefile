@@ -9,7 +9,7 @@ OMP ?= omp
 CLAUDE ?= claude
 OPENCODE ?= opencode
 NODE ?= node
-HOSTS ?= codex pi omp claude
+HOSTS ?= codex pi omp claude opencode
 VERSION ?= stable
 FORMULAE ?= agentix taskix
 SOURCE ?= main
@@ -206,8 +206,8 @@ help:
 		'  VERSION=local builds the selected profile before installing local binaries' \
 		'  PROFILE=release|debug (default: release), CARGO_TARGET_DIR selects build output' \
 		'  FORMULAE=agentix or FORMULAE=taskix selects one CLI (default: both)' \
-		'make plugin [SOURCE=local|main]  Install plugins for all four hosts (default: main)' \
-		'  HOSTS="codex pi omp claude" selects plugin hosts (default: all four)' \
-		'  HOSTS=opencode installs OpenCode 2.0.32+ server and TUI plugins explicitly' \
+		'make plugin [SOURCE=local|main]  Install plugins for all five hosts (default: main)' \
+		'  HOSTS="codex pi omp claude opencode" selects plugin hosts (default: all five)' \
+		'  HOSTS=opencode selects only the OpenCode 2.0.32+ server and TUI plugins' \
 		'make remove-plugin  Remove Agentix plugins for selected hosts' \
 		'make clean    Remove Cargo build artifacts'

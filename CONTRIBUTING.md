@@ -189,8 +189,8 @@ overwrite arbitrary files when Homebrew reports a link conflict.
 
 Run `make plugin` (or `make plugin SOURCE=main`) to install from GitHub.
 Run `make plugin SOURCE=local` to install from the current checkout. Both commands
-default to all four hosts: Codex, Pi, OMP, and Claude Code. Select one or more
-with `HOSTS`:
+default to all five hosts: Codex, Pi, OMP, Claude Code, and OpenCode. Select one or
+more with `HOSTS`:
 
 ```sh
 make plugin HOSTS=pi
@@ -205,11 +205,11 @@ make remove-plugin HOSTS="pi omp"
 | Pi | Repository package containing Taskix Manager and Agentix Bridge | `git:github.com/tenfyzhong/agentix@main` |
 | OMP | Taskix Manager and Agentix Bridge | GitHub marketplace using the repository's default branch, currently `main` |
 | Claude Code | Taskix Manager and Agentix Bridge | GitHub marketplace with `@main` |
-| OpenCode (explicit `HOSTS=opencode`) | Taskix Manager server plugin and Agentix Bridge TUI plugin | Repository package from `main` |
+| OpenCode | Taskix Manager server plugin and Agentix Bridge TUI plugin | Repository package from `main` |
 
-OpenCode 2.0.32+ installation is supported through `make plugin HOSTS=opencode
-SOURCE=local` or `SOURCE=main`. This stages dependency-free JavaScript packages
-and configures the Taskix server package in `opencode.json`/`opencode.jsonc` and
+OpenCode 2.0.32+ is included by default. Use `HOSTS=opencode` to install only its
+plugins, with `SOURCE=local` or `SOURCE=main`. This stages dependency-free JavaScript
+packages and configures the Taskix server package in `opencode.json`/`opencode.jsonc` and
 the Bridge TUI package in `cli.json`/`cli.jsonc`, using the native `plugins` key.
 The Make target configures both entrypoints; installing a repository package
 alone does not perform that setup. Earlier 2.0 patches and OpenCode 1.x are not
