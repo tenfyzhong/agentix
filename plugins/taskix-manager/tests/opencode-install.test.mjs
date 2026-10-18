@@ -403,8 +403,8 @@ test(
         );
         const installed = spawnSync(
             process.execPath,
-            ["scripts/opencode-plugin.mjs", "install", "local"],
-            { cwd: root, env, encoding: "utf8" },
+            ["scripts/opencode-plugin.mjs", "install", process.env.AGENTIX_TEST_OPENCODE_SOURCE || "local"],
+            { cwd: root, env: { ...env, OPENCODE: binary }, encoding: "utf8" },
         );
         assert.equal(installed.status, 0, installed.stderr);
         const native = spawn(
@@ -599,89 +599,82 @@ test(
     },
 );
 
-test(
-    "opencode_update_preserves_installed_package_and_configs_when_source_fetch_fails",
-    { skip: process.platform === "win32" },
-    async (t) => {
-        const f = await fixture(t);
-        let result = f.run("install", "local");
-        assert.equal(result.status, 0, result.stderr);
-        const marker = join(f.config, ".agentix-plugin", "keep-marker");
-        await writeFile(marker, "previous-install");
-        const before = await readFile(join(f.config, "opencode.json"), "utf8");
-        const bin = join(f.config, "bin");
-        await mkdir(bin);
-        const npm = join(bin, "git");
-        await writeFile(npm, "#!/bin/sh\nexit 7\n");
-        await chmod(npm, 0o755);
-        result = f.runWithEnv(
-            { PATH: bin + ":" + process.env.PATH },
-            "install",
-            "main",
-        );
-        assert.notEqual(result.status, 0);
-        assert.equal(await readFile(marker, "utf8"), "previous-install");
-        assert.equal(
-            await readFile(join(f.config, "opencode.json"), "utf8"),
-            before,
-        );
-    },
-);
+const remotePackages = {
+    "opencode.json": "github:tenfyzhong/agentix#main::path:plugins/taskix-manager",
+    "cli.json": "github:tenfyzhong/agentix#main::path:plugins/agentix-bridge",
+};
 
-async function remoteSource(f) {
-    const source = join(f.config, "remote-source");
-    await mkdir(source);
-    for (const path of [
-        "plugins/taskix-manager",
-        "plugins/agentix-bridge",
-    ]) {
-        await cp(join(root, path), join(source, path), {
-            recursive: true,
-            filter: (path) =>
-                !/[\\/](node_modules|tests)([\\/]|$)/.test(path),
-        });
-    }
-    const pkg = JSON.parse(
-        await readFile(join(root, "package.json"), "utf8"),
-    );
-    pkg.description = "main source fixture";
-    await writeFile(join(source, "package.json"), JSON.stringify(pkg));
-    const bin = join(f.config, "git-bin");
+async function remoteCLI(f) {
+    const bin = join(f.config, "bin");
     await mkdir(bin);
-    const git = join(bin, "git");
-    await writeFile(
-        git,
-        '#!/bin/sh\nprintf "%s\\n" "$*" > "$OPENCODE_FIXTURE_SOURCE/git-call"\nfor arg in "$@"; do target="$arg"; done\nexec /bin/cp -R "$OPENCODE_FIXTURE_SOURCE/." "$target"\n',
-    );
-    await chmod(git, 0o755);
-    return { source, env: { PATH: bin + ":" + process.env.PATH, OPENCODE_FIXTURE_SOURCE: source } };
+    const executable = join(bin, "opencode");
+    await cp(new URL("./fixtures/opencode-install-cli.mjs", import.meta.url), executable);
+    await chmod(executable, 0o755);
+    // The old clone implementation must fail offline, never access the network.
+    await writeFile(join(bin, "git"), "#!/bin/sh\nexit 7\n");
+    await chmod(join(bin, "git"), 0o755);
+    return {
+        OPENCODE: executable,
+        OPENCODE_CONFIG: join(f.config, "user-config.json"),
+        OPENCODE_CONFIG_CONTENT: '{"plugins":["unrelated-user-plugin"]}',
+        PATH: bin + ":" + process.env.PATH,
+        OPENCODE_TEST_CALLS: join(f.config, "calls.jsonl"),
+    };
 }
 
-test(
-    "opencode_main_stages_the_cloned_repository",
-    { skip: process.platform === "win32" },
-    async (t) => {
+for (const existing of [false, true]) {
+    test(`opencode_remote_${existing ? "migration" : "install"}_uses_native_github_packages`, { skip: process.platform === "win32" }, async (t) => {
         const f = await fixture(t);
-        const { source, env } = await remoteSource(f);
-        const result = f.runWithEnv(
-            env,
-            "install",
-            "main",
-        );
-        assert.equal(result.status, 0, result.stderr);
-        const installed = JSON.parse(
-            await readFile(
-                join(f.config, ".agentix-plugin/package.json"),
-                "utf8",
-            ),
-        );
-        assert.equal(installed.description, "main source fixture");
-        assert.match(
-            await readFile(join(source, "git-call"), "utf8"),
-            /^clone --depth 1 --branch main https:\/\/github.com\/tenfyzhong\/agentix.git /,
-        );
-    },
-);
+        for (const name of Object.keys(remotePackages))
+            await writeFile(join(f.config, name), '{// preserved\n"plugins":["unrelated"]}\n');
+        if (existing) assert.equal(f.run("install", "local").status, 0);
+        const env = await remoteCLI(f);
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const result = f.runWithEnv(env, "install", "main");
+            assert.equal(result.status, 0, result.stderr);
+            for (const [name, ref] of Object.entries(remotePackages)) {
+                const text = await readFile(join(f.config, name), "utf8");
+                assert.match(text, /preserved/);
+                assert.deepEqual(JSON.parse(text.replace("// preserved", "")).plugins, ["unrelated", ref]);
+            }
+            await assert.rejects(stat(join(f.config, ".agentix-plugin")), { code: "ENOENT" });
+        }
+        const calls = (await readFile(env.OPENCODE_TEST_CALLS, "utf8")).trim().split("\n").map(JSON.parse);
+        assert.deepEqual(calls.map(c => c.args), Array(2).fill(Object.values(remotePackages)).flat().map(ref => ["plugin", "add", ref]));
+        assert.ok(calls.every(c => c.config !== f.config && c.cwd !== root && c.customConfig === undefined && c.configContent === undefined));
+        assert.equal(f.run("install", "local").status, 0);
+        for (const name of Object.keys(remotePackages)) {
+            const text = await readFile(join(f.config, name), "utf8");
+            assert.doesNotMatch(text, /github:tenfyzhong/);
+            assert.match(text, /file:\/\//);
+        }
+        assert.equal(f.runWithEnv(env, "install", "main").status, 0);
+        assert.equal(f.run("remove").status, 0);
+        for (const name of Object.keys(remotePackages))
+            assert.deepEqual(JSON.parse((await readFile(join(f.config, name), "utf8")).replace("// preserved", "")).plugins, ["unrelated"]);
+    });
+}
+
+for (const failure of ["first", "second", "publication"]) {
+    for (const existing of [false, true]) {
+        test(`opencode_remote_${failure}_failure_preserves_${existing ? "existing" : "empty"}_installation`, { skip: process.platform === "win32" }, async (t) => {
+            const f = await fixture(t);
+            if (existing) assert.equal(f.run("install", "local").status, 0);
+            const before = await Promise.all(Object.keys(remotePackages).map(name => readFile(join(f.config, name), "utf8").catch(() => null)));
+            const env = await remoteCLI(f);
+            if (failure === "publication") {
+                env.NODE_OPTIONS = `--import=${new URL("./fixtures/opencode-install-fault.mjs", import.meta.url).href}`;
+                env.OPENCODE_TEST_FAIL_RENAME = join(f.config, "opencode.json");
+            } else env.OPENCODE_TEST_FAIL_PACKAGE = Object.values(remotePackages)[failure === "first" ? 0 : 1];
+            const result = f.runWithEnv(env, "install", "main");
+            assert.notEqual(result.status, 0);
+            assert.match(result.stderr, failure === "publication" ? /Fixture config publication failed/ : /Fixture native install failed/);
+            assert.deepEqual(await Promise.all(Object.keys(remotePackages).map(name => readFile(join(f.config, name), "utf8").catch(() => null))), before);
+            if (existing) await import(pathToFileURL(join(f.config, ".agentix-plugin/plugins/taskix-manager/index.js")));
+            else await assert.rejects(stat(join(f.config, ".agentix-plugin")), { code: "ENOENT" });
+        });
+    }
+}
 
 for (const missing of [
     "plugins/taskix-manager/opencode/server.mjs",
@@ -689,32 +682,24 @@ for (const missing of [
     "plugins/agentix-bridge/opencode/turns.mjs",
 ]) {
     for (const existing of [false, true]) {
-        test(`opencode_${existing ? "update" : "first_install"}_rejects_missing_${missing}`, { skip: process.platform === "win32" }, async (t) => {
+        test(`opencode_${existing ? "update" : "first_install"}_rejects_missing_${missing}`, async (t) => {
             const f = await fixture(t);
-            if (existing) {
-                const result = f.run("install", "local");
-                assert.equal(result.status, 0, result.stderr);
-                await writeFile(join(f.config, ".agentix-plugin/keep-marker"), "previous-install");
-            } else {
-                await writeFile(join(f.config, "cli.json"), '{"plugins":["other-cli"]}\n');
-                await writeFile(join(f.config, "opencode.json"), '{"plugins":["other-server"]}\n');
-            }
+            if (existing) assert.equal(f.run("install", "local").status, 0);
             const paths = ["cli.json", "opencode.json"];
-            const before = await Promise.all(paths.map(path => readFile(join(f.config, path), "utf8")));
-            const { source, env } = await remoteSource(f);
-            await rm(join(source, missing));
-            const result = f.runWithEnv(env, "install", "main");
-            assert.notEqual(result.status, 0, "incomplete sources must not be published");
-            assert.match(result.stderr, /Cannot load OpenCode plugins from SOURCE=main/);
-            assert.match(result.stderr, /SOURCE=local/);
-            assert.deepEqual(await Promise.all(paths.map(path => readFile(join(f.config, path), "utf8"))), before);
-            if (existing) {
-                assert.equal(await readFile(join(f.config, ".agentix-plugin/keep-marker"), "utf8"), "previous-install");
-                await import(pathToFileURL(join(f.config, ".agentix-plugin/plugins/taskix-manager/index.js")));
-                await import(pathToFileURL(join(f.config, ".agentix-plugin/plugins/agentix-bridge/tui.js")));
-            } else {
-                await assert.rejects(stat(join(f.config, ".agentix-plugin")), { code: "ENOENT" });
+            const before = await Promise.all(paths.map(path => readFile(join(f.config, path), "utf8").catch(() => null)));
+            const source = join(f.config, "source");
+            for (const path of ["scripts", "plugins/taskix-manager", "plugins/agentix-bridge", "package.json"]) {
+                await cp(join(root, path), join(source, path), { recursive: true, filter: path => !/[\\/](node_modules|tests)([\\/]|$)/.test(path) });
             }
+            await rm(join(source, missing));
+            const result = spawnSync(process.execPath, [join(source, "scripts/opencode-plugin.mjs"), "install", "local"], {
+                env: { ...process.env, OPENCODE_CONFIG_DIR: f.config }, encoding: "utf8",
+            });
+            assert.notEqual(result.status, 0);
+            assert.match(result.stderr, /Cannot load OpenCode plugins from SOURCE=local/);
+            assert.deepEqual(await Promise.all(paths.map(path => readFile(join(f.config, path), "utf8").catch(() => null))), before);
+            if (existing) await import(pathToFileURL(join(f.config, ".agentix-plugin/plugins/taskix-manager/index.js")));
+            else await assert.rejects(stat(join(f.config, ".agentix-plugin")), { code: "ENOENT" });
         });
     }
 }
@@ -762,3 +747,21 @@ for (const both of [false, true]) {
         assert.equal(await readFile(join(f.config, 'cli.jsonc'), 'utf8'), inactive);
     });
 }
+
+test("opencode_remote_migration_preserves_jsonc_and_unowned_package_references", { skip: process.platform === "win32" }, async (t) => {
+    const f = await fixture(t);
+    const old = pathToFileURL(join(f.config, ".agentix-plugin/plugins/taskix-manager")).href;
+    const foreign = "github:another/agentix#main::path:plugins/taskix-manager";
+    await writeFile(join(f.config, "opencode.json"), JSON.stringify({ plugins: [old, foreign] }));
+    await writeFile(join(f.config, "opencode.jsonc"), '{// keep jsonc\n"plugins":[' + JSON.stringify({package: remotePackages["opencode.json"]}) + ',],"theme":"dark",}\n', {mode: 0o600});
+    const env = await remoteCLI(f);
+    const result = f.runWithEnv(env, "install", "main");
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(await readFile(join(f.config, "opencode.json"), "utf8")).plugins, [foreign]);
+    const text = await readFile(join(f.config, "opencode.jsonc"), "utf8");
+    assert.match(text, /keep jsonc/);
+    assert.match(text, /"theme":"dark"/);
+    assert.equal(text.split(remotePackages["opencode.json"]).length - 1, 1);
+    assert.doesNotMatch(text, /file:/);
+    assert.equal((await stat(join(f.config, "opencode.jsonc"))).mode & 0o777, 0o600);
+});

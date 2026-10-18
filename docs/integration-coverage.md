@@ -711,7 +711,9 @@ verifies native executor identity, lease injection, retried tool-call idempotenc
 interruption cleanup and duplicate Bridge/server discussion capture against an
 isolated SQLite database.
 [Installer tests](../plugins/taskix-manager/tests/opencode-install.test.mjs)
-exercise explicit host selection and isolated OpenCode configuration files.
+exercise explicit host selection and isolated OpenCode configuration files,
+native GitHub CLI calls, local/remote migration, repeat installation, JSONC precedence,
+removal, and rollback after either package installation or configuration publication fails.
 [Native integration tests](../plugins/agentix-bridge/tests/opencode-native.test.mjs)
 load both installed plugins in an isolated OpenCode 2.0.32 TUI with a local fake
 provider and Taskix CLI fixture. The native run covers original-terminal and
@@ -728,7 +730,11 @@ AGENTIX_TEST_AGENTIX=/absolute/path/to/current/target/debug/agentix AGENTIX_TEST
 
 The fixture uses tmux; override its executable with `AGENTIX_TEST_TMUX_BIN` and the
 OpenCode executable with `AGENTIX_TEST_OPENCODE` when needed. The installed plugins
-are dependency-free native 2.x packages. It does not establish live
+are dependency-free native 2.x packages. Set `AGENTIX_TEST_OPENCODE_SOURCE=main`
+to exercise GitHub installation instead of the default local checkout in both the
+native TUI and headless installer tests. This opt-in mode needs network access and
+validates the remote `main` package contents, not uncommitted plugin changes.
+It does not establish live
 Telegram/Feishu/Slack or production provider acceptance.
 Form fixtures separately cover custom-input restrictions, option value mapping,
 unsupported constraints and native-terminal fallback.
