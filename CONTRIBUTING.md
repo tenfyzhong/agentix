@@ -218,6 +218,12 @@ compatibility testing. Reported publication failures roll back the selected
 package and configuration, preserving existing file modes and original symlinks.
 This is not crash-atomic or safe for concurrent installer invocations.
 
+Before publication, the installer loads both staged plugin entrypoints and their
+imports without activating them. An incomplete or incompatible source fails before
+replacing the installed package or configuration. For unreleased OpenCode changes,
+use `make plugin SOURCE=local HOSTS=opencode` from the checkout containing them;
+the default `SOURCE=main` fetches the remote main branch.
+
 OMP's marketplace CLI does not expose a branch selector. If the repository's
 default branch changes, its remote source handling must be updated accordingly.
 Local marketplace paths use `./`, which OMP requires for relative paths.
@@ -240,6 +246,12 @@ Installation failures stop the target and are reported; earlier host changes
 are not rolled back. Repeated installations are supported. Restart or reload
 the hosts after installation. Start a new Codex thread and review/trust hooks
 with `/hooks`; see the [plugin installation guide](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#prerequisites-and-activation).
+
+OpenCode's default mode uses a background server that outlives the TUI. After
+repairing a server-plugin load failure, finish active turns, run
+`opencode service restart`, then reopen the TUI. For `--standalone` sessions,
+restart that terminal process instead. Reopening only the default TUI can retain
+the old server's failed plugin state. The Make targets do not restart either host.
 
 ## Tests and external dependencies
 

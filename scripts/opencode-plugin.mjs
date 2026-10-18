@@ -220,6 +220,25 @@ try {
                 join(stage, "package.json"),
                 JSON.stringify(pkg, null, 2) + "\n",
             );
+            // Validate the staged entrypoints and their imports before replacing
+            // any installed files. Remote main may not contain OpenCode support yet.
+            try {
+                for (const entry of [
+                    "plugins/taskix-manager/index.js",
+                    "plugins/agentix-bridge/tui.js",
+                ]) {
+                    const plugin = await import(pathToFileURL(join(stage, entry)).href);
+                    if (typeof plugin.default?.setup !== "function")
+                        throw new Error(`Invalid native plugin entrypoint: ${entry}`);
+                }
+            } catch (cause) {
+                throw new Error(
+                    `Cannot load OpenCode plugins from SOURCE=${source}; ` +
+                    "the source is incomplete or incompatible. Use SOURCE=local " +
+                    "from a checkout containing OpenCode support until it is available on main.",
+                    { cause },
+                );
+            }
             // Keep the previous package until all config publication succeeds.
             try {
                 await rename(destination, previous);

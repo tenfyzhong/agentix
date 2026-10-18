@@ -773,7 +773,10 @@ foreign-session filtering, failed-step versus native terminal status, Taskix
 activation retry and continuation-source preservation, event-pool backpressure
 and active/queued-wrapper retention. Installer fault injection covers update,
 fresh install and removal failures during configuration publication, including
-regular-file modes and original symlinks. Rollback is for reported operation
+regular-file modes and original symlinks. Incomplete remote-source tests cover
+missing server/TUI entrypoints and transitive imports on first install and update,
+with existing configuration and packages preserved before publication.
+Rollback is for reported operation
 failures; it is not crash-atomic or a concurrent-installer guarantee.
 
 The focused Node/Rust checks and native contract generation/formatting checks

@@ -628,41 +628,43 @@ test(
     },
 );
 
+async function remoteSource(f) {
+    const source = join(f.config, "remote-source");
+    await mkdir(source);
+    for (const path of [
+        "plugins/taskix-manager",
+        "plugins/agentix-bridge",
+    ]) {
+        await cp(join(root, path), join(source, path), {
+            recursive: true,
+            filter: (path) =>
+                !/[\\/](node_modules|tests)([\\/]|$)/.test(path),
+        });
+    }
+    const pkg = JSON.parse(
+        await readFile(join(root, "package.json"), "utf8"),
+    );
+    pkg.description = "main source fixture";
+    await writeFile(join(source, "package.json"), JSON.stringify(pkg));
+    const bin = join(f.config, "git-bin");
+    await mkdir(bin);
+    const git = join(bin, "git");
+    await writeFile(
+        git,
+        '#!/bin/sh\nprintf "%s\\n" "$*" > "$OPENCODE_FIXTURE_SOURCE/git-call"\nfor arg in "$@"; do target="$arg"; done\nexec /bin/cp -R "$OPENCODE_FIXTURE_SOURCE/." "$target"\n',
+    );
+    await chmod(git, 0o755);
+    return { source, env: { PATH: bin + ":" + process.env.PATH, OPENCODE_FIXTURE_SOURCE: source } };
+}
+
 test(
     "opencode_main_stages_the_cloned_repository",
     { skip: process.platform === "win32" },
     async (t) => {
         const f = await fixture(t);
-        const source = join(f.config, "remote-source");
-        await mkdir(source);
-        for (const path of [
-            "plugins/taskix-manager",
-            "plugins/agentix-bridge",
-        ]) {
-            await cp(join(root, path), join(source, path), {
-                recursive: true,
-                filter: (path) =>
-                    !/[\\/](node_modules|tests)([\\/]|$)/.test(path),
-            });
-        }
-        const pkg = JSON.parse(
-            await readFile(join(root, "package.json"), "utf8"),
-        );
-        pkg.description = "main source fixture";
-        await writeFile(join(source, "package.json"), JSON.stringify(pkg));
-        const bin = join(f.config, "git-bin");
-        await mkdir(bin);
-        const git = join(bin, "git");
-        await writeFile(
-            git,
-            '#!/bin/sh\nprintf "%s\\n" "$*" > "$OPENCODE_FIXTURE_SOURCE/git-call"\nfor arg in "$@"; do target="$arg"; done\nexec /bin/cp -R "$OPENCODE_FIXTURE_SOURCE/." "$target"\n',
-        );
-        await chmod(git, 0o755);
+        const { source, env } = await remoteSource(f);
         const result = f.runWithEnv(
-            {
-                PATH: bin + ":" + process.env.PATH,
-                OPENCODE_FIXTURE_SOURCE: source,
-            },
+            env,
             "install",
             "main",
         );
@@ -680,6 +682,42 @@ test(
         );
     },
 );
+
+for (const missing of [
+    "plugins/taskix-manager/opencode/server.mjs",
+    "plugins/agentix-bridge/opencode/tui.mjs",
+    "plugins/agentix-bridge/opencode/turns.mjs",
+]) {
+    for (const existing of [false, true]) {
+        test(`opencode_${existing ? "update" : "first_install"}_rejects_missing_${missing}`, { skip: process.platform === "win32" }, async (t) => {
+            const f = await fixture(t);
+            if (existing) {
+                const result = f.run("install", "local");
+                assert.equal(result.status, 0, result.stderr);
+                await writeFile(join(f.config, ".agentix-plugin/keep-marker"), "previous-install");
+            } else {
+                await writeFile(join(f.config, "cli.json"), '{"plugins":["other-cli"]}\n');
+                await writeFile(join(f.config, "opencode.json"), '{"plugins":["other-server"]}\n');
+            }
+            const paths = ["cli.json", "opencode.json"];
+            const before = await Promise.all(paths.map(path => readFile(join(f.config, path), "utf8")));
+            const { source, env } = await remoteSource(f);
+            await rm(join(source, missing));
+            const result = f.runWithEnv(env, "install", "main");
+            assert.notEqual(result.status, 0, "incomplete sources must not be published");
+            assert.match(result.stderr, /Cannot load OpenCode plugins from SOURCE=main/);
+            assert.match(result.stderr, /SOURCE=local/);
+            assert.deepEqual(await Promise.all(paths.map(path => readFile(join(f.config, path), "utf8"))), before);
+            if (existing) {
+                assert.equal(await readFile(join(f.config, ".agentix-plugin/keep-marker"), "utf8"), "previous-install");
+                await import(pathToFileURL(join(f.config, ".agentix-plugin/plugins/taskix-manager/index.js")));
+                await import(pathToFileURL(join(f.config, ".agentix-plugin/plugins/agentix-bridge/tui.js")));
+            } else {
+                await assert.rejects(stat(join(f.config, ".agentix-plugin")), { code: "ENOENT" });
+            }
+        });
+    }
+}
 
 test("native_opencode_environment_keeps_network_plumbing_and_discards_credentials", () => {
     const env = isolatedOpenCodeEnvironment(
