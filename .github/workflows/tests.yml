@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: "24.22.1"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.95.0
@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: "24.22.1"
       - name: Install protobuf compiler (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -117,7 +117,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: "24.22.1"
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@1f8e202ffddf94def7f42f6fa3a482e821489f9c # 2026.07.10.1
       - name: Verify bottle install and pour with an isolated fixture
@@ -181,7 +181,7 @@ jobs:
       # Rust integration tests also launch native Node host fixtures.
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: "24.22.1"
       - name: Install test tools on Linux
         if: runner.os == 'Linux'
         run: |
@@ -230,7 +230,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: "24.22.1"
       - name: Install protobuf compiler
         uses: ./.github/actions/setup-protoc-windows
       - uses: dtolnay/rust-toolchain@master
