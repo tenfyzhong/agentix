@@ -700,11 +700,13 @@ impl Engine {
                 tasks.show_task(conversation, owner_id, &id).await?;
             }
             AgentCommand::Help => self.show_help(conversation).await?,
-            AgentCommand::Sessions => self.show_sessions(conversation, owner_id).await?,
+            AgentCommand::Sessions => {
+                // Keep picker rendering out of every inbound command's stack frame.
+                Box::pin(self.show_sessions(conversation, owner_id)).await?;
+            }
             AgentCommand::SessionsBackend(kind) => {
                 let kind = parse_backend(&kind)?;
-                self.show_sessions_filtered(conversation, owner_id, Some(kind))
-                    .await?;
+                Box::pin(self.show_sessions_filtered(conversation, owner_id, Some(kind))).await?;
             }
             AgentCommand::Multiplexer { kind, backend } => {
                 self.require_multiplexer(kind)?;
