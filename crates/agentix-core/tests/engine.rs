@@ -1014,6 +1014,7 @@ struct FakeChannel {
     sent: Arc<Mutex<Vec<(ConversationRef, OutboundView)>>>,
     updated: Arc<Mutex<Vec<(MessageRef, OutboundView)>>>,
     disabled_actions: Arc<Mutex<Vec<MessageRef>>>,
+    fail_disable_message: Arc<Mutex<Option<String>>>,
     messages: Arc<Mutex<HashMap<MessageRef, OutboundView>>>,
     session_commands: Arc<Mutex<Vec<(ConversationRef, bool)>>>,
     menus: Arc<Mutex<Vec<CommandMenu>>>,
@@ -1187,6 +1188,11 @@ impl ChannelAdapter for FakeChannel {
 
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {
         self.disabled_actions.lock().unwrap().push(message.clone());
+        if self.fail_disable_message.lock().unwrap().as_deref() == Some(&message.message_id) {
+            return Err(ChannelError::Transport(
+                "injected action cleanup failure".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -2120,7 +2126,10 @@ async fn telegram_session_picker_sends_one_named_card_per_session_and_attaches_i
     assert!(agent.calls().contains(&"attach:thr_b".to_owned()));
     assert_eq!(
         channel.disabled_actions(),
-        vec![MessageRef::new(conversation, "m2")]
+        vec![
+            MessageRef::new(conversation.clone(), "m2"),
+            MessageRef::new(conversation, "m1")
+        ]
     );
     assert!(channel.sent().iter().skip(2).any(|(_, view)| {
         view.title.contains("Daemon startup")
@@ -2144,6 +2153,63 @@ async fn telegram_session_picker_sends_one_named_card_per_session_and_attaches_i
     assert!(current.body.contains("✓ Attached"));
     assert!(current.actions.is_empty());
     assert_eq!(cards[cards.len() - 2].1.actions.len(), 1);
+}
+
+#[tokio::test]
+async fn telegram_session_picker_cleans_only_the_selected_list_even_if_one_edit_fails() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    for (id, chat) in [
+        ("first-list", "chat-a"),
+        ("other-chat", "chat-b"),
+        ("second-list", "chat-a"),
+    ] {
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                id,
+                ConversationRef::new(ChannelKind::Telegram, chat),
+                "owner",
+                "/sessions",
+            ))
+            .await
+            .unwrap();
+    }
+    let cards = channel.sent();
+    assert_eq!(cards.len(), 6);
+    *channel.fail_disable_message.lock().unwrap() = Some("m2".into());
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(InboundEnvelope::action_from_message(
+            "select-old-list",
+            conversation.clone(),
+            "owner",
+            cards[0].1.actions[0].token.clone(),
+            MessageRef::new(conversation.clone(), "m1"),
+        ))
+        .await
+        .unwrap();
+    assert!(agent.calls().contains(&"attach:thr_a".to_owned()));
+    assert_eq!(
+        channel.disabled_actions(),
+        vec![
+            MessageRef::new(conversation.clone(), "m1"),
+            MessageRef::new(conversation.clone(), "m2")
+        ]
+    );
+    let stale = engine
+        .handle_inbound(InboundEnvelope::action(
+            "consumed-sibling",
+            conversation,
+            "owner",
+            cards[1].1.actions[0].token.clone(),
+        ))
+        .await;
+    assert!(matches!(stale, Err(EngineError::InvalidAction)));
 }
 
 #[tokio::test]

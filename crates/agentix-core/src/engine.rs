@@ -163,6 +163,10 @@ enum UiAction {
     Issue(IssueAction),
     TaskBrowse(TaskBrowse),
     Attach(SessionId),
+    AttachFromPicker {
+        session_id: SessionId,
+        messages: Arc<tokio::sync::Mutex<Vec<MessageRef>>>,
+    },
     QueueControl {
         session_id: SessionId,
         action: String,
@@ -197,6 +201,9 @@ impl UiAction {
                 session_id: target, ..
             }
             | Self::Attach(target)
+            | Self::AttachFromPicker {
+                session_id: target, ..
+            }
             | Self::Stop {
                 session_id: target, ..
             }

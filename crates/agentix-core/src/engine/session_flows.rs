@@ -255,17 +255,12 @@ impl Engine {
             .sessions
             .filtered_sessions(self.agent.as_ref(), kind)
             .await?;
-        let current_session = self
-            .sessions
-            .bindings
-            .lock()
-            .await
-            .current_session(conversation)
-            .cloned();
+        let current_session = self.sessions.current(conversation).await;
         let mut body = String::new();
         let mut sections = Vec::new();
         let mut actions = Vec::new();
         let mut telegram_cards = Vec::new();
+        let picker_messages = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let action_group = Uuid::new_v4().simple().to_string();
         let mut sessions = self.sessions.cache.lock().await;
         for (index, session) in page.into_iter().enumerate() {
@@ -300,7 +295,14 @@ impl Engine {
                     conversation,
                     owner_id,
                     &action_group,
-                    UiAction::Attach(session.id.clone()),
+                    if conversation.channel == crate::ChannelKind::Telegram {
+                        UiAction::AttachFromPicker {
+                            session_id: session.id.clone(),
+                            messages: picker_messages.clone(),
+                        }
+                    } else {
+                        UiAction::Attach(session.id.clone())
+                    },
                 )
                 .await
             };
@@ -329,9 +331,8 @@ impl Engine {
         }
         drop(sessions);
         if !telegram_cards.is_empty() {
-            for card in telegram_cards {
-                self.send_view(conversation, &card).await?;
-            }
+            self.send_telegram_picker(conversation, telegram_cards, &picker_messages)
+                .await?;
             return Ok(());
         }
         self.send_view(
@@ -346,6 +347,21 @@ impl Engine {
             },
         )
         .await?;
+        Ok(())
+    }
+
+    async fn send_telegram_picker(
+        &self,
+        conversation: &ConversationRef,
+        cards: Vec<OutboundView>,
+        messages: &tokio::sync::Mutex<Vec<crate::MessageRef>>,
+    ) -> Result<(), EngineError> {
+        for card in cards {
+            let message = self.send_view(conversation, &card).await?;
+            if !card.actions.is_empty() {
+                messages.lock().await.push(message);
+            }
+        }
         Ok(())
     }
 

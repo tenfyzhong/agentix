@@ -342,6 +342,21 @@ impl Engine {
                 tasks.browse_tasks(conversation, owner_id, action).await?;
             }
             UiAction::Attach(session) => self.attach(conversation, owner_id, session).await?,
+            UiAction::AttachFromPicker {
+                session_id,
+                messages,
+            } => {
+                // Consuming one token already revokes the whole picker group.
+                // Remove sibling keyboards as well, without holding the list lock over I/O.
+                self.attach(conversation, owner_id, session_id).await?;
+                let messages = std::mem::take(&mut *messages.lock().await);
+                for sibling in messages {
+                    if message != Some(&sibling) {
+                        self.disable_consumed_actions(conversation, Some(&sibling))
+                            .await?;
+                    }
+                }
+            }
             UiAction::QueueControl { session_id, action } => {
                 if self.sessions.current(conversation).await.as_ref() != Some(&session_id) {
                     return Err(EngineError::InvalidAction);
