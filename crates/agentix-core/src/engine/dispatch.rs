@@ -56,6 +56,10 @@ impl From<&UiAction> for ActionRoute {
                 ..
             }
             | UiAction::Attach(session)
+            | UiAction::AttachFromPicker {
+                session_id: session,
+                ..
+            }
             | UiAction::Stop {
                 session_id: session,
                 ..

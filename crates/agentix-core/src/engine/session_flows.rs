@@ -255,16 +255,12 @@ impl Engine {
             .sessions
             .filtered_sessions(self.agent.as_ref(), kind)
             .await?;
-        let current_session = self
-            .sessions
-            .bindings
-            .lock()
-            .await
-            .current_session(conversation)
-            .cloned();
+        let current_session = self.sessions.current(conversation).await;
         let mut body = String::new();
         let mut sections = Vec::new();
         let mut actions = Vec::new();
+        let mut telegram_cards = Vec::new();
+        let picker_messages = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let action_group = Uuid::new_v4().simple().to_string();
         let mut sessions = self.sessions.cache.lock().await;
         for (index, session) in page.into_iter().enumerate() {
@@ -278,22 +274,19 @@ impl Engine {
             if !body.is_empty() {
                 body.push_str("\n\n");
             }
-            let mut item = format!(
-                "**{} · {title}**\n{status_icon} **Status:** {status_label}\n📁 **Workspace:** `{}`",
+            let location = session_picker_location(&session);
+            let telegram_card = (conversation.channel == crate::ChannelKind::Telegram).then(|| {
+                telegram_session_card(
+                    &session,
+                    self.agent.session_display_name(&session.id),
+                    &location,
+                    is_current,
+                )
+            });
+            let item = markdown_quote(&format!(
+                "**{} · {title}**\n{status_icon} **Status:** {status_label}\n{location}",
                 index + 1,
-                display_workspace(session.cwd.as_deref())
-            );
-            if let Some(terminal) = &session.terminal {
-                item.push_str(&format!(
-                    "\n🖥️ **{}** · `{}` · `{}` (`{}`) · `{}`",
-                    terminal.multiplexer,
-                    terminal.session,
-                    terminal.window_index,
-                    terminal.window_name,
-                    terminal.pane_index
-                ));
-            }
-            let item = markdown_quote(&item);
+            ));
             body.push_str(&item);
             let token = if is_current {
                 format!("disabled-{}", Uuid::new_v4().simple())
@@ -302,17 +295,31 @@ impl Engine {
                     conversation,
                     owner_id,
                     &action_group,
-                    UiAction::Attach(session.id.clone()),
+                    if conversation.channel == crate::ChannelKind::Telegram {
+                        UiAction::AttachFromPicker {
+                            session_id: session.id.clone(),
+                            messages: picker_messages.clone(),
+                        }
+                    } else {
+                        UiAction::Attach(session.id.clone())
+                    },
                 )
                 .await
             };
             let action_tokens = vec![token.clone()];
-            actions.push(ActionButton {
+            let action = ActionButton {
                 label: if is_current { "Attached" } else { "Attach" }.into(),
                 token,
                 style: ActionStyle::Default,
                 disabled: is_current,
-            });
+            };
+            if let Some(mut card) = telegram_card {
+                if !is_current {
+                    card.actions.push(action.clone());
+                }
+                telegram_cards.push(card);
+            }
+            actions.push(action);
             sections.push(agentix_domain::ViewSection {
                 title: String::new(),
                 body: item,
@@ -323,6 +330,11 @@ impl Engine {
             sessions.insert(session.id.clone(), session);
         }
         drop(sessions);
+        if !telegram_cards.is_empty() {
+            self.send_telegram_picker(conversation, telegram_cards, &picker_messages)
+                .await?;
+            return Ok(());
+        }
         self.send_view(
             conversation,
             &OutboundView {
@@ -335,6 +347,21 @@ impl Engine {
             },
         )
         .await?;
+        Ok(())
+    }
+
+    async fn send_telegram_picker(
+        &self,
+        conversation: &ConversationRef,
+        cards: Vec<OutboundView>,
+        messages: &tokio::sync::Mutex<Vec<crate::MessageRef>>,
+    ) -> Result<(), EngineError> {
+        for card in cards {
+            let message = self.send_view(conversation, &card).await?;
+            if !card.actions.is_empty() {
+                messages.lock().await.push(message);
+            }
+        }
         Ok(())
     }
 
@@ -1422,4 +1449,54 @@ impl Engine {
             style: ActionStyle::Primary,
         }
     }
+}
+
+fn session_picker_location(session: &crate::SessionSummary) -> String {
+    let mut location = format!(
+        "📁 **Workspace:** `{}`",
+        display_workspace(session.cwd.as_deref())
+    );
+    if let Some(terminal) = &session.terminal {
+        location.push_str(&format!(
+            "\n🖥️ **{}** · `{}` · `{}` (`{}`) · `{}`",
+            terminal.multiplexer,
+            terminal.session,
+            terminal.window_index,
+            terminal.window_name,
+            terminal.pane_index
+        ));
+    }
+    location
+}
+
+fn telegram_session_card(
+    session: &crate::SessionSummary,
+    agent_name: &str,
+    location: &str,
+    is_current: bool,
+) -> OutboundView {
+    let short_id = super::short_identifier(session.id.native_str());
+    let name = session
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            session.cwd.as_deref().and_then(|cwd| {
+                cwd.trim_end_matches(['/', '\\'])
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .filter(|name| !name.is_empty())
+            })
+        })
+        .unwrap_or(short_id);
+    let (status_icon, status_label) = session_status_label(&session.status);
+    let mut card = OutboundView::text(
+        format!("{agent_name} · {name}"),
+        format!("`{short_id}` · {status_icon} {status_label}\n{location}"),
+    );
+    if is_current {
+        card.body.push_str("\n✓ Attached");
+    }
+    card
 }
