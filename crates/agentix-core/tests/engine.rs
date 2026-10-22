@@ -213,9 +213,14 @@ async fn session_picker_filters_by_backend() {
         .await
         .unwrap();
     let view = channel.sent().last().unwrap().1.clone();
-    assert_eq!(view.actions.len(), 2);
-    assert!(!view.body.contains("Codex ·"));
-    assert!(view.body.contains("Pi ·"));
+    assert_eq!(channel.sent().len(), 2);
+    assert_eq!(view.actions.len(), 1);
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .all(|(_, card)| card.title.starts_with("Pi ·"))
+    );
 }
 
 #[tokio::test]
@@ -2077,14 +2082,146 @@ fn multiplexer_snapshot() -> MultiplexerSnapshot {
 }
 
 #[tokio::test]
-async fn session_picker_shows_agent_short_id_and_title() {
+async fn telegram_session_picker_sends_one_named_card_per_session_and_attaches_its_target() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/sessions"))
+        .await
+        .unwrap();
+    let cards = channel.sent();
+    assert_eq!(cards.len(), 2);
+    for (index, (name, id)) in [("Parser cleanup", "thr_a"), ("Daemon startup", "thr_b")]
+        .iter()
+        .enumerate()
+    {
+        let card = &cards[index].1;
+        assert_eq!(card.title, format!("Codex · {name}"));
+        assert!(card.body.contains(id));
+        assert_eq!(card.actions.len(), 1);
+        assert_eq!(card.actions[0].label, "Attach");
+    }
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(InboundEnvelope::action_from_message(
+            "pick-second",
+            conversation.clone(),
+            "owner",
+            cards[1].1.actions[0].token.clone(),
+            MessageRef::new(conversation.clone(), "m2"),
+        ))
+        .await
+        .unwrap();
+    assert!(agent.calls().contains(&"attach:thr_b".to_owned()));
+    assert_eq!(
+        channel.disabled_actions(),
+        vec![MessageRef::new(conversation, "m2")]
+    );
+    assert!(channel.sent().iter().skip(2).any(|(_, view)| {
+        view.title.contains("Daemon startup")
+            && view
+                .subtitle
+                .as_deref()
+                .is_some_and(|s| s.contains("Attached"))
+    }));
+    engine
+        .handle_inbound(InboundEnvelope::text(
+            "refresh-sessions",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            "/sessions",
+        ))
+        .await
+        .unwrap();
+    let cards = channel.sent();
+    let current = &cards.last().unwrap().1;
+    assert_eq!(current.title, "Codex · Daemon startup");
+    assert!(current.body.contains("✓ Attached"));
+    assert!(current.actions.is_empty());
+    assert_eq!(cards[cards.len() - 2].1.actions.len(), 1);
+}
+
+#[tokio::test]
+async fn telegram_session_picker_uses_workspace_then_id_for_unnamed_sessions() {
+    for (cwd, expected) in [(Some("/work/parser/"), "parser"), (None, "thr_a")] {
+        let agent = Arc::new(FakeAgent::new());
+        {
+            let mut sessions = agent.sessions.lock().unwrap();
+            sessions.truncate(1);
+            sessions[0].name = Some("  ".into());
+            sessions[0].preview = Some("preview is not a session name".into());
+            sessions[0].cwd = cwd.map(str::to_owned);
+        }
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            agent,
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound("chat-a", "/sessions"))
+            .await
+            .unwrap();
+        assert_eq!(channel.sent()[0].1.title, format!("Codex · {expected}"));
+        assert!(channel.sent()[0].1.body.contains("thr_a"));
+    }
+}
+
+#[tokio::test]
+async fn slack_session_picker_keeps_one_message_with_section_actions() {
+    let channel = Arc::new(FakeChannel {
+        channel_kind: Some(ChannelKind::Slack),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(InboundEnvelope::text(
+            "sessions",
+            ConversationRef::new(ChannelKind::Slack, "chat-a"),
+            "owner",
+            "/sessions",
+        ))
+        .await
+        .unwrap();
+    let sent = channel.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].1.sections.len(), 2);
+    assert_eq!(sent[0].1.actions.len(), 2);
+    assert_eq!(sent[0].1.title, "Existing Codex sessions");
+    assert!(
+        sent[0]
+            .1
+            .body
+            .contains("**1 · Codex · thr_a · Parser cleanup**")
+    );
+}
+
+#[tokio::test]
+async fn session_picker_shows_agent_short_id_and_title() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel {
+        channel_kind: Some(ChannelKind::Feishu),
+        ..FakeChannel::default()
+    });
     let state = SqliteState::in_memory().await.unwrap();
     let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
 
     engine
-        .handle_inbound(inbound("chat-a", "/sessions"))
+        .handle_inbound(InboundEnvelope::text(
+            "sessions",
+            ConversationRef::new(ChannelKind::Feishu, "chat-a"),
+            "owner",
+            "/sessions",
+        ))
         .await
         .unwrap();
 
@@ -2122,10 +2259,10 @@ async fn session_picker_shows_agent_short_id_and_title() {
     engine
         .handle_inbound(InboundEnvelope::action_from_message(
             "attach-by-title",
-            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            ConversationRef::new(ChannelKind::Feishu, "chat-a"),
             "owner",
             view.actions[0].token.clone(),
-            MessageRef::new(ConversationRef::new(ChannelKind::Telegram, "chat-a"), "m1"),
+            MessageRef::new(ConversationRef::new(ChannelKind::Feishu, "chat-a"), "m1"),
         ))
         .await
         .unwrap();
@@ -2133,7 +2270,7 @@ async fn session_picker_shows_agent_short_id_and_title() {
     assert_eq!(
         channel.disabled_actions(),
         vec![MessageRef::new(
-            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            ConversationRef::new(ChannelKind::Feishu, "chat-a"),
             "m1"
         )]
     );
@@ -2142,16 +2279,29 @@ async fn session_picker_shows_agent_short_id_and_title() {
 #[tokio::test]
 async fn session_picker_disables_the_current_session_button_without_a_title_marker() {
     let agent = Arc::new(FakeAgent::new());
-    let channel = Arc::new(FakeChannel::default());
+    let channel = Arc::new(FakeChannel {
+        channel_kind: Some(ChannelKind::Feishu),
+        ..FakeChannel::default()
+    });
     let state = SqliteState::in_memory().await.unwrap();
     let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
 
     engine
-        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .handle_inbound(InboundEnvelope::text(
+            "attach",
+            ConversationRef::new(ChannelKind::Feishu, "chat-a"),
+            "owner",
+            "/attach thr_a",
+        ))
         .await
         .unwrap();
     engine
-        .handle_inbound(inbound("chat-a", "/sessions"))
+        .handle_inbound(InboundEnvelope::text(
+            "sessions",
+            ConversationRef::new(ChannelKind::Feishu, "chat-a"),
+            "owner",
+            "/sessions",
+        ))
         .await
         .unwrap();
 
@@ -6567,7 +6717,7 @@ async fn dispatch_scopes_opaque_attach_actions_without_consuming_their_authoriza
         .handle_inbound(inbound("chat-a", "/sessions"))
         .await
         .unwrap();
-    let token = channel.sent().last().unwrap().1.actions[1].token.clone();
+    let token = channel.sent().last().unwrap().1.actions[0].token.clone();
     let mut queue = DispatchQueue::new(4, 4);
     queue
         .try_push(EngineWork::Event(AgentEvent::QueueChanged {
@@ -12315,15 +12465,16 @@ async fn session_card_titles_are_consistent_across_registry_history_and_live_out
                 .handle_inbound(inbound("chat-a", "/sessions"))
                 .await
                 .unwrap();
-            assert!(
-                channel
-                    .sent()
-                    .last()
-                    .unwrap()
-                    .1
-                    .body
-                    .contains(&format!("**1 · {expected}**"))
+            let picker = channel.sent()[0].1.clone();
+            assert_eq!(
+                picker.title,
+                if named {
+                    "Codex · Parser cleanup"
+                } else {
+                    "Codex · parser"
+                }
             );
+            assert!(picker.body.contains("01a0a546"));
             engine
                 .handle_inbound(inbound("chat-a", &format!("/attach {session}")))
                 .await

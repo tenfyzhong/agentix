@@ -265,6 +265,7 @@ impl Engine {
         let mut body = String::new();
         let mut sections = Vec::new();
         let mut actions = Vec::new();
+        let mut telegram_cards = Vec::new();
         let action_group = Uuid::new_v4().simple().to_string();
         let mut sessions = self.sessions.cache.lock().await;
         for (index, session) in page.into_iter().enumerate() {
@@ -278,22 +279,19 @@ impl Engine {
             if !body.is_empty() {
                 body.push_str("\n\n");
             }
-            let mut item = format!(
-                "**{} · {title}**\n{status_icon} **Status:** {status_label}\n📁 **Workspace:** `{}`",
+            let location = session_picker_location(&session);
+            let telegram_card = (conversation.channel == crate::ChannelKind::Telegram).then(|| {
+                telegram_session_card(
+                    &session,
+                    self.agent.session_display_name(&session.id),
+                    &location,
+                    is_current,
+                )
+            });
+            let item = markdown_quote(&format!(
+                "**{} · {title}**\n{status_icon} **Status:** {status_label}\n{location}",
                 index + 1,
-                display_workspace(session.cwd.as_deref())
-            );
-            if let Some(terminal) = &session.terminal {
-                item.push_str(&format!(
-                    "\n🖥️ **{}** · `{}` · `{}` (`{}`) · `{}`",
-                    terminal.multiplexer,
-                    terminal.session,
-                    terminal.window_index,
-                    terminal.window_name,
-                    terminal.pane_index
-                ));
-            }
-            let item = markdown_quote(&item);
+            ));
             body.push_str(&item);
             let token = if is_current {
                 format!("disabled-{}", Uuid::new_v4().simple())
@@ -307,12 +305,19 @@ impl Engine {
                 .await
             };
             let action_tokens = vec![token.clone()];
-            actions.push(ActionButton {
+            let action = ActionButton {
                 label: if is_current { "Attached" } else { "Attach" }.into(),
                 token,
                 style: ActionStyle::Default,
                 disabled: is_current,
-            });
+            };
+            if let Some(mut card) = telegram_card {
+                if !is_current {
+                    card.actions.push(action.clone());
+                }
+                telegram_cards.push(card);
+            }
+            actions.push(action);
             sections.push(agentix_domain::ViewSection {
                 title: String::new(),
                 body: item,
@@ -323,6 +328,12 @@ impl Engine {
             sessions.insert(session.id.clone(), session);
         }
         drop(sessions);
+        if !telegram_cards.is_empty() {
+            for card in telegram_cards {
+                self.send_view(conversation, &card).await?;
+            }
+            return Ok(());
+        }
         self.send_view(
             conversation,
             &OutboundView {
@@ -1422,4 +1433,54 @@ impl Engine {
             style: ActionStyle::Primary,
         }
     }
+}
+
+fn session_picker_location(session: &crate::SessionSummary) -> String {
+    let mut location = format!(
+        "📁 **Workspace:** `{}`",
+        display_workspace(session.cwd.as_deref())
+    );
+    if let Some(terminal) = &session.terminal {
+        location.push_str(&format!(
+            "\n🖥️ **{}** · `{}` · `{}` (`{}`) · `{}`",
+            terminal.multiplexer,
+            terminal.session,
+            terminal.window_index,
+            terminal.window_name,
+            terminal.pane_index
+        ));
+    }
+    location
+}
+
+fn telegram_session_card(
+    session: &crate::SessionSummary,
+    agent_name: &str,
+    location: &str,
+    is_current: bool,
+) -> OutboundView {
+    let short_id = super::short_identifier(session.id.native_str());
+    let name = session
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            session.cwd.as_deref().and_then(|cwd| {
+                cwd.trim_end_matches(['/', '\\'])
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .filter(|name| !name.is_empty())
+            })
+        })
+        .unwrap_or(short_id);
+    let (status_icon, status_label) = session_status_label(&session.status);
+    let mut card = OutboundView::text(
+        format!("{agent_name} · {name}"),
+        format!("`{short_id}` · {status_icon} {status_label}\n{location}"),
+    );
+    if is_current {
+        card.body.push_str("\n✓ Attached");
+    }
+    card
 }
