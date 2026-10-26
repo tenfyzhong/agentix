@@ -1064,3 +1064,66 @@ async fn directory_path_reply_replaces_pending_issue_edit() {
     );
     assert!(last(&channel).body.contains("/custom/work tree"));
 }
+
+#[tokio::test]
+async fn issue_type_im_creation_and_selection_preserve_requirement() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    engine
+        .handle_inbound(input("/issue new --type bug Login failure\nKeep details"))
+        .await
+        .unwrap();
+    let state = service.store().snapshot().await.unwrap();
+    assert_eq!(state.issues[0].title, "Login failure");
+    assert_eq!(
+        serde_json::to_value(&state.issues[0]).unwrap()["issue_type"],
+        "bug"
+    );
+    assert_eq!(
+        service
+            .issue_content(&state.issues[0].id)
+            .await
+            .unwrap()
+            .requirement,
+        "Login failure\nKeep details"
+    );
+    click(&engine, button(&last(&channel), "Type")).await;
+    click(&engine, button(&last(&channel), "enhancement")).await;
+    let updated = service
+        .store()
+        .issue_record(&state.issues[0].id)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(updated).unwrap()["issue_type"],
+        "enhancement"
+    );
+    assert!(last(&channel).body.contains("enhancement"));
+    click(&engine, button(&last(&channel), "Type")).await;
+    click(&engine, button(&last(&channel), "None")).await;
+    let updated = service
+        .store()
+        .issue_record(&state.issues[0].id)
+        .await
+        .unwrap();
+    assert!(serde_json::to_value(updated).unwrap()["issue_type"].is_null());
+}
+
+#[tokio::test]
+async fn issue_type_im_rejects_invalid_options_without_creating_issues() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, _channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    for command in [
+        "/issue new --type invalid Description",
+        "/issue new --type",
+        "/issue new --type bug",
+    ] {
+        assert!(matches!(
+            engine.handle_inbound(input(command)).await,
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(service.store().snapshot().await.unwrap().issues.is_empty());
+    }
+}

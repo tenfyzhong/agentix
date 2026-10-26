@@ -273,7 +273,24 @@ BEGIN
     SELECT RAISE(ABORT, 'invalid Milestone status; upgrade Agentix and Taskix together');
 END;
 
-PRAGMA user_version = 25;
+-- Reject older connected writers that would silently erase a classification.
+CREATE TRIGGER IF NOT EXISTS issue_type_update BEFORE UPDATE OF data ON issues
+WHEN (json_type(OLD.data, '$.issue_type') IS NOT NULL AND json_type(NEW.data, '$.issue_type') IS NULL)
+    OR (json_type(NEW.data, '$.issue_type') IS NOT NULL AND json_type(NEW.data, '$.issue_type') IS NOT 'null'
+        AND (json_type(NEW.data, '$.issue_type') IS NOT 'text'
+            OR json_extract(NEW.data, '$.issue_type') NOT IN ('feature', 'bug', 'enhancement', 'documentation', 'question', 'task')))
+BEGIN
+    SELECT RAISE(ABORT, 'invalid Issue type; upgrade Agentix and Taskix together');
+END;
+CREATE TRIGGER IF NOT EXISTS issue_type_insert BEFORE INSERT ON issues
+WHEN json_type(NEW.data, '$.issue_type') IS NOT NULL AND json_type(NEW.data, '$.issue_type') IS NOT 'null'
+    AND (json_type(NEW.data, '$.issue_type') IS NOT 'text'
+        OR json_extract(NEW.data, '$.issue_type') NOT IN ('feature', 'bug', 'enhancement', 'documentation', 'question', 'task'))
+BEGIN
+    SELECT RAISE(ABORT, 'invalid Issue type; upgrade Agentix and Taskix together');
+END;
+
+PRAGMA user_version = 26;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 

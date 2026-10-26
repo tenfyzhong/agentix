@@ -4,7 +4,7 @@ Issue is the durable project requirement. Job is one execution round; Task remai
 
 ## Persistence and mutations
 
-SQLite stores only Issue metadata: identity, title/name, associations, status, revision, content hashes, lifecycle timestamps, and document location. Requirement, Acceptance Criteria and Notes live only in the Obsidian Markdown document; they are absent from Issue rows and persisted command replay results. `issue show` and IM detail read those sections on demand. Routing uses bounded titles and document references rather than loading prose into SQLite. Milestones store a title/name, goal, order, optional due date, lifecycle status/timestamps, independent archive timestamp, revision, and Project identity. Job `issue_id` is nullable. Indexed queries apply Project, status, Milestone, archive and association predicates before paging; IM pages contain six entries. Routing summaries expose at most 32 TODO/ACTIVE Issue candidates and mark incomplete evidence explicitly. Selected Issue bodies are synchronized and read in full before association.
+SQLite stores only Issue metadata: identity, title/name, optional type, associations, status, revision, content hashes, lifecycle timestamps, and document location. Requirement, Acceptance Criteria and Notes live only in the Obsidian Markdown document; they are absent from Issue rows and persisted command replay results. `issue show` and IM detail read those sections on demand. Routing uses bounded titles and document references rather than loading prose into SQLite. Milestones store a title/name, goal, order, optional due date, lifecycle status/timestamps, independent archive timestamp, revision, and Project identity. Job `issue_id` is nullable. Indexed queries apply Project, status, Milestone, archive and association predicates before paging; IM pages contain six entries. Routing summaries expose at most 32 TODO/ACTIVE Issue candidates and mark incomplete evidence explicitly. Selected Issue bodies are synchronized and read in full before association.
 
 Association rejects cross-Project links and guards the selected Issue revision/content hash. Linking an already executing Job starts a TODO Issue; otherwise the first successful `task.start` starts it atomically with execution. Claim and Plan publication do not start the Issue. Terminal Jobs support historical association metadata without reopening execution. Reassigning/unlinking a Job never completes or resets either Issue.
 
@@ -214,3 +214,25 @@ Schema 23 removes Inbox storage and runtime support completely; old commands, Jo
 The one-time migration drops the old entity table and its indices, retires entity-specific receipts/events and queues a full document rebuild. Old registered document paths remain registered until successful cleanup, including archived paths. Earlier initialization-only receipts become one-time cleanup candidates; their files must retain matching generated Project identity before removal. Cleanup uses the normal vault path validation and durable generation acknowledgement. Failure remains retryable with `sync --pending`; unregistered same-name user files are preserved. Jobs, Tasks, Plans, their execution audit and original conversations remain intact, including Job events triggered by the old intake. No live database is upgraded during development acceptance.
 
 Reusable tests cover domain lifecycle and associations, SQL paging, body imports, template and shared Base definitions, routing guards, all four host integrations, IM owner/epoch/cancellation and execution workflows, and schema upgrade cleanup/retry/path safety. Adapter tests use local HTTP mocks; they prove payload/control integration, not live IM delivery. Isolated Obsidian acceptance verifies actual native Base filtering, generated-note opening, body edits and human status changes. Live acceptance and unit coverage are reported separately.
+
+## Issue type labels (schema 26, unreleased)
+
+`issue_type` is a nullable classification independent of status: `feature`, `bug`,
+`enhancement`, `documentation`, `question`, or `task`. Existing records without the
+field remain unclassified; no label is inferred. Invalid values are rejected.
+Type changes use the normal Issue revision guard and require reopening terminal
+Issues. Type metadata is projected into Issue frontmatter and new Base views.
+Existing customized Base layouts are preserved; add `issue_type` as a visible
+property there if desired.
+
+The Obsidian New Issue dialog provides an optional **Type** dropdown. CLI creation
+and updates accept `--type bug`; `issue update ID --clear-type` removes the label.
+IM accepts `/issue new --type bug Login fails`; the remaining first line is the
+title and the remaining complete description is the requirement. The existing
+`/issue new <description>` form remains valid. Issue details display the type and
+provide a **Type** button with the same choices and **None** to clear it. These
+controls retain the existing owner, conversation and revision guards.
+
+Upgrade Agentix, Taskix and the Obsidian plugin together. Schema 26 preserves
+legacy rows and prevents already-connected older writers from dropping an
+existing type field. No live database is upgraded by the regression tests.

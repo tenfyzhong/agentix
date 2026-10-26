@@ -147,7 +147,7 @@ async fn issue_upgrade_removes_registered_intake_without_converting_or_losing_wo
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(version, 25);
+    assert_eq!(version, 26);
 }
 
 #[cfg(unix)]
@@ -256,5 +256,43 @@ async fn issue_upgrade_preserves_user_replacement_at_a_legacy_receipt_path() {
             .await
             .unwrap()
             .is_none()
+    );
+}
+
+#[tokio::test]
+async fn issue_type_upgrade_preserves_legacy_rows_and_rejects_old_writers() {
+    let f = Fixture::new().await;
+    let item = f
+        .service
+        .execute(
+            json!({"command":"issue.create","project":f.project,"title":"Legacy"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let mut conn = connection(&f).await;
+    sqlx::raw_sql("DROP TRIGGER IF EXISTS issue_type_update; DROP TRIGGER IF EXISTS issue_type_insert; PRAGMA user_version=25;").execute(&mut conn).await.unwrap();
+    sqlx::query("UPDATE issues SET data=json_remove(data,'$.issue_type') WHERE id=?")
+        .bind(item["id"].as_str().unwrap())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let service = reopen(&f).await;
+    let updated = service
+        .execute(
+            json!({"command":"issue.update","issue":item["id"],"issue_type":"bug"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert_eq!(updated["issue_type"], "bug");
+    assert!(
+        sqlx::query("UPDATE issues SET data=json_remove(data,'$.issue_type') WHERE id=?")
+            .bind(item["id"].as_str().unwrap())
+            .execute(&mut conn)
+            .await
+            .is_err()
     );
 }

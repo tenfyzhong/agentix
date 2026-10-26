@@ -103,6 +103,7 @@ impl Service {
                 };
             properties["review_reason"] = entity["review_reason"].clone();
         } else if kind == "issue" {
+            properties["issue_type"] = entity["issue_type"].clone();
             properties["review_reason"] = entity["review_reason"].clone();
             properties["milestone_id"] = entity["milestone_id"].clone();
         }

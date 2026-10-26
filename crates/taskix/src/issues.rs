@@ -6,6 +6,11 @@ use serde_json::{Value, json};
 
 #[derive(Args)]
 pub struct IssueFields {
+    /// Classification label for this Issue.
+    #[arg(long = "type", value_parser = ["feature", "bug", "enhancement", "documentation", "question", "task"], conflicts_with = "clear_type")]
+    pub issue_type: Option<String>,
+    #[arg(long)]
+    pub clear_type: bool,
     #[arg(long)]
     pub title: Option<String>,
     #[arg(long)]
@@ -25,6 +30,7 @@ pub struct IssueFields {
 impl IssueFields {
     fn apply(&self, request: &mut Value) {
         for (key, value) in [
+            ("issue_type", &self.issue_type),
             ("title", &self.title),
             ("name", &self.name),
             ("requirement", &self.requirement),
@@ -35,6 +41,9 @@ impl IssueFields {
             if let Some(value) = value {
                 request[key] = json!(value);
             }
+        }
+        if self.clear_type {
+            request["issue_type"] = Value::Null;
         }
         if self.unlink_milestone {
             request["milestone"] = Value::Null;

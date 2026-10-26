@@ -5,7 +5,7 @@ use super::{
     ActionButton, ActionStyle, ConversationRef, EngineError, OutboundView, SessionId,
     TaskBoardView, TaskBrowse, UiAction, error,
 };
-use agentix_task::{Issue, IssueFilter, IssueStatus, Project, WriteOptions};
+use agentix_task::{Issue, IssueFilter, IssueStatus, IssueType, Project, WriteOptions};
 use serde_json::json;
 use std::{collections::HashSet, path::Path};
 
@@ -319,8 +319,9 @@ impl TaskBoardView<'_> {
                 self.show_milestones(conversation, owner, project, 0).await
             }
             IssueProjectIntent::Create { content, event } => {
+                let (issue_type, content) = parse_issue_type(&content)?;
                 let title = content.lines().next().unwrap_or("").trim();
-                let saved=self.tasks_service()?.execute(json!({"command":"issue.create","project":project,"title":title,"requirement":content}),
+                let saved=self.tasks_service()?.execute(json!({"command":"issue.create","project":project,"title":title,"requirement":content,"issue_type":issue_type}),
                     WriteOptions{actor_ref:format!("user:im:{owner}"),idempotency_key:Some(format!("im:issue:{}",json!([conversation.channel,conversation.conversation_id,event]))),..WriteOptions::default()}).await.map_err(error)?;
                 let id = saved.result["id"]
                     .as_str()
@@ -587,10 +588,11 @@ impl TaskBoardView<'_> {
         let mut view = OutboundView::text(
             short(&item.title),
             format!(
-                "**Issue:** `{}`\n**Status:** {}\n**Revision:** {}\n**Milestone:** {}\n\n{}",
+                "**Issue:** `{}`\n**Status:** {}\n**Revision:** {}\n**Type:** {}\n**Milestone:** {}\n\n{}",
                 item.id,
                 issue_status_label(item.status),
                 item.revision,
+                item.issue_type.map_or("None", IssueType::as_str),
                 milestone_title,
                 content[page]
             ),
@@ -637,6 +639,17 @@ impl TaskBoardView<'_> {
                     )
                     .await;
                 }
+                self.add_issue_action(
+                    conversation,
+                    owner,
+                    &mut view,
+                    "Type",
+                    &item,
+                    "type",
+                    None,
+                    None,
+                )
+                .await;
                 self.add_issue_action(
                     conversation,
                     owner,
@@ -795,6 +808,37 @@ impl TaskBoardView<'_> {
                 .await?;
             return Ok(());
         }
+        if action.command == "type" {
+            let item = self
+                .tasks_service()?
+                .store()
+                .issue_record(&action.id)
+                .await
+                .map_err(error)?;
+            if item.revision != action.revision
+                || item.status.terminal()
+                || item.archived_at.is_some()
+            {
+                return Err(EngineError::InvalidAction);
+            }
+            let mut view = OutboundView::text("Issue type", "Choose a type label.");
+            for kind in std::iter::once(None).chain(IssueType::ALL.into_iter().map(Some)) {
+                let value = kind.map(IssueType::as_str);
+                self.add_issue_action(
+                    conversation,
+                    owner,
+                    &mut view,
+                    value.unwrap_or("None"),
+                    &item,
+                    "issue.update",
+                    Some("issue_type"),
+                    value.map(str::to_owned),
+                )
+                .await;
+            }
+            self.ui.send_view(conversation, &view).await?;
+            return Ok(());
+        }
         if action.command == "milestone" {
             return self
                 .show_issue_milestones(conversation, owner, &action.id, action.revision, 0)
@@ -945,4 +989,24 @@ impl TaskBoardView<'_> {
         self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
+}
+
+fn parse_issue_type(content: &str) -> Result<(Option<IssueType>, &str), EngineError> {
+    let Some(tail) = content
+        .strip_prefix("--type")
+        .filter(|tail| tail.is_empty() || tail.starts_with(char::is_whitespace))
+    else {
+        return Ok((None, content));
+    };
+    let (kind, content) = tail
+        .trim_start()
+        .split_once(char::is_whitespace)
+        .ok_or_else(|| error("Use /issue new --type <type> <description>"))?;
+    let kind = serde_json::from_value(json!(kind))
+        .map_err(|_| error("Unknown Issue type. Choose feature, bug, enhancement, documentation, question or task."))?;
+    let content = content.trim();
+    if content.is_empty() {
+        return Err(error("Issue description is required"));
+    }
+    Ok((Some(kind), content))
 }

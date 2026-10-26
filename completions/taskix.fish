@@ -80,6 +80,12 @@ complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "archive" -d 'Archive a completed or cancelled Issue document'
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "unarchive" -d 'Restore an archived Issue without changing its lifecycle'
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l type -d 'Classification label for this Issue' -r -f -a "feature\t''
+bug\t''
+enhancement\t''
+documentation\t''
+question\t''
+task\t''"
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l title -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l name -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l requirement -r
@@ -95,9 +101,16 @@ complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_sub
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l lease-token -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l expect-revision -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l clear-type
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l unlink-milestone
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l type -d 'Classification label for this Issue' -r -f -a "feature\t''
+bug\t''
+enhancement\t''
+documentation\t''
+question\t''
+task\t''"
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l title -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l name -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l requirement -r
@@ -113,6 +126,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_sub
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l lease-token -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l expect-revision -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l clear-type
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l unlink-milestone
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -s h -l help -d 'Print help'

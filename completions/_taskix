@@ -64,6 +64,7 @@ _arguments "${_arguments_options[@]}" : \
         case $line[1] in
             (create)
 _arguments "${_arguments_options[@]}" : \
+'(--clear-type)--type=[Classification label for this Issue]:ISSUE_TYPE:(feature bug enhancement documentation question task)' \
 '--title=[]:TITLE:_default' \
 '--name=[]:NAME:_default' \
 '--requirement=[]:REQUIREMENT:_default' \
@@ -79,6 +80,7 @@ _arguments "${_arguments_options[@]}" : \
 '--lease-token=[]:LEASE_TOKEN:_default' \
 '--expect-revision=[]:EXPECT_REVISION:_default' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--clear-type[]' \
 '--unlink-milestone[]' \
 '--json[]' \
 '-h[Print help]' \
@@ -87,6 +89,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (update)
 _arguments "${_arguments_options[@]}" : \
+'(--clear-type)--type=[Classification label for this Issue]:ISSUE_TYPE:(feature bug enhancement documentation question task)' \
 '--title=[]:TITLE:_default' \
 '--name=[]:NAME:_default' \
 '--requirement=[]:REQUIREMENT:_default' \
@@ -102,6 +105,7 @@ _arguments "${_arguments_options[@]}" : \
 '--lease-token=[]:LEASE_TOKEN:_default' \
 '--expect-revision=[]:EXPECT_REVISION:_default' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--clear-type[]' \
 '--unlink-milestone[]' \
 '--json[]' \
 '-h[Print help]' \
