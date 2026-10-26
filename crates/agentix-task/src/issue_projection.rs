@@ -181,18 +181,16 @@ impl Service {
         ))
     }
 
-    fn issue_body_metadata(
-        &self,
-        body: &str,
-        old_title: &str,
-        issue: &Issue,
-        project: &Project,
-    ) -> String {
-        let mut body = body.replacen(
-            &format!("# {old_title}\n"),
-            &format!("# {}\n", issue.name),
-            1,
-        );
+    fn issue_body_metadata(&self, body: &str, issue: &Issue, project: &Project) -> String {
+        // Only the leading document heading is managed; headings in authored sections stay intact.
+        let mut body = body.to_owned();
+        let start = body.len() - body.trim_start().len();
+        if body[start..].starts_with("# ") {
+            let end = body[start..]
+                .find('\n')
+                .map_or(body.len(), |end| start + end);
+            body.replace_range(start..end, &format!("# {}", super::escape(&issue.name)));
+        }
         if let Some(section) = body.find("\n## Related Jobs\n")
             && let Some(start) = body[section..].find("![[")
         {
@@ -214,10 +212,6 @@ impl Service {
         existing: &str,
     ) -> Result<String> {
         let mut properties = split_properties(existing)?.0;
-        let old_title = properties["title"]
-            .as_str()
-            .unwrap_or(&issue.name)
-            .to_owned();
         let mut managed = serde_json::to_value(issue)?;
         for field in [
             "requirement",
@@ -255,7 +249,7 @@ impl Service {
         if !existing.is_empty() && !staged {
             // Status/metadata publication preserves arbitrary authored prose verbatim.
             let body = split_properties(existing)?.1;
-            doc.push_str(&self.issue_body_metadata(body, &old_title, issue, project));
+            doc.push_str(&self.issue_body_metadata(body, issue, project));
             return Ok(doc);
         }
         let content = self.projected_issue_content(issue, existing)?;
@@ -296,7 +290,7 @@ impl Service {
                 self.base_link(&format!("{}/Issue.base", project.document_directory()))
             ));
         }
-        doc.push_str(&self.issue_body_metadata(&body, &old_title, issue, project));
+        doc.push_str(&self.issue_body_metadata(&body, issue, project));
         Ok(doc)
     }
 
@@ -494,6 +488,99 @@ impl Service {
         Ok(source)
     }
 
+    /// Find a moved Issue only when its registered source has disappeared.
+    /// The immutable ID identifies it; the numbered filename supplies the new name.
+    fn renamed_issue_document(
+        &self,
+        issue: &Issue,
+        registered: &str,
+    ) -> Result<Option<(String, String)>> {
+        let parent = Path::new(registered)
+            .parent()
+            .context("missing Issue directory")?;
+        let directory = self.safe_path(parent.to_str().context("invalid Issue directory")?)?;
+        if !directory.is_dir() {
+            return Ok(None);
+        }
+        let prefix = crate::naming::numbered_name("", issue.created_at, issue.sequence)?;
+        let mut candidate = None;
+        for entry in std::fs::read_dir(directory)? {
+            let entry = entry?;
+            if entry.path().extension().is_none_or(|ext| ext != "md") {
+                continue;
+            }
+            let relative = parent
+                .join(entry.file_name())
+                .to_string_lossy()
+                .replace('\\', "/");
+            let path = self.safe_path(&relative)?;
+            if !path.is_file() {
+                continue;
+            }
+            let source = std::fs::read_to_string(path)?;
+            let Ok((properties, _)) = split_properties(&source) else {
+                continue;
+            };
+            if properties["id"] != issue.id {
+                continue;
+            }
+            ensure!(
+                candidate.is_none(),
+                "conflict: ambiguous renamed Issue documents for {}",
+                issue.id
+            );
+            ensure!(
+                properties["taskix-generated"] == true
+                    && properties["project_id"] == issue.project_id,
+                "conflict: renamed Issue document identity changed"
+            );
+            ensure!(
+                properties["revision"].as_i64() == Some(issue.revision),
+                "conflict: renamed Issue revision changed"
+            );
+            let filename = entry.file_name();
+            let name = filename
+                .to_str()
+                .and_then(|s| s.strip_suffix(".md"))
+                .and_then(|s| s.strip_prefix(&prefix))
+                .context("invalid: preserve the Issue filename date and sequence prefix")?;
+            ensure!(
+                !name.is_empty() && crate::naming::short_name(name) == name,
+                "invalid: Issue filename must use a portable name of at most 48 characters"
+            );
+            ensure!(
+                properties["title"] == issue.name || properties["title"] == name,
+                "conflict: Issue filename and title were edited differently"
+            );
+            candidate = Some((relative, name.to_owned()));
+        }
+        Ok(candidate)
+    }
+
+    async fn validate_issue_rename(
+        &self,
+        issue: &Issue,
+        request: &Value,
+        relative: &str,
+    ) -> Result<()> {
+        let mut preview = self.store().request_snapshot(request).await?;
+        let result = crate::mutations::apply(
+            &mut preview,
+            request,
+            &WriteOptions {
+                expected_revision: Some(issue.revision),
+                ..WriteOptions::default()
+            },
+            self.store().now(),
+        )?;
+        ensure!(
+            result["document_path"] == relative,
+            "conflict: renamed Issue filename collides with another Issue name"
+        );
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)] // Keep source selection, guarded import, and revision mapping together.
     pub(super) async fn reconcile_issue_documents_locked(
         &self,
         selected: Option<&Snapshot>,
@@ -519,7 +606,20 @@ impl Service {
             let Some(path) = registered else {
                 continue;
             };
-            let path = self.safe_path(&path)?;
+            let registered = self.safe_path(&path)?;
+            let renamed = if !registered.exists() && !self.safe_path(&issue.document_path)?.exists()
+            {
+                self.renamed_issue_document(&issue, &path)?
+            } else {
+                None
+            };
+            let path = if let Some((relative, _)) = &renamed {
+                self.safe_path(relative)?
+            } else if registered.exists() {
+                registered
+            } else {
+                self.safe_path(&issue.document_path)?
+            };
             if !path.exists() {
                 continue;
             }
@@ -534,9 +634,34 @@ impl Service {
             if self.issue_content_path(&issue)?.exists() {
                 continue;
             }
-            if source_hash != issue.content_hash {
-                let request = json!({"command":"issue.update","issue":issue.id,
+            // Pending publication still carries the previous projected title.
+            let title = renamed
+                .as_ref()
+                .map(|(_, name)| name.as_str())
+                .or_else(|| properties["title"].as_str())
+                .context("invalid: Issue title must be text")?;
+            let title_changed = renamed.is_some()
+                || (title != issue.name && self.store().document_generation(&key).await?.is_none());
+            if title_changed {
+                ensure!(
+                    !title.trim().is_empty() && !title.contains(['\n', '\r']),
+                    "invalid: Issue title must be nonblank single-line text"
+                );
+                ensure!(
+                    properties["revision"].as_i64() == Some(issue.revision),
+                    "conflict: Issue title revision changed"
+                );
+            }
+            if source_hash != issue.content_hash || title_changed {
+                let mut request = json!({"command":"issue.update","issue":issue.id,
                     "content_hash":source_hash,"review_content_hash":content.review_hash()});
+                if title_changed {
+                    request["title"] = json!(title);
+                    request["name"] = json!(title);
+                }
+                if let Some((relative, _)) = &renamed {
+                    Box::pin(self.validate_issue_rename(&issue, &request, relative)).await?;
+                }
                 let outcome = self
                     .store()
                     .execute_as(

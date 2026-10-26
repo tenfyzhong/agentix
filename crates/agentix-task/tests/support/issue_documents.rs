@@ -215,6 +215,17 @@ async fn issue_submission_preserves_authored_body_without_reading_it() {
         .await
         .unwrap();
     assert_eq!(outcome.result["status"], "PENDING_REVIEW");
+    let stored = f
+        .service
+        .store()
+        .issue_record(item["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(stored.status).unwrap(),
+        "PENDING_REVIEW"
+    );
+    assert_eq!(stored.content_hash, item["content_hash"]);
     assert!(
         std::fs::read_to_string(&path)
             .unwrap()
@@ -1568,5 +1579,283 @@ async fn issue_legacy_migration_invalidates_review_and_keeps_terminal_content_gu
                 "Offline edited request"
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn obsidian_issue_title_updates_database_heading_and_preserves_prose() {
+    let f = Fixture::new().await;
+    let item = create_issue(&f).await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(item["document_path"].as_str().unwrap());
+    let source = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        source
+            .replace("title: \"Login\"", "title: New login")
+            .replace(
+                "Allow users to sign in.",
+                "New requirement.\n# Authored heading",
+            ),
+    )
+    .unwrap();
+    f.service
+        .sync_delivery_document(item["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    let updated = f
+        .service
+        .store()
+        .issue_record(item["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(updated.title, "New login");
+    assert_eq!(updated.name, "New login");
+    let doc = read(&f, &updated.document_path);
+    assert!(doc.contains("\n# New login\n"));
+    assert!(!doc.contains("\n# Login\n"));
+    assert!(doc.contains("New requirement.\n# Authored heading"));
+    assert!(doc.contains("Keep browser sessions."));
+    let revision = updated.revision;
+    f.service.sync_delivery_document(&updated.id).await.unwrap();
+    assert_eq!(
+        f.service
+            .store()
+            .issue_record(&updated.id)
+            .await
+            .unwrap()
+            .revision,
+        revision
+    );
+}
+
+#[tokio::test]
+async fn obsidian_issue_title_only_edit_imports_without_body_changes() {
+    let f = Fixture::new().await;
+    let item = create_issue(&f).await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(item["document_path"].as_str().unwrap());
+    let source = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        source.replace("title: \"Login\"", "title: New login"),
+    )
+    .unwrap();
+    f.service
+        .sync_delivery_document(item["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    let updated = f
+        .service
+        .store()
+        .issue_record(item["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(updated.title, "New login");
+    assert_eq!(updated.content_hash, item["content_hash"]);
+    assert!(read(&f, &updated.document_path).contains("\n# New login\n"));
+}
+
+#[tokio::test]
+async fn obsidian_issue_title_rejects_invalid_and_stale_edits_without_overwriting_note() {
+    for title in ["''", "42", "'New login'"] {
+        let f = Fixture::new().await;
+        let item = create_issue(&f).await;
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(item["document_path"].as_str().unwrap());
+        let mut edited = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("title: \"Login\"", &format!("title: {title}"));
+        if title == "'New login'" {
+            edited = edited.replace("revision: 1", "revision: 0");
+        }
+        std::fs::write(&path, &edited).unwrap();
+        assert!(
+            f.service
+                .sync_delivery_document(item["id"].as_str().unwrap())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            f.service
+                .store()
+                .issue_record(item["id"].as_str().unwrap())
+                .await
+                .unwrap()
+                .title,
+            "Login"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    }
+}
+
+#[tokio::test]
+async fn obsidian_issue_filename_rename_imports_title_and_preserves_body() {
+    for pending in [false, true] {
+        let f = Fixture::new().await;
+        let item = create_issue(&f).await;
+        let old = f
+            .service
+            .config()
+            .output_dir()
+            .join(item["document_path"].as_str().unwrap());
+        let renamed = old.with_file_name(
+            old.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace("Login", "New login"),
+        );
+        std::fs::rename(&old, &renamed).unwrap();
+        let source = std::fs::read_to_string(&renamed)
+            .unwrap()
+            .replace("Allow users to sign in.", "Preserve renamed note content.");
+        std::fs::write(&renamed, &source).unwrap();
+        if pending {
+            let mut conn = super::incremental::connection(&f).await;
+            sqlx::query(
+                "INSERT OR REPLACE INTO pending_documents(key,generation) VALUES(?,'rename-test')",
+            )
+            .bind(format!("issue:{}", item["id"].as_str().unwrap()))
+            .execute(&mut conn)
+            .await
+            .unwrap();
+            f.service.sync_pending_documents().await.unwrap();
+        } else {
+            f.service
+                .sync_delivery_document(item["id"].as_str().unwrap())
+                .await
+                .unwrap();
+        }
+        let updated = f
+            .service
+            .store()
+            .issue_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(updated.title, "New login");
+        assert_eq!(updated.name, "New login");
+        assert_eq!(
+            f.service.config().output_dir().join(&updated.document_path),
+            renamed
+        );
+        assert!(!old.exists());
+        let body = std::fs::read_to_string(&renamed).unwrap();
+        assert!(body.contains("\n# New login\n"));
+        assert!(body.contains("Preserve renamed note content."));
+        f.service.sync().await.unwrap();
+        assert!(!old.exists());
+    }
+}
+
+#[tokio::test]
+async fn obsidian_issue_filename_rename_rejects_ambiguous_candidates_without_recreating_old_note() {
+    let f = Fixture::new().await;
+    let item = create_issue(&f).await;
+    let old = f
+        .service
+        .config()
+        .output_dir()
+        .join(item["document_path"].as_str().unwrap());
+    let source = std::fs::read_to_string(&old).unwrap();
+    for name in ["First", "Second"] {
+        let target = old.with_file_name(
+            old.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace("Login", name),
+        );
+        std::fs::write(target, &source).unwrap();
+    }
+    std::fs::remove_file(&old).unwrap();
+    assert!(
+        f.service
+            .sync_delivery_document(item["id"].as_str().unwrap())
+            .await
+            .is_err()
+    );
+    assert!(!old.exists());
+    assert_eq!(
+        f.service
+            .store()
+            .issue_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .title,
+        "Login"
+    );
+}
+
+#[tokio::test]
+async fn obsidian_issue_filename_rename_rejects_stale_foreign_and_conflicting_edits() {
+    for case in ["stale", "foreign", "title", "prefix", "collision", "long"] {
+        let f = Fixture::new().await;
+        let item = create_issue(&f).await;
+        let old = f
+            .service
+            .config()
+            .output_dir()
+            .join(item["document_path"].as_str().unwrap());
+        let source = std::fs::read_to_string(&old).unwrap();
+        if case == "collision" {
+            f.service
+                .execute(
+                    json!({"command":"issue.create","project":f.project,"title":"New login"}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        let name = if case == "long" {
+            "x".repeat(49)
+        } else {
+            "New login".into()
+        };
+        let filename = if case == "prefix" {
+            "New login.md".into()
+        } else {
+            old.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace("Login", &name)
+        };
+        let target = old.with_file_name(filename);
+        std::fs::rename(&old, &target).unwrap();
+        let edited = match case {
+            "stale" => source.replace("revision: 1", "revision: 0"),
+            "foreign" => source.replace(&f.project, "prj_foreign"),
+            "title" => source.replace("title: \"Login\"", "title: Different title"),
+            _ => source,
+        };
+        std::fs::write(&target, &edited).unwrap();
+        assert!(
+            f.service
+                .sync_delivery_document(item["id"].as_str().unwrap())
+                .await
+                .is_err(),
+            "{case}"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), edited);
+        assert!(!old.exists(), "{case}");
+        assert_eq!(
+            f.service
+                .store()
+                .issue_record(item["id"].as_str().unwrap())
+                .await
+                .unwrap()
+                .title,
+            "Login"
+        );
     }
 }
