@@ -809,35 +809,8 @@ impl TaskBoardView<'_> {
             return Ok(());
         }
         if action.command == "type" {
-            let item = self
-                .tasks_service()?
-                .store()
-                .issue_record(&action.id)
-                .await
-                .map_err(error)?;
-            if item.revision != action.revision
-                || item.status.terminal()
-                || item.archived_at.is_some()
-            {
-                return Err(EngineError::InvalidAction);
-            }
-            let mut view = OutboundView::text("Issue type", "Choose a type label.");
-            for kind in std::iter::once(None).chain(IssueType::ALL.into_iter().map(Some)) {
-                let value = kind.map(IssueType::as_str);
-                self.add_issue_action(
-                    conversation,
-                    owner,
-                    &mut view,
-                    value.unwrap_or("None"),
-                    &item,
-                    "issue.update",
-                    Some("issue_type"),
-                    value.map(str::to_owned),
-                )
-                .await;
-            }
-            self.ui.send_view(conversation, &view).await?;
-            return Ok(());
+            // Keep the picker future out of the shared inbound handler's stack frame.
+            return Box::pin(self.show_issue_types(conversation, owner, &action)).await;
         }
         if action.command == "milestone" {
             return self
@@ -852,6 +825,41 @@ impl TaskBoardView<'_> {
         }
         self.apply_issue_action(conversation, owner, action, None)
             .await
+    }
+
+    async fn show_issue_types(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+        action: &IssueAction,
+    ) -> Result<(), EngineError> {
+        let item = self
+            .tasks_service()?
+            .store()
+            .issue_record(&action.id)
+            .await
+            .map_err(error)?;
+        if item.revision != action.revision || item.status.terminal() || item.archived_at.is_some()
+        {
+            return Err(EngineError::InvalidAction);
+        }
+        let mut view = OutboundView::text("Issue type", "Choose a type label.");
+        for kind in std::iter::once(None).chain(IssueType::ALL.into_iter().map(Some)) {
+            let value = kind.map(IssueType::as_str);
+            self.add_issue_action(
+                conversation,
+                owner,
+                &mut view,
+                value.unwrap_or("None"),
+                &item,
+                "issue.update",
+                Some("issue_type"),
+                value.map(str::to_owned),
+            )
+            .await;
+        }
+        self.ui.send_view(conversation, &view).await?;
+        Ok(())
     }
 
     pub(in crate::engine) async fn finish_issue_input(
