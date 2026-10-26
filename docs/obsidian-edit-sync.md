@@ -21,9 +21,10 @@ satisfy portable naming rules (at most 48 characters). Ambiguous copies, conflic
 property edits, changed prefixes, and name collisions reject import. Previewing
 the normal mutation ensures its resulting path matches the moved source before
 committing; publication can recover that source even when the registry still
-contains the old path. Pending Issue publication performs the same reconciliation
-before writing, preventing it from recreating the old note over an unimported
-rename. The source note's authored sections remain intact.
+contains the old path. Pending Issue publication performs this reconciliation only when the canonical
+file is missing, preventing it from recreating the old note over an unimported
+rename. Ordinary status publication does not import existing Issue prose or
+invalidate a pending review. The source note's authored sections remain intact.
 
 The plugin records pending document paths in vault-scoped local storage before
 starting the debounce timer; it does not store another copy of the prose. After

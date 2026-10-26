@@ -512,7 +512,7 @@ impl Service {
             let relative = parent
                 .join(entry.file_name())
                 .to_string_lossy()
-                .into_owned();
+                .replace('\\', "/");
             let path = self.safe_path(&relative)?;
             if !path.is_file() {
                 continue;
@@ -660,8 +660,7 @@ impl Service {
                     request["name"] = json!(title);
                 }
                 if let Some((relative, _)) = &renamed {
-                    self.validate_issue_rename(&issue, &request, relative)
-                        .await?;
+                    Box::pin(self.validate_issue_rename(&issue, &request, relative)).await?;
                 }
                 let outcome = self
                     .store()

@@ -215,6 +215,17 @@ async fn issue_submission_preserves_authored_body_without_reading_it() {
         .await
         .unwrap();
     assert_eq!(outcome.result["status"], "PENDING_REVIEW");
+    let stored = f
+        .service
+        .store()
+        .issue_record(item["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(stored.status).unwrap(),
+        "PENDING_REVIEW"
+    );
+    assert_eq!(stored.content_hash, item["content_hash"]);
     assert!(
         std::fs::read_to_string(&path)
             .unwrap()

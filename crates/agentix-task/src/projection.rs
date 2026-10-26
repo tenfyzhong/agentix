@@ -193,7 +193,7 @@ impl Service {
                     | "issue.unarchive"
             )
         {
-            let imported = self.reconcile_issue_documents_locked(Some(&state)).await?;
+            let imported = Box::pin(self.reconcile_issue_documents_locked(Some(&state))).await?;
             if let Some((before, after)) = request["issue"]
                 .as_str()
                 .or_else(|| request["milestone"].as_str())
@@ -315,14 +315,14 @@ impl Service {
         {
             let _lock = self.lock_output().await?;
             let state = self.store.request_snapshot(&command).await?;
-            self.reconcile_issue_documents_locked(Some(&state)).await?;
+            Box::pin(self.reconcile_issue_documents_locked(Some(&state))).await?;
         }
         self.sync_pending().await
     }
 
     async fn sync_all(&self) -> Result<()> {
         let _lock = self.lock_output().await?;
-        self.reconcile_issue_documents_locked(None).await?;
+        Box::pin(self.reconcile_issue_documents_locked(None)).await?;
         self.store.reap_expired().await?;
         self.render_locked().await
     }
@@ -355,7 +355,18 @@ impl Service {
 
     async fn render_pending_document(&self, key: &str, generation: String) -> Result<()> {
         let mut state = self.store.projection_snapshot(key).await?;
-        if key.starts_with("milestone:") || key.starts_with("issue:") {
+        // Status publication must not import existing Issue prose or invalidate review.
+        // Only a missing canonical file needs filename-rename recovery here.
+        let missing_issue = if let Some(issue) = state
+            .issues
+            .iter()
+            .find(|issue| key == format!("issue:{}", issue.id))
+        {
+            !self.safe_path(&issue.document_path)?.exists()
+        } else {
+            false
+        };
+        if key.starts_with("milestone:") || missing_issue {
             state
                 .issues
                 .retain(|issue| key == format!("issue:{}", issue.id));
