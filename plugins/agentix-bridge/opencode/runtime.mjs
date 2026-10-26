@@ -24,6 +24,8 @@ const eventTypes = [
     'session.inbox.enqueued',
     'session.inbox.delivered',
     'session.step.started',
+    'session.step.ended',
+    'session.step.failed',
     'session.text.started',
     'session.text.delta',
     'session.text.ended',
@@ -597,7 +599,14 @@ export class OpenCodeBridge {
         if (this.closed || !this.session) return;
         const sid = p.sessionID ?? p.form?.sessionID;
         if (sid !== this.session.id) return;
-        if (type === 'session.inbox.enqueued') {
+        if (type === 'session.step.ended' || type === 'session.step.failed') {
+            const usage = {};
+            for (const kind of ['input', 'output']) {
+                if (p.tokens?.[kind] !== undefined) usage[kind] = p.tokens[kind];
+            }
+            if (p.tokens?.cache?.read !== undefined) usage.cached = p.tokens.cache.read;
+            this.transport.usage(p.assistantMessageID, usage);
+        } else if (type === 'session.inbox.enqueued') {
             if (p.item.type === 'user') this.pendingUsers.add(p.inboxID);
             this.prune();
         } else if (type === 'session.inbox.delivered') {

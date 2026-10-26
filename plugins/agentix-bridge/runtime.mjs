@@ -244,6 +244,11 @@ export function registerBridge(api, kind, options = {}) {
         persist();
     });
     on('message_end', value => {
+        const message = value.message;
+        if (record && message?.role === 'assistant' && Number.isFinite(message.timestamp))
+            transport.usage(message.responseId ?? String(message.timestamp), {
+                input: message.usage?.input, output: message.usage?.output, cached: message.usage?.cacheRead,
+            });
         if (value.message?.stopReason === 'aborted') session.interrupted = true;
         if (value.message?.stopReason === 'error' && session.turn) session.turn.error = value.message.errorMessage ?? 'Agent failed';
         session.associate();

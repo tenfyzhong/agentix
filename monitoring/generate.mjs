@@ -73,12 +73,13 @@ const specs = [
     panel('Retrieval fallback and results', rate('taskix_events_total', 'component="memory"', 'instance,event'), 'ops'),
   ]],
   ['tokens', 'Observed token usage', [
-    panel('Codex input tokens / second', rate('agentix_tokens_total', 'kind="input"', 'instance,source'), 'short', 'Codex cumulative notifications use a baseline; the first notification and reconnect history are not billed again.'),
-    panel('Codex output tokens / second', rate('agentix_tokens_total', 'kind="output"', 'instance,source')),
-    panel('Codex cached input / second', rate('agentix_tokens_total', 'kind="cached_input"', 'instance,source')),
+    ...[['input', 'input'], ['output', 'output'], ['cached', 'cached_input']].map(([name, kind]) => ({
+      ...panel(`Agent ${name} tokens / second`, rate('agentix_tokens_total', `kind="${kind}"`, 'instance,source'), 'short', 'Observed native usage by agent source. Reconnect snapshots establish a baseline; missing counts stay missing. Cached means cache-read tokens; input/output semantics follow each host provider.'),
+      legend: '{{source}} · {{instance}}',
+    })),
     panel('Memory input tokens / second', rate('taskix_tokens_total', 'kind="input"', 'instance,source')),
     panel('Memory output tokens / second', rate('taskix_tokens_total', 'kind="output"', 'instance,source')),
-    panel('Codex observed tokens in selected range', `sum by (instance,source,kind) (increase(${select('agentix_tokens_total')}[$__range]))`, 'short', 'Partial observed usage, not billing. Cached input is a subset of input. Missing usage stays missing. Never sum this with existing OTLP usage.'),
+    panel('Agent observed tokens in selected range', `sum by (instance,source,kind) (increase(${select('agentix_tokens_total')}[$__range]))`, 'short', 'Partial observed usage, not billing. Codex cached input is a subset of Codex input. Missing usage stays missing. Never sum this with existing OTLP usage.'),
     panel('Memory observed tokens in selected range', `sum by (instance,source,kind) (increase(${select('taskix_tokens_total')}[$__range]))`),
   ]],
   ['jev', 'Jev decisions', [
@@ -99,7 +100,7 @@ const groupedPanels = specs.flatMap(([, title, panels]) => {
   const children = panels.map((p, index) => ({
     id: nextId++, title: p.title, description: p.description, type: p.type ?? 'timeseries', datasource: ds,
     gridPos: {x: index % 2 * 12, y: rowY + Math.floor(index / 2) * 8, w: 12, h: 8},
-    targets: [{refId: 'A', expr: p.expr, legendFormat: '__auto', range: true, interval: '1m'}],
+    targets: [{refId: 'A', expr: p.expr, legendFormat: p.legend ?? '__auto', range: true, interval: '1m'}],
     fieldConfig: {defaults: {unit: p.unit, min: 0, noValue: 'No data', ...(p.type === 'stat' ? {} : {custom: {drawStyle: 'line', lineWidth: 1, fillOpacity: 8, spanNulls: false}})}, overrides: []},
     options: p.type === 'stat' ? {reduceOptions: {calcs: ['lastNotNull'], fields: '', values: false}, graphMode: 'none'} : {legend: {displayMode: 'table', placement: 'bottom', calcs: ['lastNotNull']}, tooltip: {mode: 'multi', sort: 'desc'}},
   }));

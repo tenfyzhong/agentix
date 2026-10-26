@@ -1,3 +1,4 @@
+import { ObservedUsage } from './usage.mjs';
 import net from 'node:net';
 import { FrameDecoder } from './framing.mjs';
 import { homedir } from 'node:os';
@@ -31,6 +32,7 @@ export class BridgeTransport {
     #record;
     #active = false;
     #sequence = 0;
+    #usage = new ObservedUsage();
     #clients = new Set();
     #timer;
     constructor(options) {
@@ -40,7 +42,7 @@ export class BridgeTransport {
     }
     get sequence() { return this.#sequence; }
     open(record) {
-        this.#record = record; this.#sequence = 0; this.#active = true;
+        this.#record = record; this.#sequence = 0; this.#usage = new ObservedUsage(); this.#active = true;
         this.#connect(record.instance);
     }
     #send(socket, frame) {
@@ -52,9 +54,13 @@ export class BridgeTransport {
         if (!socket.destroyed && Buffer.byteLength(encoded) <= MAX_FRAME && socket.writableLength < 8 * MAX_FRAME) socket.write(encoded);
         else socket.destroy();
     }
+    usage(id, value) {
+        if (this.#usage.record(id, value) && this.#record)
+            this.event({ QueueChanged: { session_id: this.#record.session_id } });
+    }
     event(value) {
         if (![...this.#clients].some(client => client.registered)) return;
-        const frame = { instance: this.#record.instance, seq: ++this.#sequence, event: value };
+        const frame = { instance: this.#record.instance, seq: ++this.#sequence, event: value, token_usage: { ...this.#usage.total } };
         for (const client of this.#clients) if (client.registered) this.#send(client, frame);
     }
     async close(flush = false) {
@@ -96,7 +102,7 @@ export class BridgeTransport {
             socket.on('close', () => { clearTimeout(deadline); this.#clients.delete(socket); this.#retry(incarnation); });
             socket.on('connect', () => {
                 if (!this.#active || this.#record.instance !== incarnation) return socket.destroy();
-                this.#send(socket, { id: 'register', method: 'register', params: { ...this.#record, version: PROTOCOL_VERSION, snapshot: this.#options.snapshot() } });
+                this.#send(socket, { id: 'register', method: 'register', params: { ...this.#record, version: PROTOCOL_VERSION, snapshot: { ...this.#options.snapshot(), token_usage: { ...this.#usage.total } } } });
             });
             const decoder = new FrameDecoder();
             socket.on('data', chunk => {

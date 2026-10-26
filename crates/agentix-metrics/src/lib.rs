@@ -469,13 +469,28 @@ events! {AgentLag=>("engine","event_lag"),EngineRejected=>("engine","rejected"),
 pub enum TokenSource {
     Codex,
     Memory,
+    Pi,
+    Omp,
+    Claude,
+    OpenCode,
 }
 impl TokenSource {
-    const ALL: [Self; 2] = [Self::Codex, Self::Memory];
+    const ALL: [Self; 6] = [
+        Self::Codex,
+        Self::Memory,
+        Self::Pi,
+        Self::Omp,
+        Self::Claude,
+        Self::OpenCode,
+    ];
     const fn name(self) -> &'static str {
         match self {
             Self::Codex => "codex_app_server",
             Self::Memory => "memory_provider",
+            Self::Pi => "pi_bridge",
+            Self::Omp => "omp_bridge",
+            Self::Claude => "claude_bridge",
+            Self::OpenCode => "opencode_bridge",
         }
     }
 }
@@ -590,6 +605,24 @@ pub struct Usage {
     pub input: Option<u64>,
     pub output: Option<u64>,
     pub cached: Option<u64>,
+}
+impl Usage {
+    /// Record live bridge totals relative to the registration snapshot.
+    /// Missing fields stay absent; decreasing counters establish a new baseline.
+    pub fn record_observed(&mut self, metrics: &Metrics, source: TokenSource, next: Self) {
+        for (kind, old, new) in [
+            (TokenKind::Input, &mut self.input, next.input),
+            (TokenKind::Output, &mut self.output, next.output),
+            (TokenKind::Cached, &mut self.cached, next.cached),
+        ] {
+            if let Some(new) = new {
+                if new >= old.unwrap_or(0) {
+                    metrics.tokens(source, kind, new - old.unwrap_or(0));
+                }
+                *old = Some(new);
+            }
+        }
+    }
 }
 #[derive(Default)]
 pub struct TokenDeltas {

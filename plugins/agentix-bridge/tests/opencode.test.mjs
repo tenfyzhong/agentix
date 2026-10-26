@@ -139,6 +139,7 @@ function fixture(t, options = {}) {
         },
         close: async () => {},
         event: (value) => events.push(value),
+        usage: (id, value) => calls.push(['usage', id, value]),
     };
     const bridge = new OpenCodeBridge(api, {
         stateDir: root,
@@ -1130,4 +1131,19 @@ test('opencode2_text_offset_cache_is_bounded_and_does_not_replay_unknown_evicted
     await f.emit('session.text.ended', { ...data, text:'already streamed' });
     assert.equal(f.events.filter(e => e.AgentMessageDelta).map(e => e.AgentMessageDelta.delta).join(''), 'already streamed');
     assert.ok(f.bridge.parts.textLengths.size <= 8192);
+});
+
+
+test('OpenCode forwards native step usage and ignores foreign sessions and absent fields', async t => {
+    const f = fixture(t);
+    await f.bridge.start();
+    assert.ok(f.listeners.has('session.step.ended'));
+    assert.ok(f.listeners.has('session.step.failed'));
+    f.listeners.get('session.step.ended')({ type: 'session.step.ended', data: { sessionID: 'ses_one', assistantMessageID: 'a', tokens: { input: 17, output: 4, cache: { read: 9 } } } });
+    f.listeners.get('session.step.failed')({ type: 'session.step.failed', data: { sessionID: 'ses_one', assistantMessageID: 'b', tokens: { output: 2 } } });
+    f.listeners.get('session.step.ended')({ type: 'session.step.ended', data: { sessionID: 'ses_two', assistantMessageID: 'foreign', tokens: { input: 999 } } });
+    await f.bridge.events;
+    assert.deepEqual(f.calls.filter(c => c[0] === 'usage'), [
+        ['usage', 'a', { input: 17, output: 4, cached: 9 }], ['usage', 'b', { output: 2 }],
+    ]);
 });

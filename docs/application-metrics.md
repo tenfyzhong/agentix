@@ -90,7 +90,7 @@ automatically deleted from Grafana Cloud.
 | Agents and dispatch | Live connections, backend RPC, turns, first output, in-flight work, queue capacity/age and lost events |
 | Workflow | Task/Job/Issue states, age, transitions, expired leases and projection backlog |
 | Memory | API/retrieval/work/provider latency and outcomes, queues, retries, projection, embedding and lifecycle |
-| Observed token usage | Separately sourced Codex and Memory input/output/cached usage |
+| Observed token usage | Codex, Pi, OMP, Claude and OpenCode input/output/cache-read usage by source, plus Memory usage |
 | Jev decisions | Decisions, adoption, mean/P95/P99 latency, mean confidence, fallbacks and human-reviewed accuracy |
 
 [alerts.yaml](../monitoring/alerts.yaml) contains 14 Prometheus-compatible alerts.
@@ -169,11 +169,27 @@ observations; these are not precise end-to-end user-response accounting.
 
 Codex usage uses cumulative notification deltas, with a fresh baseline on the
 first observation/reconnect/reset. Consequently it may undercount the initial
-turn. Memory usage counts only fields present in real provider responses. Missing
-fields are not converted into zero. Cached input is a subset of input. These are
-**partial observed usage**, not costs or billing, and must never be added to the
-existing OTLP usage for the same requests. Other hosts without existing usage
-signals remain absent; this does not extend their protocols.
+turn. Pi/OMP observe assistant `message_end` usage (`input`, `output`,
+`cacheRead`); Claude observes matching-turn transcript response usage
+(`input_tokens`, `output_tokens`, `cache_read_input_tokens`), deduplicated by
+response ID across content blocks. OpenCode 2.0.32 observes
+`session.step.ended`/`session.step.failed` tokens (`input`, `output`, `cache.read`).
+Optional bridge-v2 `token_usage` fields carry cumulative live observations; each
+connection's registration snapshot establishes its baseline. Old plugins remain
+compatible but contribute no usage. Upgrade the bridge plugins and Agentix together.
+Disconnect-period usage and prior history are excluded on reconnect. Deduplication
+retains the latest 4,096 message identities per bridge incarnation; replay beyond
+that window is outside the live-event coverage contract.
+
+The three Agent input/output/cached tokens-per-second panels group all five hosts
+by `source` and `instance`; sources are `codex_app_server`, `pi_bridge`,
+`omp_bridge`, `claude_bridge`, and `opencode_bridge`. Memory remains separate.
+Only fields present in native usage are recorded; missing values are not zero.
+Input/output preserve each host's native semantics. Codex cached input is a subset
+of its input; other hosts may report cache reads separately from uncached input.
+Cache writes and separately reported reasoning are not added to these counters.
+These are **partial observed usage**, not costs or billing, and must never be
+added to existing OTLP usage for the same requests.
 
 Jev adoption is not accuracy. Confidence is not a calibrated success probability.
 Human-reviewed accuracy describes only reviewed requests. Jev schema v1 and v2 are
@@ -240,7 +256,7 @@ References: [Alloy scrape](https://grafana.com/docs/alloy/latest/reference/compo
 
 Every P95 panel has a matching P99 panel, including message operations, agent
 operations, first output, Memory operations, and Jev decisions. The dashboard has
-78 charts in eight rows. Existing token sources are unchanged.
+78 charts in eight rows. Agent usage panels distinguish all supported backends by source.
 
 Jev duration buckets are 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
 20, 30, 60, 120, 300, 600, 1800, 3600, and +Inf seconds. The collector folds

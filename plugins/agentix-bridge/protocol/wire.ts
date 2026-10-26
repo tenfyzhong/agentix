@@ -128,12 +128,14 @@ export interface EventFrame {
     instance: string;
     seq: number;
     event: Event;
+    token_usage?: TokenUsage;
 }
 export interface SessionInfo {
     instance: string;
     seq: number;
     session: Session;
     capabilities: Array<string>;
+    token_usage?: TokenUsage;
 }
 export interface SessionSwitchStarted {
     session_id: string;
@@ -160,4 +162,9 @@ export interface InteractionRequested {
 export interface InteractionResolved {
     session_id: string;
     request_id: string;
+}
+export interface TokenUsage {
+    input?: number;
+    output?: number;
+    cached?: number;
 }

@@ -176,6 +176,7 @@ export class ClaudeSession {
             const previous = { status: turn.status, agent_text: turn.agent_text };
             const transcript = this.readTranscript(this.identity.transcript_path, this.identity.session_id);
             if (transcript?.user_text === turn.user_text) {
+                for (const usage of transcript.token_usage ?? []) this.options.usage?.(usage.id, usage);
                 turn.items = transcript.items;
                 turn.tools = transcript.tools ?? [];
                 for (const item of turn.items) this.emit({ ItemCompleted: { session_id: value.session_id, turn_id: turn.id, item } });

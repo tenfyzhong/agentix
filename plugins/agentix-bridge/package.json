@@ -15,6 +15,7 @@
     "protocol/",
     "queue.mjs",
     "transport.mjs",
+    "usage.mjs",
     "framing.mjs",
     "host.mjs",
     "session.mjs",

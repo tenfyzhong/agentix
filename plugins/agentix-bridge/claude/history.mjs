@@ -52,6 +52,15 @@ function appendRecords(text, sessionId, turns, seen, latestOnly) {
         } else if (turns.length) {
             const turn = turns.at(-1);
             if (entry.type === 'assistant') {
+                if (message.usage && typeof message.id === 'string') {
+                    const usages = turn.token_usage ??= [];
+                    let usage = usages.find(value => value.id === message.id);
+                    if (!usage) { usage = { id: message.id }; usages.push(usage); }
+                    for (const [kind, field] of [['input', 'input_tokens'], ['output', 'output_tokens'], ['cached', 'cache_read_input_tokens']]) {
+                        const count = message.usage[field];
+                        if (Number.isSafeInteger(count) && count >= 0) usage[kind] = Math.max(usage[kind] ?? 0, count);
+                    }
+                }
                 if (content) turn.agent_text = [turn.agent_text, content].filter(Boolean).join('\n').slice(-100000);
                 if (message.stop_reason === 'end_turn') turn.status = 'completed';
                 for (const block of Array.isArray(message.content) ? message.content : []) {

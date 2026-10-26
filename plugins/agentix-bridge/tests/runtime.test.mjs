@@ -466,3 +466,23 @@ unixTest('native new bypasses a pending host command so it can interrupt active 
     release(); await pending; await fresh;
     assert.equal(result.ok, true);
 });
+
+for (const kind of ['pi', 'omp']) unixTest(`${kind}: streams real token usage once and preserves reconnect baseline`, async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'ax-usage-'));
+    const server = await listen(directory, t);
+    const host = hostFixture();
+    const bridge = registerBridge(host.api, kind, { endpoint: `unix://${join(directory, 'control.sock')}`, reconnectDelay: 5 });
+    t.after(async () => { await bridge.close(); await rm(directory, { recursive: true, force: true }); });
+    await host.emit('session_start');
+    const client = await server.next(); t.after(() => client.socket.destroy());
+    await client.request('snapshot');
+    const message = { role: 'assistant', timestamp: 123, usage: { input: 17, output: 4, cacheRead: 7 } };
+    await host.emit('message_end', { message });
+    await host.emit('message_end', { message: structuredClone(message) });
+    await host.emit('message_end', { message: { role: 'user', timestamp: 124, usage: { input: 999 } } });
+    await waitFor(() => client.frames.some(f => f.token_usage?.input === 17));
+    assert.deepEqual(client.frames.filter(f => f.token_usage).at(-1).token_usage, { input: 17, output: 4, cached: 7 });
+    client.socket.destroy();
+    const again = await server.next(); t.after(() => again.socket.destroy());
+    assert.deepEqual(again.record.snapshot.token_usage, { input: 17, output: 4, cached: 7 });
+});

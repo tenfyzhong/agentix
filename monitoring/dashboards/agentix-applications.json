@@ -3340,8 +3340,8 @@
     },
     {
       "id": 70,
-      "title": "Codex input tokens / second",
-      "description": "Codex cumulative notifications use a baseline; the first notification and reconnect history are not billed again.",
+      "title": "Agent input tokens / second",
+      "description": "Observed native usage by agent source. Reconnect snapshots establish a baseline; missing counts stay missing. Cached means cache-read tokens; input/output semantics follow each host provider.",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -3357,7 +3357,7 @@
         {
           "refId": "A",
           "expr": "sum by (instance,source) (rate(agentix_tokens_total{instance=~\"$instance\",kind=\"input\"}[$__rate_interval]))",
-          "legendFormat": "__auto",
+          "legendFormat": "{{source}} · {{instance}}",
           "range": true,
           "interval": "1m"
         }
@@ -3392,8 +3392,8 @@
     },
     {
       "id": 71,
-      "title": "Codex output tokens / second",
-      "description": "",
+      "title": "Agent output tokens / second",
+      "description": "Observed native usage by agent source. Reconnect snapshots establish a baseline; missing counts stay missing. Cached means cache-read tokens; input/output semantics follow each host provider.",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -3409,7 +3409,7 @@
         {
           "refId": "A",
           "expr": "sum by (instance,source) (rate(agentix_tokens_total{instance=~\"$instance\",kind=\"output\"}[$__rate_interval]))",
-          "legendFormat": "__auto",
+          "legendFormat": "{{source}} · {{instance}}",
           "range": true,
           "interval": "1m"
         }
@@ -3444,8 +3444,8 @@
     },
     {
       "id": 72,
-      "title": "Codex cached input / second",
-      "description": "",
+      "title": "Agent cached tokens / second",
+      "description": "Observed native usage by agent source. Reconnect snapshots establish a baseline; missing counts stay missing. Cached means cache-read tokens; input/output semantics follow each host provider.",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -3461,7 +3461,7 @@
         {
           "refId": "A",
           "expr": "sum by (instance,source) (rate(agentix_tokens_total{instance=~\"$instance\",kind=\"cached_input\"}[$__rate_interval]))",
-          "legendFormat": "__auto",
+          "legendFormat": "{{source}} · {{instance}}",
           "range": true,
           "interval": "1m"
         }
@@ -3600,8 +3600,8 @@
     },
     {
       "id": 75,
-      "title": "Codex observed tokens in selected range",
-      "description": "Partial observed usage, not billing. Cached input is a subset of input. Missing usage stays missing. Never sum this with existing OTLP usage.",
+      "title": "Agent observed tokens in selected range",
+      "description": "Partial observed usage, not billing. Codex cached input is a subset of Codex input. Missing usage stays missing. Never sum this with existing OTLP usage.",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",

@@ -17,9 +17,11 @@ test('real Alloy remote-write sends application samples and drops all other seri
   const children = [];
   const logs = [];
   const payload = process.env.METRICS_FIXTURE_FILE ? readFileSync(process.env.METRICS_FIXTURE_FILE, 'utf8').replace('# EOF\n', '') : '# TYPE agentix_build info\nagentix_build_info{version="test"} 1\n';
+  const sources = ['pi_bridge', 'omp_bridge', 'claude_bridge', 'opencode_bridge'];
+  const tokenSamples = '# TYPE agentix_tokens counter\n' + sources.flatMap(source => ['input', 'output', 'cached_input'].map(kind => `agentix_tokens_total{source="${source}",kind="${kind}"} 17\n`)).join('');
   const fixture = createServer((_req, response) => {
     response.setHeader('content-type', 'application/openmetrics-text; version=1.0.0; charset=utf-8');
-    response.end(payload + '# TYPE agentix_secret gauge\nagentix_secret 1\n# TYPE node_cpu_seconds counter\nnode_cpu_seconds_total 99\n# TYPE process_resident_memory_bytes gauge\nprocess_resident_memory_bytes 999\n# EOF\n');
+    response.end(payload + tokenSamples + '# TYPE agentix_secret gauge\nagentix_secret 1\n# TYPE node_cpu_seconds counter\nnode_cpu_seconds_total 99\n# TYPE process_resident_memory_bytes gauge\nprocess_resident_memory_bytes 999\n# EOF\n');
   });
   const sourcePort = await listen(fixture);
   t.after(async () => {
@@ -53,6 +55,9 @@ test('real Alloy remote-write sends application samples and drops all other seri
   }
   assert.equal(result?.data?.result?.length, 2, logs.join('').slice(-8000));
   await delay(1500);
+  const tokens = await query('agentix_tokens_total');
+  for (const source of sources) for (const kind of ['input', 'output', 'cached_input'])
+    assert.ok(tokens.data.result.some(s => s.metric.source === source && s.metric.kind === kind && Number(s.value[1]) === 17), `${source} ${kind}`);
   const all = await query('{__name__=~".+"}');
   const keep = new RegExp(`^(?:${allowlist})$`);
   const names = [...new Set(all.data.result.map(series => series.metric.__name__))];

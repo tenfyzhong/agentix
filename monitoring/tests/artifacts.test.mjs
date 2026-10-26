@@ -67,3 +67,15 @@ test('every p95 has a matching p99 and Jev uses allowed histogram buckets', () =
   }
   assert.ok(new RegExp('^(?:' + allowlist + ')$').test('taskix_jev_duration_seconds_bucket'));
 });
+
+test('observed usage groups all agents in the existing three labeled panels', () => {
+  for (const [name, kind] of [['input','input'],['output','output'],['cached','cached_input']]) {
+    const p = dashboards[0].panels.find(p => p.title === `Agent ${name} tokens / second`);
+    assert.ok(p, name);
+    assert.ok(p.targets[0].expr.includes(`kind="${kind}"`));
+    assert.ok(p.targets[0].expr.includes('sum by (instance,source)'));
+    assert.ok(!p.targets[0].expr.includes('source="'));
+    assert.equal(p.targets[0].legendFormat, '{{source}} · {{instance}}');
+  }
+  assert.ok(!dashboards[0].panels.some(p => /^(Codex|Pi|OMP|Claude|OpenCode) .*tokens \/ second$/.test(p.title)));
+});

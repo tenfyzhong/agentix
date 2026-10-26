@@ -8,4 +8,5 @@ test('packed bridge includes native session control runtime', () => {
         cwd: new URL('..', import.meta.url), encoding: 'utf8', shell: process.platform === 'win32',
     }));
     assert.ok(archive.files.some(file => file.path === 'new-session.mjs'));
+    assert.ok(archive.files.some(file => file.path === 'usage.mjs'));
 });

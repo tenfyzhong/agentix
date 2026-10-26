@@ -59,6 +59,7 @@ async function poll() {
                 nativeNew: delivery instanceof TerminalDelivery && process.env.TMUX_PANE ? busy => new NativeSessionControl('claude', {
                     resolve: () => delivery.resolve(), ready: terminal => delivery.check(terminal),
                 }).newSession(busy) : undefined,
+                usage: (id, value) => transport.usage(id, value),
                 event: value => transport.event(value), sequence: () => transport.sequence });
             session.hook(identity);
             transport.open({ agent: 'claude', instance: session.instance, pid: process.ppid, client_id: clientId,

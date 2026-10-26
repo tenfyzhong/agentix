@@ -27,6 +27,40 @@ fn rejected(message: &str) -> AgentError {
     AgentError::Rejected(message.into())
 }
 
+struct BridgeUsage {
+    source: Option<agentix_metrics::TokenSource>,
+    baseline: agentix_metrics::Usage,
+}
+impl BridgeUsage {
+    fn new(agent: &str, snapshot: Option<&wire::TokenUsage>) -> Self {
+        use agentix_metrics::TokenSource;
+        let source = match agent {
+            "pi" => Some(TokenSource::Pi),
+            "omp" => Some(TokenSource::Omp),
+            "claude" => Some(TokenSource::Claude),
+            "opencode" => Some(TokenSource::OpenCode),
+            _ => None,
+        };
+        Self {
+            source,
+            baseline: Self::usage(snapshot),
+        }
+    }
+    fn usage(value: Option<&wire::TokenUsage>) -> agentix_metrics::Usage {
+        agentix_metrics::Usage {
+            input: value.as_ref().and_then(|v| v.input),
+            output: value.as_ref().and_then(|v| v.output),
+            cached: value.as_ref().and_then(|v| v.cached),
+        }
+    }
+    fn record(&mut self, metrics: &agentix_metrics::Metrics, value: Option<&wire::TokenUsage>) {
+        if let Some(source) = self.source {
+            self.baseline
+                .record_observed(metrics, source, Self::usage(value));
+        }
+    }
+}
+
 pub(super) struct Connection {
     pid: Option<u32>,
     client_id: Option<String>,
@@ -58,6 +92,7 @@ impl Connection {
         let session = record.session_id.clone();
         let agent = record.agent.clone();
         let initial_seq = record.snapshot.seq;
+        let mut usage = BridgeUsage::new(&agent, record.snapshot.token_usage.as_ref());
         let snapshot = Arc::new(StdMutex::new(record.snapshot.clone()));
         let pending = Arc::new(StdMutex::new(PendingResponses::new()));
         let online = Arc::new(AtomicBool::new(true));
@@ -99,6 +134,7 @@ impl Connection {
                             break;
                         }
                         last_seq = frame.seq;
+                        usage.record(agentix_metrics::global(), frame.token_usage.as_ref());
                         match &event {
                             AgentEvent::InteractionRequested(request) => {
                                 if let Some(id) = request.rpc_id.as_str() {
@@ -936,5 +972,35 @@ mod connection_tests {
         task.abort();
         let _ = task.await;
         assert_eq!(connection.pending.lock().unwrap().len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+    #[test]
+    fn wire_usage_is_optional_and_reconnect_snapshot_is_not_counted() {
+        let metrics = agentix_metrics::Metrics::new(agentix_metrics::Service::Agentix, "test");
+        let snapshot = serde_json::from_value(json!({"input":100,"output":20})).unwrap();
+        let mut usage = BridgeUsage::new("pi", Some(&snapshot));
+        usage.record(
+            &metrics,
+            Some(&serde_json::from_value(json!({"input":117,"output":24})).unwrap()),
+        );
+        usage.record(&metrics, None);
+        usage.record(
+            &metrics,
+            Some(&serde_json::from_value(json!({"input":117,"output":24})).unwrap()),
+        );
+        let text = metrics.encode().unwrap();
+        assert!(text.contains("source=\"pi_bridge\",kind=\"input\"} 17"));
+        assert!(text.contains("source=\"pi_bridge\",kind=\"output\"} 4"));
+        assert!(!text.contains("cached_input"));
+        assert!(
+            serde_json::from_value::<wire::EventFrame>(
+                json!({"instance":"i","seq":1,"event":{"QueueChanged":{"session_id":"s"}}})
+            )
+            .is_ok()
+        );
     }
 }

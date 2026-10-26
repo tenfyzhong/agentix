@@ -254,3 +254,61 @@ async fn exporter_samples_only_its_own_process_resources() {
     assert!(!text.contains("hostname"));
     drop(server);
 }
+
+#[test]
+fn bridge_usage_counts_only_post_registration_deltas_for_each_bounded_source() {
+    use agentix_metrics::{TokenSource, Usage};
+    let metrics = Metrics::new(Service::Agentix, "test");
+    for (source, name) in [
+        (TokenSource::Pi, "pi_bridge"),
+        (TokenSource::Omp, "omp_bridge"),
+        (TokenSource::Claude, "claude_bridge"),
+        (TokenSource::OpenCode, "opencode_bridge"),
+    ] {
+        let mut baseline = Usage {
+            input: Some(100),
+            output: None,
+            cached: None,
+        };
+        let current = Usage {
+            input: Some(117),
+            output: Some(4),
+            cached: None,
+        };
+        baseline.record_observed(&metrics, source, current);
+        baseline.record_observed(&metrics, source, current);
+        assert!(
+            metrics
+                .encode()
+                .unwrap()
+                .contains(&format!("source=\"{name}\",kind=\"input\"}} 17"))
+        );
+        assert!(
+            metrics
+                .encode()
+                .unwrap()
+                .contains(&format!("source=\"{name}\",kind=\"output\"}} 4"))
+        );
+    }
+    assert!(!metrics.encode().unwrap().contains("cached_input"));
+}
+
+#[test]
+fn bridge_cached_usage_is_optional_and_uses_its_own_baseline() {
+    use agentix_metrics::{TokenSource, Usage};
+    let metrics = Metrics::new(Service::Agentix, "test");
+    let mut baseline = Usage::default();
+    let next = Usage {
+        input: Some(17),
+        output: Some(4),
+        cached: Some(7),
+    };
+    baseline.record_observed(&metrics, TokenSource::Claude, next);
+    baseline.record_observed(&metrics, TokenSource::Claude, next);
+    assert!(
+        metrics
+            .encode()
+            .unwrap()
+            .contains("source=\"claude_bridge\",kind=\"cached_input\"} 7")
+    );
+}

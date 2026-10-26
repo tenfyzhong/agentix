@@ -698,6 +698,9 @@
         },
         "event": {
           "$ref": "#/$defs/Event"
+        },
+        "token_usage": {
+          "$ref": "#/$defs/TokenUsage"
         }
       },
       "required": [
@@ -724,6 +727,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "token_usage": {
+          "$ref": "#/$defs/TokenUsage"
         }
       },
       "required": [
@@ -851,6 +857,24 @@
         "request_id"
       ],
       "additionalProperties": false
+    },
+    "TokenUsage": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cached": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": []
     }
   },
   "x-agentix": {
