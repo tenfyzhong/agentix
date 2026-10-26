@@ -222,3 +222,18 @@ for (const kind of ["issue", "milestone"]) {
         assert.equal(third.plugin.pendingDeliveries.size, 0);
     });
 }
+
+test("title-only Issue edits trigger delivery after an unchanged body was synchronized", async t => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    f.plugin.engine = { watches: () => true, flush: async () => {}, disposed: false, dispose() {} };
+    const source = ["requirement", "acceptance", "notes"].map(key => `<!-- taskix:${key}:start -->\nAuthored ${key}\n<!-- taskix:${key}:end -->`).join("\n");
+    const props = { id: "issue_one", title: "Old title", "taskix-generated": true };
+    const path = "11-Agents/Projects/Demo/Issues/One.md";
+    let pending = f.plugin.syncDelivery(path, source, props);
+    await new Promise(resolve => setImmediate(resolve));
+    f.reply(null, undefined, { id: "issue_one" }); await pending;
+    pending = f.plugin.syncDelivery(path, source, { ...props, title: "New title" });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.requests.length, 2);
+    f.reply(null, undefined, { id: "issue_one" }); await pending;
+});

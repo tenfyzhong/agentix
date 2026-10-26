@@ -181,18 +181,16 @@ impl Service {
         ))
     }
 
-    fn issue_body_metadata(
-        &self,
-        body: &str,
-        old_title: &str,
-        issue: &Issue,
-        project: &Project,
-    ) -> String {
-        let mut body = body.replacen(
-            &format!("# {old_title}\n"),
-            &format!("# {}\n", issue.name),
-            1,
-        );
+    fn issue_body_metadata(&self, body: &str, issue: &Issue, project: &Project) -> String {
+        // Only the leading document heading is managed; headings in authored sections stay intact.
+        let mut body = body.to_owned();
+        let start = body.len() - body.trim_start().len();
+        if body[start..].starts_with("# ") {
+            let end = body[start..]
+                .find('\n')
+                .map_or(body.len(), |end| start + end);
+            body.replace_range(start..end, &format!("# {}", super::escape(&issue.name)));
+        }
         if let Some(section) = body.find("\n## Related Jobs\n")
             && let Some(start) = body[section..].find("![[")
         {
@@ -214,10 +212,6 @@ impl Service {
         existing: &str,
     ) -> Result<String> {
         let mut properties = split_properties(existing)?.0;
-        let old_title = properties["title"]
-            .as_str()
-            .unwrap_or(&issue.name)
-            .to_owned();
         let mut managed = serde_json::to_value(issue)?;
         for field in [
             "requirement",
@@ -255,7 +249,7 @@ impl Service {
         if !existing.is_empty() && !staged {
             // Status/metadata publication preserves arbitrary authored prose verbatim.
             let body = split_properties(existing)?.1;
-            doc.push_str(&self.issue_body_metadata(body, &old_title, issue, project));
+            doc.push_str(&self.issue_body_metadata(body, issue, project));
             return Ok(doc);
         }
         let content = self.projected_issue_content(issue, existing)?;
@@ -296,7 +290,7 @@ impl Service {
                 self.base_link(&format!("{}/Issue.base", project.document_directory()))
             ));
         }
-        doc.push_str(&self.issue_body_metadata(&body, &old_title, issue, project));
+        doc.push_str(&self.issue_body_metadata(&body, issue, project));
         Ok(doc)
     }
 
@@ -534,9 +528,29 @@ impl Service {
             if self.issue_content_path(&issue)?.exists() {
                 continue;
             }
-            if source_hash != issue.content_hash {
-                let request = json!({"command":"issue.update","issue":issue.id,
+            // Pending publication still carries the previous projected title.
+            let title = properties["title"]
+                .as_str()
+                .context("invalid: Issue title must be text")?;
+            let title_changed =
+                title != issue.name && self.store().document_generation(&key).await?.is_none();
+            if title_changed {
+                ensure!(
+                    !title.trim().is_empty() && !title.contains(['\n', '\r']),
+                    "invalid: Issue title must be nonblank single-line text"
+                );
+                ensure!(
+                    properties["revision"].as_i64() == Some(issue.revision),
+                    "conflict: Issue title revision changed"
+                );
+            }
+            if source_hash != issue.content_hash || title_changed {
+                let mut request = json!({"command":"issue.update","issue":issue.id,
                     "content_hash":source_hash,"review_content_hash":content.review_hash()});
+                if title_changed {
+                    request["title"] = json!(title);
+                    request["name"] = json!(title);
+                }
                 let outcome = self
                     .store()
                     .execute_as(
