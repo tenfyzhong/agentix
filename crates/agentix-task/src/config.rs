@@ -79,6 +79,8 @@ impl Config {
             table.remove("memory");
             // Logging belongs to the resident service, not board operations.
             table.remove("logging");
+            // Application metrics belong to the resident service.
+            table.remove("metrics");
         }
         // Older releases stored a template locale and output format here.
         // Tolerate obsolete keys without exposing them; all output is Obsidian.

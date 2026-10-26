@@ -1,0 +1,118 @@
+{
+  "profile": "release",
+  "samples": [
+    {
+      "mode": "disabled",
+      "operations": 100000,
+      "p95_ns": 12167,
+      "requests_per_second": 98947.29556667968,
+      "scrapes": 0,
+      "seconds": 1.010639042
+    },
+    {
+      "mode": "enabled",
+      "operations": 100000,
+      "p95_ns": 9958,
+      "requests_per_second": 118129.2635893058,
+      "scrapes": 9,
+      "seconds": 0.846530292
+    },
+    {
+      "mode": "enabled",
+      "operations": 100000,
+      "p95_ns": 10125,
+      "requests_per_second": 116993.15887066236,
+      "scrapes": 9,
+      "seconds": 0.854750833
+    },
+    {
+      "mode": "disabled",
+      "operations": 100000,
+      "p95_ns": 10750,
+      "requests_per_second": 111777.80885846692,
+      "scrapes": 0,
+      "seconds": 0.894631958
+    },
+    {
+      "mode": "disabled",
+      "operations": 100000,
+      "p95_ns": 9542,
+      "requests_per_second": 123792.1752203965,
+      "scrapes": 0,
+      "seconds": 0.8078055
+    },
+    {
+      "mode": "enabled",
+      "operations": 100000,
+      "p95_ns": 10042,
+      "requests_per_second": 119930.44044048886,
+      "scrapes": 9,
+      "seconds": 0.833816666
+    },
+    {
+      "mode": "enabled",
+      "operations": 100000,
+      "p95_ns": 10125,
+      "requests_per_second": 119131.3418600408,
+      "scrapes": 9,
+      "seconds": 0.839409667
+    },
+    {
+      "mode": "disabled",
+      "operations": 100000,
+      "p95_ns": 10000,
+      "requests_per_second": 120717.17465045273,
+      "scrapes": 0,
+      "seconds": 0.828382542
+    },
+    {
+      "mode": "disabled",
+      "operations": 100000,
+      "p95_ns": 11166,
+      "requests_per_second": 107153.77814111768,
+      "scrapes": 0,
+      "seconds": 0.933238209
+    },
+    {
+      "mode": "enabled",
+      "operations": 100000,
+      "p95_ns": 11750,
+      "requests_per_second": 105217.72964156432,
+      "scrapes": 10,
+      "seconds": 0.950410167
+    },
+    {
+      "mode": "enabled",
+      "operations": 100000,
+      "p95_ns": 9333,
+      "requests_per_second": 125697.83904988776,
+      "scrapes": 8,
+      "seconds": 0.795558625
+    },
+    {
+      "mode": "disabled",
+      "operations": 100000,
+      "p95_ns": 9917,
+      "requests_per_second": 121462.0631956839,
+      "scrapes": 0,
+      "seconds": 0.823302333
+    },
+    {
+      "mode": "disabled",
+      "operations": 100000,
+      "p95_ns": 10000,
+      "requests_per_second": 121241.81928553536,
+      "scrapes": 0,
+      "seconds": 0.824797917
+    },
+    {
+      "mode": "enabled",
+      "operations": 100000,
+      "p95_ns": 9292,
+      "requests_per_second": 126656.18797804796,
+      "scrapes": 8,
+      "seconds": 0.789539
+    }
+  ],
+  "scope": "local Codex list_sessions RPC with exporter scraped at 10 Hz; no model, IM or Cloud"
+}

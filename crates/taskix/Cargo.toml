@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+agentix-metrics = { path = "../agentix-metrics" }
 agentix-memory = { path = "../agentix-memory" }
 async-trait.workspace = true
 agentix-task = { path = "../agentix-task" }

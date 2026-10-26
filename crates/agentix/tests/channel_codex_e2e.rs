@@ -85,8 +85,14 @@ async fn telegram_message_traverses_channel_engine_and_codex_then_updates_telegr
     join_stack(tasks).await;
 }
 
-#[tokio::test]
-async fn feishu_message_traverses_channel_engine_and_codex_then_updates_feishu() {
+#[test]
+fn feishu_message_traverses_channel_engine_and_codex_then_updates_feishu() {
+    with_feishu_sdk_stack(
+        feishu_message_traverses_channel_engine_and_codex_then_updates_feishu_scenario(),
+    );
+}
+
+async fn feishu_message_traverses_channel_engine_and_codex_then_updates_feishu_scenario() {
     let codex = MockCodexAppServer::start();
     codex
         .add_thread(MockThread::new(
@@ -161,8 +167,12 @@ async fn feishu_message_traverses_channel_engine_and_codex_then_updates_feishu()
     join_stack(tasks).await;
 }
 
-#[tokio::test]
-async fn feishu_detach_does_not_wait_for_pending_turn_start() {
+#[test]
+fn feishu_detach_does_not_wait_for_pending_turn_start() {
+    with_feishu_sdk_stack(feishu_detach_does_not_wait_for_pending_turn_start_scenario());
+}
+
+async fn feishu_detach_does_not_wait_for_pending_turn_start_scenario() {
     let codex = MockCodexAppServer::start();
     codex
         .add_thread(MockThread::new(
@@ -847,3 +857,22 @@ mod slack_e2e;
 #[path = "../../agentix-slack/tests/support/mod.rs"]
 #[allow(dead_code)]
 mod slack_support;
+
+// The SDK's unoptimized WebSocket endpoint/HTTP future has a deep poll chain.
+// Give these full-stack fixtures a deterministic budget across nextest platforms
+// without changing production task scheduling or allocating on message paths.
+fn with_feishu_sdk_stack(future: impl std::future::Future<Output = ()> + Send + 'static) {
+    std::thread::Builder::new()
+        .name("feishu-sdk-e2e".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(future);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

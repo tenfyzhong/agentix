@@ -302,21 +302,40 @@ impl MemoryApi {
 #[async_trait]
 impl RequestHandler for MemoryApi {
     async fn handle(&self, request: Value) -> Result<Value> {
-        let request: MemoryRequest = serde_json::from_value(request)?;
-        if let MemoryRequest::Ask { project, query } = request {
-            return Ok(serde_json::to_value(
-                self.deep
-                    .as_ref()
-                    .context("deep memory queries require a configured Agent model")?
-                    .ask(&project, &query)
-                    .await?,
-            )?);
+        let operation = match request["op"].as_str() {
+            Some("ask") => agentix_metrics::Operation::MemoryDeep,
+            Some("search" | "context" | "show" | "list") => agentix_metrics::Operation::MemoryQuery,
+            _ => agentix_metrics::Operation::MemoryApi,
+        };
+        let result = agentix_metrics::global()
+            .track(operation, async {
+                let request: MemoryRequest = serde_json::from_value(request)?;
+                if let MemoryRequest::Ask { project, query } = request {
+                    return Ok(serde_json::to_value(
+                        self.deep
+                            .as_ref()
+                            .context("deep memory queries require a configured Agent model")?
+                            .ask(&project, &query)
+                            .await?,
+                    )?);
+                }
+                let _permit = self
+                    .queries
+                    .try_acquire()
+                    .context("busy: memory query limit reached")?;
+                self.execute(request).await
+            })
+            .await;
+        if let Ok(value) = &result {
+            if matches!(value["mode"].as_str(), Some("fts_fallback" | "offline_fts")) {
+                agentix_metrics::global().event(agentix_metrics::Event::MemoryFallback, 1);
+            }
+            if let Some(memories) = value["memories"].as_array() {
+                agentix_metrics::global()
+                    .event(agentix_metrics::Event::MemoryResults, memories.len() as u64);
+            }
         }
-        let _permit = self
-            .queries
-            .try_acquire()
-            .context("busy: memory query limit reached")?;
-        self.execute(request).await
+        result
     }
 }
 

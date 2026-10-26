@@ -96,3 +96,9 @@ poll_interval_ms = 5000
 # Full repair scan after a completed pass; changed revisions are published first.
 reconcile_interval_seconds = 300
 batch_size = 20
+
+# Application-only endpoint, served by taskix serve even with Memory disabled.
+# No host or collector metrics. Restart after changes; see docs/application-metrics.md.
+[metrics]
+enabled = false
+listen = "127.0.0.1:9465"

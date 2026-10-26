@@ -21,6 +21,7 @@ mod metrics;
 mod obsidian;
 #[cfg(any(unix, windows))]
 mod service;
+mod telemetry;
 
 #[derive(Parser)]
 #[command(

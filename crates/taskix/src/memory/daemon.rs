@@ -178,6 +178,7 @@ impl Runtime {
     }
 }
 struct Application {
+    metrics: agentix_metrics::Config,
     logging: crate::service::logging::LoggingConfig,
     path: PathBuf,
     location: MemoryLocation,
@@ -223,6 +224,10 @@ impl Application {
                 && location.path == self.location.path
                 && location.task_path == self.location.task_path,
             "storage paths or enabled state changed; restart the memory service"
+        );
+        ensure!(
+            crate::telemetry::load_config(&self.path)? == self.metrics,
+            "changing metrics requires restarting taskix serve"
         );
         let config = MemoryConfig::load(&self.path)?;
         ensure!(
@@ -355,6 +360,7 @@ pub async fn serve(
     let repositories = Arc::new(Repositories(tasks.clone()));
     let runtime = Arc::new(Runtime::build(config, &store, repositories.clone()));
     let app = Arc::new(Application {
+        metrics: crate::telemetry::load_config(path)?,
         logging,
         path: path.into(),
         location,
@@ -945,7 +951,7 @@ async fn run_reviews(app: Arc<Application>) -> Result<()> {
 #[path = "daemon_tests.rs"]
 mod tests;
 
-async fn shutdown_signal() -> Result<()> {
+pub(crate) async fn shutdown_signal() -> Result<()> {
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     #[cfg(windows)]

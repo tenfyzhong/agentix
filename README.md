@@ -102,6 +102,7 @@ Mention the bot in group chats. If another Codex process owns the session's writ
 Read the [GitHub Wiki](https://github.com/tenfyzhong/agentix/wiki) for the full guides and advanced options:
 
 - [Installation](https://github.com/tenfyzhong/agentix/wiki/Installation): Homebrew, release archives, Windows, source builds, and shell completions.
+- [Application metrics](docs/application-metrics.md): application and own-process metrics, one grouped Grafana Cloud dashboard and alerts.
 - [Configuration and operations](https://github.com/tenfyzhong/agentix/wiki/Configuration-and-Operations): backends, chat channels, startup, reload, and diagnostics.
 - [Using Agentix](https://github.com/tenfyzhong/agentix/wiki/Usage): session attachment, commands, prompts, history, and queues.
 - [Agent setup](https://github.com/tenfyzhong/agentix/wiki#user-content-set-up-your-environment): Pi, OMP, Claude Code, OpenCode, and Slack guides.

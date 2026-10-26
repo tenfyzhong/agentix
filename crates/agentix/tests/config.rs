@@ -938,3 +938,22 @@ fn codex_proxy_authentication_configuration_is_owned_by_connection_layer() {
     assert!(proxy.ws_token_file.as_ref().unwrap().is_absolute());
     assert!(Config::from_toml(&text.replace("ws_token_file", "ws_typo")).is_err());
 }
+
+#[test]
+fn application_metrics_are_opt_in_and_loopback_only() {
+    let base = credential_config("telegram", "[channel.telegram]\ntoken='token'");
+    let config = Config::from_toml(&base).unwrap();
+    assert!(!config.metrics.enabled);
+    assert_eq!(config.metrics.listen.to_string(), "127.0.0.1:9464");
+    let config = Config::from_toml(&format!(
+        "{base}\n[metrics]\nenabled=true\nlisten='127.0.0.1:9468'\n"
+    ))
+    .unwrap();
+    assert!(config.metrics.enabled);
+    assert!(
+        Config::from_toml(&format!(
+            "{base}\n[metrics]\nenabled=true\nlisten='0.0.0.0:9464'\n"
+        ))
+        .is_err()
+    );
+}

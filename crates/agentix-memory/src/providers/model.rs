@@ -135,21 +135,43 @@ impl HttpModel {
 #[async_trait]
 impl Model for HttpModel {
     async fn complete(&self, request: &ModelRequest) -> Result<ModelReply> {
-        let body = self.request_body(request)?;
-        let endpoint = if self.provider.api == ModelApi::Responses {
-            "responses"
-        } else {
-            "chat/completions"
-        };
-        let value = self
-            .provider
-            .post(endpoint, body, self.config.request_timeout_seconds)
-            .await?;
-        if self.provider.api == ModelApi::Responses {
-            responses_reply(&value)
-        } else {
-            chat_reply(&value)
-        }
+        agentix_metrics::global()
+            .track(agentix_metrics::Operation::ModelRequest, async {
+                let body = self.request_body(request)?;
+                let endpoint = if self.provider.api == ModelApi::Responses {
+                    "responses"
+                } else {
+                    "chat/completions"
+                };
+                let value = self
+                    .provider
+                    .post(endpoint, body, self.config.request_timeout_seconds)
+                    .await?;
+                let usage = &value["usage"];
+                let (input, output) = if self.provider.api == ModelApi::Responses {
+                    ("input_tokens", "output_tokens")
+                } else {
+                    ("prompt_tokens", "completion_tokens")
+                };
+                for (kind, key) in [
+                    (agentix_metrics::TokenKind::Input, input),
+                    (agentix_metrics::TokenKind::Output, output),
+                ] {
+                    if let Some(count) = usage[key].as_u64() {
+                        agentix_metrics::global().tokens(
+                            agentix_metrics::TokenSource::Memory,
+                            kind,
+                            count,
+                        );
+                    }
+                }
+                if self.provider.api == ModelApi::Responses {
+                    responses_reply(&value)
+                } else {
+                    chat_reply(&value)
+                }
+            })
+            .await
     }
 }
 

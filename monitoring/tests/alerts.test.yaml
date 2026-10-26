@@ -1,0 +1,169 @@
+{
+  "rule_files": [
+    "../alerts.yaml"
+  ],
+  "evaluation_interval": "1m",
+  "tests": [
+    {
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "agentix_build_info{job=\"agentix\",instance=\"local\",version=\"test\"}",
+          "values": "1+0x20"
+        },
+        {
+          "series": "taskix_build_info{job=\"taskix\",instance=\"local\",version=\"test\"}",
+          "values": "1+0x20"
+        },
+        {
+          "series": "agentix_operations_total{instance=\"local\",component=\"codex\",operation=\"rpc\",outcome=\"error\"}",
+          "values": "0+0.1x20"
+        }
+      ],
+      "name": "low request volume does not alert",
+      "alert_rule_test": [
+        {
+          "eval_time": "15m",
+          "alertname": "AgentixErrorRate",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "agentix_build_info{job=\"agentix\",instance=\"local\",version=\"test\"}",
+          "values": "1+0x20"
+        },
+        {
+          "series": "taskix_build_info{job=\"taskix\",instance=\"local\",version=\"test\"}",
+          "values": "1+0x20"
+        },
+        {
+          "series": "agentix_operations_total{instance=\"local\",component=\"codex\",operation=\"rpc\",outcome=\"error\"}",
+          "values": "0+5x20"
+        }
+      ],
+      "name": "sustained errors require sufficient volume",
+      "alert_rule_test": [
+        {
+          "eval_time": "15m",
+          "alertname": "AgentixErrorRate",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "instance": "local",
+                "component": "codex",
+                "operation": "rpc",
+                "severity": "warning",
+                "service": "agentix-applications"
+              },
+              "exp_annotations": {
+                "summary": "Application operation error rate above 5%",
+                "description": "At least 20 operations in ten minutes. Inspect application logs locally; error text is not uploaded."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "agentix_build_info{job=\"agentix\",instance=\"local\",version=\"test\"}",
+          "values": "1+0x20"
+        },
+        {
+          "series": "taskix_build_info{job=\"taskix\",instance=\"local\",version=\"test\"}",
+          "values": "1+0x20"
+        },
+        {
+          "series": "taskix_oldest_age_seconds{instance=\"local\",kind=\"task\",state=\"waiting_user\"}",
+          "values": "90000+60x20"
+        },
+        {
+          "series": "agentix_operation_duration_seconds_bucket{instance=\"local\",component=\"codex\",operation=\"turn\",le=\"+Inf\"}",
+          "values": "0+5x20"
+        }
+      ],
+      "name": "human waiting and long turns are not interactive latency alerts",
+      "alert_rule_test": [
+        {
+          "eval_time": "15m",
+          "alertname": "ApplicationInteractiveLatency",
+          "exp_alerts": []
+        }
+      ]
+    },
+    {
+      "interval": "1m",
+      "input_series": [
+        {
+          "series": "agentix_build_info{job=\"agentix\",instance=\"local\",version=\"test\"}",
+          "values": "1+0x20"
+        },
+        {
+          "series": "taskix_build_info{job=\"taskix\",instance=\"local\",version=\"test\"}",
+          "values": "1+0x20"
+        },
+        {
+          "series": "agentix_queue_items{instance=\"local\",queue=\"engine\",state=\"pending\"}",
+          "values": "1+0x20"
+        },
+        {
+          "series": "agentix_queue_oldest_age_seconds{instance=\"local\",queue=\"engine\"}",
+          "values": "600+60x20"
+        }
+      ],
+      "name": "pending queue without any completed operations alerts",
+      "alert_rule_test": [
+        {
+          "eval_time": "10m",
+          "alertname": "AgentixQueueNoProgress",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "instance": "local",
+                "queue": "engine",
+                "state": "pending",
+                "severity": "warning",
+                "service": "agentix-applications"
+              },
+              "exp_annotations": {
+                "summary": "Queued application work has no dispatch progress",
+                "description": "Pending queue is older than five minutes without completed dispatch operations; this is not an agent turn duration alert."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "missing application data",
+      "interval": "1m",
+      "input_series": [],
+      "alert_rule_test": [
+        {
+          "eval_time": "6m",
+          "alertname": "AgentixApplicationDataMissing",
+          "exp_alerts": [
+            {
+              "exp_labels": {
+                "job": "agentix",
+                "instance": "local",
+                "severity": "warning",
+                "service": "agentix-applications"
+              },
+              "exp_annotations": {
+                "summary": "agentix application data missing",
+                "description": "No application build sample for five minutes. Check the application and delivery path locally; this does not diagnose a host or collector fault. Customize the instance selector per deployment."
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

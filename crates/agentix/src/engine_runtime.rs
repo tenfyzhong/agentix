@@ -86,6 +86,7 @@ pub async fn run_engine_loop_with_config(
     working_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     working_interval.tick().await;
     let mut pool = EngineWorkers::new();
+    let mut observed_turns = agentix_metrics::Turns::new(agentix_metrics::global().clone());
     let mut telemetry = tokio::time::interval(Duration::from_secs(30));
     telemetry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let (mut inbound_open, mut events_open) = (true, true);
@@ -118,7 +119,10 @@ pub async fn run_engine_loop_with_config(
             changed = snapshots.changed(), if configuration_open => {
                 configuration_open = changed.is_ok();
             }
-            _ = telemetry.tick() => pool.queue.statistics().record("engine"),
+            _ = telemetry.tick() => {
+                let stats=pool.queue.statistics();stats.record("engine");
+                agentix_metrics::global().queue(agentix_metrics::Queue::Engine, stats.pending, stats.active, CAPACITY, stats.oldest_pending);
+            },
             completed = pool.workers.join_next_with_id(), if !pool.workers.is_empty() => {
                 let completed = completed.expect("an active worker");
                 let failed = completed.is_err();
@@ -148,8 +152,12 @@ pub async fn run_engine_loop_with_config(
                 pool.queue.try_push(work).expect("input recovery capacity");
             }
             event = events.recv(), if events_open && !pool.queue.is_full() => match event {
-                Ok(event) => pool.queue.try_push(EngineWork::Event(event)).expect("event capacity"),
+                Ok(event) => {
+                    observe_agent_event(&event, &mut observed_turns);
+                    pool.queue.try_push(EngineWork::Event(event)).expect("event capacity");
+                },
                 Err(broadcast::error::RecvError::Lagged(count)) => {
+                    agentix_metrics::global().event(agentix_metrics::Event::AgentLag, count);
                     tracing::warn!(count, "agent event consumer lagged");
                     pool.queue.try_push(EngineWork::Recover).expect("recovery capacity");
                 }
@@ -262,6 +270,14 @@ impl EngineWorkers {
         if self.inbound_ids.contains(&id) {
             return Ok(());
         }
+        agentix_metrics::global().event(
+            match envelope.conversation.channel {
+                ChannelKind::Telegram => agentix_metrics::Event::TelegramInbound,
+                ChannelKind::Feishu => agentix_metrics::Event::FeishuInbound,
+                ChannelKind::Slack => agentix_metrics::Event::SlackInbound,
+            },
+            1,
+        );
         if self
             .inbound_counts
             .get(&envelope.conversation)
@@ -274,6 +290,7 @@ impl EngineWorkers {
                 .await?
             {
                 self.overloaded = self.overloaded.saturating_add(1);
+                agentix_metrics::global().event(agentix_metrics::Event::EngineRejected, 1);
                 tracing::debug!(target: "agentix::telemetry", runtime = "engine",
                     overloaded = self.overloaded, "conversation admission rejected");
             }
@@ -330,7 +347,12 @@ impl EngineWorkers {
                     EngineWork::TaskBoard => "task board refresh failed",
                     EngineWork::SessionSwitch(_) => "session switch refresh failed",
                 };
-                if let Err(error) = engine.execute_work(job.work).await {
+                // Stream fragments already have queue bookkeeping; avoid per-fragment timing.
+                let metric = (!matches!(&job.work, EngineWork::Event(agentix_core::AgentEvent::AgentMessageDelta { .. })))
+                    .then(|| agentix_metrics::global().start(agentix_metrics::Operation::Engine));
+                let result = engine.execute_work(job.work).await;
+                if let Some(metric)=metric { metric.result(&result); }
+                if let Err(error) = result {
                     if is_empty_rollout_metadata_error(&error) {
                         tracing::debug!(%error, description);
                     } else {
@@ -456,5 +478,76 @@ mod tests {
 
         assert!(super::is_empty_rollout_metadata_error(&empty));
         assert!(!super::is_empty_rollout_metadata_error(&other));
+    }
+}
+
+#[cfg(test)]
+mod application_metrics_tests {
+    use super::*;
+    #[test]
+    fn event_observation_records_one_turn_and_ignores_duplicate_output() {
+        let metrics = agentix_metrics::Metrics::new(agentix_metrics::Service::Agentix, "test");
+        let mut turns = agentix_metrics::Turns::new(metrics.clone());
+        let event = agentix_core::AgentEvent::TurnStarted {
+            session_id: "pi:private".into(),
+            turn_id: "turn".into(),
+        };
+        observe_agent_event(&event, &mut turns);
+        let delta = agentix_core::AgentEvent::AgentMessageDelta {
+            session_id: "pi:private".into(),
+            turn_id: "turn".into(),
+            item_id: "item".into(),
+            delta: "secret".into(),
+        };
+        observe_agent_event(&delta, &mut turns);
+        observe_agent_event(&delta, &mut turns);
+        observe_agent_event(
+            &agentix_core::AgentEvent::TurnCompleted {
+                session_id: "pi:private".into(),
+                turn_id: "turn".into(),
+                status: agentix_core::TurnStatus::Completed,
+                error: None,
+            },
+            &mut turns,
+        );
+        let text = metrics.encode().unwrap();
+        assert!(text.contains("component=\"pi\",operation=\"turn\",outcome=\"success\"} 1"));
+        assert!(
+            text.contains("component=\"pi\",operation=\"first_output\",outcome=\"success\"} 1")
+        );
+        assert!(!text.contains("private"));
+        assert!(!text.contains("secret"));
+    }
+}
+
+fn observe_agent_event(event: &agentix_core::AgentEvent, turns: &mut agentix_metrics::Turns) {
+    use agentix_core::{AgentEvent, TurnStatus};
+    match event {
+        AgentEvent::TurnStarted {
+            session_id,
+            turn_id,
+        } => turns.started(session_id, turn_id),
+        AgentEvent::AgentMessageDelta {
+            session_id,
+            turn_id,
+            delta,
+            ..
+        } if !delta.is_empty() => turns.output(session_id, turn_id),
+        AgentEvent::TurnCompleted {
+            session_id,
+            turn_id,
+            status,
+            ..
+        } => turns.completed(
+            session_id,
+            turn_id,
+            match status {
+                TurnStatus::Completed => agentix_metrics::Outcome::Success,
+                TurnStatus::Interrupted => agentix_metrics::Outcome::Cancelled,
+                _ => agentix_metrics::Outcome::Error,
+            },
+        ),
+        AgentEvent::Disconnected { .. } => turns.disconnected("codex"),
+        _ => {}
     }
 }

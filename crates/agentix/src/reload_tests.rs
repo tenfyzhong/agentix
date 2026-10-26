@@ -656,3 +656,18 @@ async fn startup_signal_cancels_identity_lookup_and_stops_owned_upstream() {
         "startup cancellation must explicitly stop owned upstreams even with client clones"
     );
 }
+
+#[test]
+fn application_metrics_configuration_changes_require_restart() {
+    let fixture = Fixture::new();
+    let path = fixture.directory.path().join("config.toml");
+    let original = std::fs::read_to_string(&path).unwrap();
+    assert!(load_candidate(&path, &fixture.config, &ProxyOptions::default()).is_ok());
+    std::fs::write(&path, format!("{original}\n[metrics]\nenabled=true\n")).unwrap();
+    let error = load_candidate(&path, &fixture.config, &ProxyOptions::default()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("changing metrics requires restarting")
+    );
+}

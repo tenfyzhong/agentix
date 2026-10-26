@@ -104,3 +104,30 @@ jobs:
           AGENTIX_LOGIN_SHELL: fish
           XDG_CONFIG_HOME: ${{ runner.temp }}/agentix-fish-config
         run: cargo test -p agentix-tmux native_
+
+  monitoring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+      - name: Verify generated application dashboards and allowlist
+        run: |
+          node monitoring/generate.mjs
+          git diff --exit-code -- monitoring
+          node --test monitoring/tests/artifacts.test.mjs
+      - name: Validate PromQL alert syntax and behavior
+        env:
+          PROMETHEUS_VERSION: "3.15.1"
+        run: |
+          cd "$RUNNER_TEMP"
+          archive="prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          release="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}"
+          curl --fail --location --silent --show-error "$release/$archive" --output "$archive"
+          curl --fail --location --silent --show-error "$release/sha256sums.txt" --output sha256sums.txt
+          sha256sum --check --ignore-missing sha256sums.txt
+          tar -xzf "$archive" "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          cd "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool" check rules monitoring/alerts.yaml
+          "$RUNNER_TEMP/prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool" test rules monitoring/tests/alerts.test.yaml

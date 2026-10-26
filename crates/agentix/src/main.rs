@@ -430,6 +430,17 @@ async fn serve(
     config_path: &Path,
     proxy: agentix_codex::ProxyOptions,
 ) -> Result<()> {
+    let _metrics_server = if config.metrics.enabled {
+        let metrics = agentix_metrics::Metrics::new(
+            agentix_metrics::Service::Agentix,
+            env!("AGENTIX_BUILD_VERSION"),
+        );
+        let server = metrics.serve(config.metrics.listen).await?;
+        agentix_metrics::install(metrics)?;
+        Some(server)
+    } else {
+        None
+    };
     // Poll the signal future before startup creates any sockets or children.
     let signal = shutdown_signal();
     tokio::pin!(signal);

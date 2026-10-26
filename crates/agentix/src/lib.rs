@@ -17,6 +17,7 @@ use toml_edit::{Array, DocumentMut, Item, Table, Value};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(try_from = "config_file::ConfigFile")]
 pub struct Config {
+    pub metrics: agentix_metrics::Config,
     pub multiplexer: MultiplexerConfig,
     #[serde(default)]
     pub slack_cli_path: Option<PathBuf>,
@@ -349,6 +350,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.metrics.validate()?;
         if self
             .slack_cli_path
             .as_ref()

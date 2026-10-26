@@ -38,6 +38,7 @@ impl RateLimiter {
             let now = Instant::now();
             match result {
                 Err(teloxide::RequestError::RetryAfter(delay)) => {
+                    agentix_metrics::global().event(agentix_metrics::Event::TelegramRetry, 1);
                     agentix_domain::DeliveryAttempt::waiting();
                     // Keep the deadline in shared state even if this future is cancelled.
                     let mut state = self.state.lock().await;

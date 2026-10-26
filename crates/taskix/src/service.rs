@@ -15,10 +15,16 @@ pub async fn serve(cli: &Cli) -> Result<Value> {
     let _log_guard = logging::init(&config)?;
     let result = async {
         let location = MemoryLocation::load(&path)?;
+        let metrics = crate::telemetry::load_config(&path)?;
         ensure!(
-            location.enabled,
-            "memory is disabled; set TASKIX_MEMORY_ENABLED=true or 1"
+            location.enabled || metrics.enabled,
+            "memory is disabled; set TASKIX_MEMORY_ENABLED=true or 1, or enable metrics"
         );
+        let _metrics = crate::telemetry::start(&metrics, &location).await?;
+        if !location.enabled {
+            memory::daemon::shutdown_signal().await?;
+            return Ok(json!({"stopped":true}));
+        }
         memory::daemon::serve(&path, location, config).await
     }
     .await;

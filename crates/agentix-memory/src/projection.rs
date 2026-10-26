@@ -69,8 +69,12 @@ impl MemoryProjection {
     /// One bounded page, repairing files that differ from the authoritative database.
     /// The service serializes publishers; database writers remain independent.
     pub async fn sync(&self, project: &str, after: &str, limit: i64) -> Result<ProjectionPage> {
-        let memories = self.store.list(project, after, limit, true).await?;
-        self.sync_memories(memories, after, limit).await
+        agentix_metrics::global()
+            .track(agentix_metrics::Operation::MemoryProjection, async {
+                let memories = self.store.list(project, after, limit, true).await?;
+                self.sync_memories(memories, after, limit).await
+            })
+            .await
     }
 
     /// Publish changed revisions first; full sync remains the repair path for file edits.
@@ -80,6 +84,7 @@ impl MemoryProjection {
         after: &str,
         limit: i64,
     ) -> Result<ProjectionPage> {
+        agentix_metrics::global().track(agentix_metrics::Operation::MemoryProjection, async {
         ensure!((1..=100).contains(&limit), "invalid projection page");
         let rows: Vec<String> = sqlx::query_scalar("SELECT m.data FROM memories m JOIN memory_projection p ON p.memory_id=m.id WHERE m.project_id=? AND m.id>? AND (p.published_revision<m.revision OR p.prepared_revision<>0 OR p.error IS NOT NULL) ORDER BY m.id LIMIT ?")
             .bind(project).bind(after).bind(limit).fetch_all(&self.store.pool).await?;
@@ -88,6 +93,7 @@ impl MemoryProjection {
             .map(|s| serde_json::from_str(&s))
             .collect::<std::result::Result<Vec<Memory>, _>>()?;
         self.sync_memories(memories, after, limit).await
+        }).await
     }
 
     async fn sync_memories(

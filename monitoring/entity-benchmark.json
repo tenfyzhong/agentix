@@ -1,0 +1,90 @@
+{
+  "rows": 10000,
+  "samples": [
+    {
+      "elapsed_ns": 964922917,
+      "optimized": false,
+      "round": 0,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 903064791,
+      "optimized": true,
+      "round": 0,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 861499875,
+      "optimized": true,
+      "round": 1,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 877485958,
+      "optimized": false,
+      "round": 1,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 860858542,
+      "optimized": false,
+      "round": 2,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 819591209,
+      "optimized": true,
+      "round": 2,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 818448708,
+      "optimized": true,
+      "round": 3,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 859170334,
+      "optimized": false,
+      "round": 3,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 855718625,
+      "optimized": false,
+      "round": 4,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 1051724625,
+      "optimized": true,
+      "round": 4,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 849826000,
+      "optimized": true,
+      "round": 5,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 884963417,
+      "optimized": false,
+      "round": 5,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 887792750,
+      "optimized": false,
+      "round": 6,
+      "snapshots": 10
+    },
+    {
+      "elapsed_ns": 831097625,
+      "optimized": true,
+      "round": 6,
+      "snapshots": 10
+    }
+  ],
+  "title_bytes": 2048
+}
