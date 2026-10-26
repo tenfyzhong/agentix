@@ -17,8 +17,8 @@ pub enum ProviderProtocol {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelApi {
-    #[default]
     Responses,
+    #[default]
     ChatCompletions,
 }
 
@@ -39,6 +39,8 @@ pub enum ReasoningEffort {
 pub struct ProviderConfig {
     #[serde(default)]
     pub protocol: ProviderProtocol,
+    #[serde(default)]
+    pub api: ModelApi,
     pub base_url: String,
     #[serde(default)]
     pub api_key_env: Option<String>,
@@ -53,7 +55,6 @@ fn provider_concurrency() -> usize {
 #[serde(default, deny_unknown_fields)]
 pub struct AgentConfig {
     pub provider: String,
-    pub api: ModelApi,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -76,7 +77,6 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             provider: "openai".into(),
-            api: ModelApi::Responses,
             model: "gpt-6-astra".into(),
             reasoning_effort: None,
             max_concurrent_loops: 4,
@@ -354,7 +354,7 @@ impl MemoryConfig {
         );
         ensure!(
             !(self.agent.model == "gpt-6-astra" || self.agent.model.starts_with("gpt-6-astra-"))
-                || self.agent.api == ModelApi::Responses,
+                || provider.api == ModelApi::Responses,
             "GPT-6 Astra tool calling requires the Responses API"
         );
         ensure!(

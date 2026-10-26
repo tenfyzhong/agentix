@@ -90,6 +90,7 @@ async fn repository_test_application() -> (tempfile::TempDir, Arc<Application>, 
     config.providers.insert(
         "openai".into(),
         ProviderConfig {
+            api: agentix_memory::ModelApi::Responses,
             base_url: "http://127.0.0.1:1".into(),
             api_key_env: None,
             protocol: ProviderProtocol::Openai,
@@ -261,6 +262,7 @@ async fn check_project_concurrency(limit: usize, parallel: bool) {
     config.providers.insert(
         "openai".into(),
         ProviderConfig {
+            api: agentix_memory::ModelApi::Responses,
             base_url: url,
             api_key_env: None,
             protocol: ProviderProtocol::Openai,
@@ -423,6 +425,7 @@ async fn idle_daemon_cpu_with_many_projects() {
     config.providers.insert(
         "openai".into(),
         ProviderConfig {
+            api: agentix_memory::ModelApi::Responses,
             base_url: "http://127.0.0.1:1".into(),
             api_key_env: None,
             protocol: ProviderProtocol::Openai,
@@ -550,6 +553,7 @@ async fn check_reload_admission(deep_limit: bool) {
     config.providers.insert(
         "openai".into(),
         ProviderConfig {
+            api: agentix_memory::ModelApi::Responses,
             base_url: format!("http://{}", listener.local_addr().unwrap()),
             api_key_env: None,
             protocol: ProviderProtocol::Openai,

@@ -38,6 +38,7 @@ async fn stalled_embedding_context(deadline: std::time::Duration, expect_deliver
     };
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
+            api: agentix_memory::ModelApi::Responses,
             base_url: format!("http://{}", stalled.local_addr().unwrap()),
             api_key_env: None,
             protocol: ProviderProtocol::Openai,

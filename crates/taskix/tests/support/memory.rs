@@ -70,7 +70,7 @@ fn memory_daemon_cli_and_offline_fallback_do_not_require_a_vault_or_model_creden
     let project = project["id"].as_str().unwrap();
     let path = cli.dir.path().join("config.toml");
     let mut config = std::fs::read_to_string(&path).unwrap();
-    config.push_str("\n[memory]\n[memory.providers.openai]\nbase_url = 'http://127.0.0.1:9/v1'\n[memory.agent]\nmodel = 'gpt-6-astra'\nrequest_timeout_seconds = 1\n[memory.service]\npoll_interval_ms = 50\n");
+    config.push_str("\n[memory]\n[memory.providers.openai]\napi='responses'\nbase_url = 'http://127.0.0.1:9/v1'\n[memory.agent]\nmodel = 'gpt-6-astra'\nrequest_timeout_seconds = 1\n[memory.service]\npoll_interval_ms = 50\n");
     std::fs::write(&path, &config).unwrap();
     let capture = cli.dir.path().join("source.json");
     std::fs::write(&capture,json!({"turn_id":"turn","messages":[{"id":"message","role":"user","text":"External project constraint"}]}).to_string()).unwrap();
@@ -191,7 +191,7 @@ fn memory_reload_rejects_ipc_limits_without_changing_the_running_configuration()
     let path = cli.dir.path().join("config.toml");
     let base = std::fs::read_to_string(&path).unwrap();
     let config = format!(
-        "{base}\n[memory]\n[memory.providers.openai]\nbase_url='http://127.0.0.1:9/v1'\n[memory.agent]\nmodel='gpt-6-astra'\n"
+        "{base}\n[memory]\n[memory.providers.openai]\napi='responses'\nbase_url='http://127.0.0.1:9/v1'\n[memory.agent]\nmodel='gpt-6-astra'\n"
     );
     std::fs::write(&path, &config).unwrap();
     let log_path = cli.dir.path().join("reload-service.log");
@@ -253,7 +253,7 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
     std::fs::write(
         &config_path,
         format!(
-            "{config}\n[memory]\n[memory.providers.openai]\nbase_url='http://127.0.0.1:9/v1'\n"
+            "{config}\n[memory]\n[memory.providers.openai]\napi='responses'\nbase_url='http://127.0.0.1:9/v1'\n"
         ),
     )
     .unwrap();
@@ -430,7 +430,7 @@ fn memory_replay_retries_a_failed_acknowledged_receipt_after_later_receipts_succ
     ]);
     let path = cli.dir.path().join("config.toml");
     let config = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(&path, format!("{config}\n[memory]\n[memory.providers.openai]\nbase_url='http://127.0.0.1:9/v1'\n[memory.service]\npoll_interval_ms=20\n")).unwrap();
+    std::fs::write(&path, format!("{config}\n[memory]\n[memory.providers.openai]\napi='responses'\nbase_url='http://127.0.0.1:9/v1'\n[memory.service]\npoll_interval_ms=20\n")).unwrap();
     for turn in ["first", "second", "third"] {
         recovery_capture(&cli, turn);
     }
@@ -592,7 +592,7 @@ fn memory_restore_replays_acknowledged_sources_and_rejects_a_forked_task_history
     ]);
     let config_path = cli.dir.path().join("config.toml");
     let config = std::fs::read_to_string(&config_path).unwrap();
-    std::fs::write(&config_path, format!("{config}\n[memory]\n[memory.providers.openai]\nbase_url='http://127.0.0.1:9/v1'\n[memory.service]\npoll_interval_ms=50\n")).unwrap();
+    std::fs::write(&config_path, format!("{config}\n[memory]\n[memory.providers.openai]\napi='responses'\nbase_url='http://127.0.0.1:9/v1'\n[memory.service]\npoll_interval_ms=50\n")).unwrap();
     recovery_capture(&cli, "first");
     let daemon = start_memory(&cli, 1);
     let memory_path = cli.dir.path().join("memory.sqlite3");
@@ -752,7 +752,7 @@ async fn memory_visible_turn_to_mock_model_to_real_host_hook_end_to_end() {
     std::fs::write(cli.dir.path().join("README.md"), "Repository overview").unwrap();
     let config_path = cli.dir.path().join("config.toml");
     let config = std::fs::read_to_string(&config_path).unwrap();
-    std::fs::write(&config_path, format!("{config}\n[memory]\n[memory.providers.mock]\nbase_url={}\n[memory.agent]\nprovider='mock'\nrepository_review_interval_seconds=0\n[memory.service]\npoll_interval_ms=50\n", json!(server.url))).unwrap();
+    std::fs::write(&config_path, format!("{config}\n[memory]\n[memory.providers.mock]\napi='responses'\nbase_url={}\n[memory.agent]\nprovider='mock'\nrepository_review_interval_seconds=0\n[memory.service]\npoll_interval_ms=50\n", json!(server.url))).unwrap();
     let _daemon = start_memory(&cli, 1);
     let receipt = cli.ok(&[
         "memory",
@@ -830,7 +830,7 @@ async fn memory_jev_triage_uses_existing_environment_and_reports_skip_extract_an
         let model = provider_http::MockHttp::start(vec![(200, json!({"status":"completed","output":[{"type":"function_call","call_id":"finish","name":"submit_candidates","arguments":"{\"candidates\":[]}"}]}))]).await;
         let path = cli.dir.path().join("config.toml");
         let config = std::fs::read_to_string(&path).unwrap();
-        std::fs::write(&path, format!("{config}\n[memory]\n[memory.providers.mock]\nbase_url='{}'\n[memory.agent]\nprovider='mock'\n[memory.service]\npoll_interval_ms=20\n",model.url)).unwrap();
+        std::fs::write(&path, format!("{config}\n[memory]\n[memory.providers.mock]\napi='responses'\nbase_url='{}'\n[memory.agent]\nprovider='mock'\n[memory.service]\npoll_interval_ms=20\n",model.url)).unwrap();
         let metrics_path = cli.dir.path().join("jev-metrics.db");
         let _daemon = Daemon(
             cli.command(&["serve"])
@@ -912,7 +912,7 @@ fn service_file_logging_writes_lifecycle_and_rejects_reload_changes() {
     std::fs::write(&path, &config).unwrap();
     cli.ok(&["context", "--session", "logging"]);
     let config = format!(
-        "{config}\n[memory.providers.openai]\nbase_url='http://127.0.0.1:9/v1'\n[memory.agent]\nmodel='gpt-6-astra'\n"
+        "{config}\n[memory.providers.openai]\napi='responses'\nbase_url='http://127.0.0.1:9/v1'\n[memory.agent]\nmodel='gpt-6-astra'\n"
     );
     std::fs::write(&path, &config).unwrap();
     let daemon = start_memory(&cli, 0);

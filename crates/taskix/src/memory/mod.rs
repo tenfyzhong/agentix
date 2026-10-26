@@ -130,7 +130,7 @@ async fn doctor(path: &std::path::Path, location: &MemoryLocation) -> Result<Val
                 json!({"name":name,"credentials_available":provider.api_key_env.as_ref()
                     .is_none_or(|key| std::env::var(key).is_ok_and(|value| !value.trim().is_empty()))})
             }).collect::<Vec<_>>();
-            json!({"valid":true,"model":config.agent.model,"api":config.agent.api,
+            json!({"valid":true,"model":config.agent.model,"api":config.providers.get(&config.agent.provider).map(|provider| provider.api),
                 "reasoning_effort":config.agent.reasoning_effort,
                 "embedding_enabled":config.embedding.enabled,"providers":providers})
         }

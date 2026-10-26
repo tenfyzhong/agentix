@@ -10,8 +10,13 @@ use serde_json::json;
 mod http;
 
 fn connection(url: &str, protocol: ProviderProtocol) -> Arc<HttpProvider> {
+    connection_with_api(url, protocol, ModelApi::Responses)
+}
+
+fn connection_with_api(url: &str, protocol: ProviderProtocol, api: ModelApi) -> Arc<HttpProvider> {
     Arc::new(
         HttpProvider::new(ProviderConfig {
+            api,
             base_url: url.into(),
             protocol,
             api_key_env: None,
@@ -73,10 +78,17 @@ async fn chat_completions_maps_calls_without_changing_the_model() {
     let server=http::MockHttp::start(vec![(200,json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"memory_search","arguments":"{\"query\":\"offline\"}"}}]}}]}))]).await;
     let config = AgentConfig {
         model: "configured-chat-model".into(),
-        api: ModelApi::ChatCompletions,
         ..AgentConfig::default()
     };
-    let model = HttpModel::new(connection(&server.url, ProviderProtocol::Openai), config).unwrap();
+    let model = HttpModel::new(
+        connection_with_api(
+            &server.url,
+            ProviderProtocol::Openai,
+            ModelApi::ChatCompletions,
+        ),
+        config,
+    )
+    .unwrap();
     let reply = model.complete(&request()).await.unwrap();
     assert_eq!(reply.calls[0].name, "memory_search");
     let requests = server.requests.lock().unwrap();
@@ -143,7 +155,7 @@ async fn provider_errors_and_partial_generation_do_not_become_success() {
 async fn reasoning_effort_is_optional_and_mapped_to_each_api() {
     for api in ["responses", "chat_completions"] {
         for effort in [None, Some("low"), Some("high")] {
-            let mut value = json!({"api":api,"model":"configured-model"});
+            let mut value = json!({"model":"configured-model"});
             if let Some(effort) = effort {
                 value["reasoning_effort"] = json!(effort);
             }
@@ -154,11 +166,18 @@ async fn reasoning_effort_is_optional_and_mapped_to_each_api() {
                 json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]})
             };
             let server = http::MockHttp::start(vec![(200, reply)]).await;
-            HttpModel::new(connection(&server.url, ProviderProtocol::Openai), config)
-                .unwrap()
-                .complete(&request())
-                .await
-                .unwrap();
+            HttpModel::new(
+                connection_with_api(
+                    &server.url,
+                    ProviderProtocol::Openai,
+                    serde_json::from_value(json!(api)).unwrap(),
+                ),
+                config,
+            )
+            .unwrap()
+            .complete(&request())
+            .await
+            .unwrap();
             let seen = server.requests.lock().unwrap();
             let body = &seen[0].1;
             if api == "responses" {
@@ -204,4 +223,24 @@ async fn provider_location_error_is_actionable_without_exposing_arbitrary_respon
     assert!(error.contains("invalid_request_error"));
     assert!(error.contains("tools[0].function.parameters"));
     assert!(!error.contains("private conversation"));
+}
+
+#[tokio::test]
+async fn omitted_provider_api_routes_to_chat_completions() {
+    let server = http::MockHttp::start(vec![(200, json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}))]).await;
+    let provider =
+        serde_json::from_value::<ProviderConfig>(json!({"base_url": server.url})).unwrap();
+    let model = HttpModel::new(
+        Arc::new(HttpProvider::new(provider).unwrap()),
+        AgentConfig {
+            model: "configured-chat-model".into(),
+            ..AgentConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(model.complete(&request()).await.unwrap().text, "done");
+    assert_eq!(
+        server.requests.lock().unwrap()[0].0,
+        "POST /chat/completions HTTP/1.1"
+    );
 }

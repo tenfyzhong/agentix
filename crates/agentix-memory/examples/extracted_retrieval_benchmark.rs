@@ -60,6 +60,7 @@ fn embedding_index(
         ..EmbeddingConfig::default()
     };
     let provider = Arc::new(HttpProvider::new(ProviderConfig {
+        api: agentix_memory::ModelApi::Responses,
         protocol: ProviderProtocol::Ollama,
         base_url: endpoint.to_owned(),
         api_key_env: None,
