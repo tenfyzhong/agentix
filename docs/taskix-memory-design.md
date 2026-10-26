@@ -134,6 +134,10 @@ Jev's unresolved-reference fallback remains conservative; Jev does not gain a
 separate conversation or repository access path.
 
 Support explicit Responses and Chat Completions API adapters where applicable.
+Select the API with `memory.providers.<name>.api`, alongside its protocol and
+base URL; omission defaults to `chat_completions`. The Agent uses its selected
+provider's API. `memory.agent.api` is no longer accepted: move the setting to
+the referenced provider. GPT-6 Astra requires explicit `api = "responses"`.
 Validate structured proposals and their source references in application code.
 User-decision evidence requires a user quote, while allowing assistant quotes as
 supporting context; assistant-only decisions remain invalid.

@@ -27,15 +27,7 @@ async fn failed_batch_isolates_items_and_persists_bounded_retry_state() {
         dimensions: Some(2),
         ..EmbeddingConfig::default()
     };
-    let provider = Arc::new(
-        HttpProvider::new(ProviderConfig {
-            base_url: server.url.clone(),
-            api_key_env: None,
-            protocol: ProviderProtocol::Openai,
-            max_in_flight: 4,
-        })
-        .unwrap(),
-    );
+    let provider = connection(&server.url);
     let embedding = Arc::new(HttpEmbedding::new(provider, config.clone()).unwrap());
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("memory.db");
@@ -155,6 +147,7 @@ async fn provider_outage_does_not_fan_out_and_new_revision_or_generation_can_ret
     };
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
+            api: agentix_memory::ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
             protocol: ProviderProtocol::Openai,
@@ -231,6 +224,7 @@ async fn permanent_embedding_failure_does_not_starve_later_memories() {
     };
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
+            api: agentix_memory::ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
             protocol: ProviderProtocol::Openai,
@@ -261,4 +255,17 @@ async fn permanent_embedding_failure_does_not_starve_later_memories() {
         requests[0].1["input"], requests[1].1["input"],
         "a permanently rejected document must not block all later documents"
     );
+}
+
+fn connection(url: &str) -> Arc<HttpProvider> {
+    Arc::new(
+        HttpProvider::new(ProviderConfig {
+            api: agentix_memory::ModelApi::Responses,
+            base_url: url.into(),
+            api_key_env: None,
+            protocol: ProviderProtocol::Openai,
+            max_in_flight: 4,
+        })
+        .unwrap(),
+    )
 }

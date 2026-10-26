@@ -86,6 +86,7 @@ async fn changed_response_dimensions_do_not_starve_later_memories() {
     };
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
+            api: agentix_memory::ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
             protocol: ProviderProtocol::Openai,
@@ -137,6 +138,7 @@ async fn individual_dimension_failure_does_not_abort_remaining_batch() {
     };
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
+            api: agentix_memory::ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
             protocol: ProviderProtocol::Openai,

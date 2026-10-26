@@ -34,6 +34,8 @@ max_files = 7
 path = "~/.local/share/taskix/memory.sqlite3"
 
 [memory.providers.openai]
+# Defaults to chat_completions; GPT-6 Astra requires responses.
+api = "responses"
 protocol = "openai"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
@@ -42,7 +44,6 @@ max_in_flight = 8
 
 [memory.agent]
 provider = "openai"
-api = "responses"
 model = "gpt-6-astra"
 # Optional; omit for provider default. Levels depend on the selected model.
 # reasoning_effort = "low"

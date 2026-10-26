@@ -21,6 +21,7 @@ pub struct HttpProvider {
     base_url: String,
     authorization: Option<reqwest::header::HeaderValue>,
     pub(crate) protocol: ProviderProtocol,
+    pub(crate) api: crate::ModelApi,
     limits: Arc<ProviderLimits>,
 }
 
@@ -66,6 +67,7 @@ impl HttpProvider {
             base_url: config.base_url.trim_end_matches('/').into(),
             authorization,
             protocol: config.protocol,
+            api: config.api,
             limits,
         })
     }
@@ -208,6 +210,7 @@ mod tests {
         let make = || {
             HttpProvider::with_limits(
                 ProviderConfig {
+                    api: crate::ModelApi::Responses,
                     base_url: "http://127.0.0.1:1".into(),
                     api_key_env: None,
                     protocol: ProviderProtocol::Openai,
@@ -247,6 +250,7 @@ mod tests {
 
     fn provider(capacity: usize) -> HttpProvider {
         HttpProvider::new(ProviderConfig {
+            api: crate::ModelApi::Responses,
             base_url: "http://127.0.0.1:1".into(),
             api_key_env: None,
             protocol: ProviderProtocol::Openai,

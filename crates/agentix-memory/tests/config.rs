@@ -33,7 +33,7 @@ fn memory_activation_uses_environment_without_serializing_a_toml_switch() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(&path, format!("schema_version=1\n[storage]\npath={:?}\n[memory]\n[memory.providers.openai]\nbase_url='http://127.0.0.1:9/v1'\n", dir.path().join("tasks.sqlite3"))).unwrap();
+        std::fs::write(&path, format!("schema_version=1\n[storage]\npath={:?}\n[memory]\n[memory.providers.openai]\napi='responses'\nbase_url='http://127.0.0.1:9/v1'\n", dir.path().join("tasks.sqlite3"))).unwrap();
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
         command
             .args([
@@ -86,9 +86,9 @@ path={:?}
 [memory.providers.local]
 protocol="openai"
 base_url="http://127.0.0.1:8080/v1"
+api="responses"
 [memory.agent]
 provider="local"
-api="responses"
 model="gpt-6-astra"
 max_concurrent_loops=4
 [memory.embedding]
@@ -203,4 +203,34 @@ fn maintenance_limits_are_validated_and_defaults_are_backward_compatible() {
 
 fn load_enabled_config(path: &std::path::Path) -> anyhow::Result<MemoryConfig> {
     MemoryConfig::load_with_env(path, |_| Some("true".into()))
+}
+
+#[test]
+fn provider_api_defaults_to_chat_completions_and_agent_api_is_removed() {
+    let provider: agentix_memory::ProviderConfig =
+        toml::from_str("base_url = 'http://localhost/v1'").unwrap();
+    assert_eq!(
+        serde_json::to_value(provider).unwrap()["api"],
+        "chat_completions"
+    );
+    assert!(toml::from_str::<agentix_memory::AgentConfig>("api = 'responses'").is_err());
+    assert!(
+        serde_json::to_value(agentix_memory::AgentConfig::default())
+            .unwrap()
+            .get("api")
+            .is_none()
+    );
+}
+
+#[test]
+fn provider_api_accepts_explicit_responses_and_rejects_unknown_api() {
+    let provider: agentix_memory::ProviderConfig =
+        toml::from_str("base_url = 'http://localhost/v1'\napi = 'responses'").unwrap();
+    assert_eq!(serde_json::to_value(provider).unwrap()["api"], "responses");
+    assert!(
+        toml::from_str::<agentix_memory::ProviderConfig>(
+            "base_url = 'http://localhost/v1'\napi = 'unknown'"
+        )
+        .is_err()
+    );
 }

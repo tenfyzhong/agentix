@@ -70,7 +70,7 @@ impl HttpModel {
         ensure!(!config.model.is_empty(), "missing Agent model");
         ensure!(
             !(config.model == "gpt-6-astra" || config.model.starts_with("gpt-6-astra-"))
-                || config.api == ModelApi::Responses,
+                || provider.api == ModelApi::Responses,
             "GPT-6 Astra tool calling requires Responses"
         );
         Ok(Self { provider, config })
@@ -78,14 +78,14 @@ impl HttpModel {
 
     fn request_body(&self, request: &ModelRequest) -> Result<Value> {
         let mut input = Vec::new();
-        if self.config.api == ModelApi::ChatCompletions {
+        if self.provider.api == ModelApi::ChatCompletions {
             input.push(json!({"role":"system","content":request.instructions}));
         }
         for item in &request.history {
             match item {
                 Message::User(text) => input.push(json!({"role":"user","content":text})),
                 Message::Model(output) => {
-                    if self.config.api == ModelApi::Responses {
+                    if self.provider.api == ModelApi::Responses {
                         input.extend(
                             output
                                 .as_array()
@@ -98,7 +98,7 @@ impl HttpModel {
                     }
                 }
                 Message::Tool { id, output } => {
-                    input.push(if self.config.api == ModelApi::Responses {
+                    input.push(if self.provider.api == ModelApi::Responses {
                         json!({"type":"function_call_output","call_id":id,"output":output})
                     } else {
                         json!({"role":"tool","tool_call_id":id,"content":output})
@@ -108,11 +108,11 @@ impl HttpModel {
         }
         let tools:Vec<_>=request.tools.iter().map(|tool| {
             let function=json!({"name":tool.name,"description":tool.description,"parameters":tool.parameters,"strict":true});
-            if self.config.api==ModelApi::Responses {
+            if self.provider.api==ModelApi::Responses {
                 let mut function=function;function["type"]=json!("function");function
             } else {json!({"type":"function","function":function})}
         }).collect();
-        let mut body = if self.config.api == ModelApi::Responses {
+        let mut body = if self.provider.api == ModelApi::Responses {
             json!({"model":self.config.model,"instructions":request.instructions,"input":input,"tools":tools,
                 "store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":self.config.max_output_tokens})
         } else {
@@ -122,7 +122,7 @@ impl HttpModel {
             body["tool_choice"] = json!("required");
         }
         if let Some(effort) = self.config.reasoning_effort {
-            if self.config.api == ModelApi::Responses {
+            if self.provider.api == ModelApi::Responses {
                 body["reasoning"] = json!({"effort": effort});
             } else {
                 body["reasoning_effort"] = json!(effort);
@@ -136,7 +136,7 @@ impl HttpModel {
 impl Model for HttpModel {
     async fn complete(&self, request: &ModelRequest) -> Result<ModelReply> {
         let body = self.request_body(request)?;
-        let endpoint = if self.config.api == ModelApi::Responses {
+        let endpoint = if self.provider.api == ModelApi::Responses {
             "responses"
         } else {
             "chat/completions"
@@ -145,7 +145,7 @@ impl Model for HttpModel {
             .provider
             .post(endpoint, body, self.config.request_timeout_seconds)
             .await?;
-        if self.config.api == ModelApi::Responses {
+        if self.provider.api == ModelApi::Responses {
             responses_reply(&value)
         } else {
             chat_reply(&value)
