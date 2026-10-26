@@ -355,7 +355,7 @@ impl Service {
 
     async fn render_pending_document(&self, key: &str, generation: String) -> Result<()> {
         let mut state = self.store.projection_snapshot(key).await?;
-        if key.starts_with("milestone:") {
+        if key.starts_with("milestone:") || key.starts_with("issue:") {
             state
                 .issues
                 .retain(|issue| key == format!("issue:{}", issue.id));

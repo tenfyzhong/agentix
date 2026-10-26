@@ -1,8 +1,8 @@
 # Obsidian editing synchronization
 
 Taskix Sync waits for **five idle seconds** before synchronizing saved Issue or
-Milestone body edits and Issue `title` property edits. Each edit restarts that note's timer. Human status changes
-keep their separate 300 ms delay.
+Milestone body edits and Issue `title` property edits. Each edit restarts that
+note's timer. Human status changes keep their separate 300 ms delay.
 
 Issue delivery fingerprints include `title`, so a property-only edit reaches the
 same import path as body edits. The importer updates the database title and
@@ -12,6 +12,18 @@ leading H1 and related links while preserving authored sections, including their
 own headings. Blank, non-text, multiline, and stale title edits are rejected
 without replacing the saved note. A pending database publication retains priority
 over its previous projected title.
+
+Renaming an Issue file in its existing directory also queues delivery. When the
+registered path is missing, the importer locates the single managed note with the
+same immutable ID and Project, checks its revision, and derives the title from
+the filename after the existing date/sequence prefix. The new name must already
+satisfy portable naming rules (at most 48 characters). Ambiguous copies, conflicting
+property edits, changed prefixes, and name collisions reject import. Previewing
+the normal mutation ensures its resulting path matches the moved source before
+committing; publication can recover that source even when the registry still
+contains the old path. Pending Issue publication performs the same reconciliation
+before writing, preventing it from recreating the old note over an unimported
+rename. The source note's authored sections remain intact.
 
 The plugin records pending document paths in vault-scoped local storage before
 starting the debounce timer; it does not store another copy of the prose. After

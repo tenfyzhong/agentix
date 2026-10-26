@@ -237,3 +237,21 @@ test("title-only Issue edits trigger delivery after an unchanged body was synchr
     assert.equal(f.requests.length, 2);
     f.reply(null, undefined, { id: "issue_one" }); await pending;
 });
+
+test("renaming an Issue note queues delivery under the new path with its stable ID", async t => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    const forgotten = [], deliveries = [];
+    f.plugin.engine = { directory: "11-Agents", watches: () => true, disposed: false,
+        dispose() {}, forget: path => forgotten.push(path), observe() {} };
+    const props = { id: "issue_one", title: "Old title", "taskix-generated": true };
+    const source = `---\n${JSON.stringify(props)}\n---\n# Old title\n`;
+    f.plugin.app.vault.read = async () => source;
+    f.plugin.queueDelivery = (...args) => deliveries.push(args);
+    const oldPath = "11-Agents/Projects/Demo/Issues/261026-0001-Old title.md";
+    f.file.path = "11-Agents/Projects/Demo/Issues/261026-0001-New title.md";
+    await f.vaultEvents.get("rename")(f.file, oldPath);
+    assert.deepEqual(forgotten, [oldPath]);
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0][0], f.file.path);
+    assert.equal(deliveries[0][2].id, "issue_one");
+});
