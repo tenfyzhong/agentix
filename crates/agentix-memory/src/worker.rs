@@ -77,6 +77,10 @@ impl MemoryWorker {
     }
 
     async fn run_lease(&self, lease: &WorkLease) -> Result<bool> {
+        let metric = agentix_metrics::global().start(match lease.kind {
+            WorkKind::Extract => agentix_metrics::Operation::MemoryExtract,
+            WorkKind::Consolidate => agentix_metrics::Operation::MemoryConsolidate,
+        });
         // Dropping the execution future stops further tool/model steps and aborts
         // in-flight HTTP work when a source revision or lease supersedes it.
         let execution = async {
@@ -102,6 +106,7 @@ impl MemoryWorker {
             result = execution => result,
         };
         if let Err(error) = result {
+            metric.finish(agentix_metrics::Outcome::Error);
             let text = error.to_string();
             let mut end = text.len().min(2048);
             while !text.is_char_boundary(end) {
@@ -124,6 +129,7 @@ impl MemoryWorker {
                 .context("record worker failure (lease may have changed)")?;
             return Err(error);
         }
+        metric.finish(agentix_metrics::Outcome::Success);
         Ok(true)
     }
 

@@ -1,0 +1,91 @@
+{
+  "profile": "debug",
+  "rows": 10000,
+  "samples": [
+    {
+      "enabled": false,
+      "p95_ns": 244791,
+      "seconds": 0.397853417,
+      "writes_per_second": 5026.9770587391995
+    },
+    {
+      "enabled": true,
+      "p95_ns": 239875,
+      "seconds": 0.397278334,
+      "writes_per_second": 5034.253894147673
+    },
+    {
+      "enabled": true,
+      "p95_ns": 230834,
+      "seconds": 0.396197375,
+      "writes_per_second": 5047.989023147869
+    },
+    {
+      "enabled": false,
+      "p95_ns": 196250,
+      "seconds": 0.367890583,
+      "writes_per_second": 5436.399006712276
+    },
+    {
+      "enabled": false,
+      "p95_ns": 235291,
+      "seconds": 0.38357775,
+      "writes_per_second": 5214.066770035541
+    },
+    {
+      "enabled": true,
+      "p95_ns": 228250,
+      "seconds": 0.381597083,
+      "writes_per_second": 5241.130210631091
+    },
+    {
+      "enabled": true,
+      "p95_ns": 222875,
+      "seconds": 0.387965208,
+      "writes_per_second": 5155.101433734749
+    },
+    {
+      "enabled": false,
+      "p95_ns": 192042,
+      "seconds": 0.348021458,
+      "writes_per_second": 5746.772085530427
+    },
+    {
+      "enabled": false,
+      "p95_ns": 230167,
+      "seconds": 0.392483958,
+      "writes_per_second": 5095.749671378925
+    },
+    {
+      "enabled": true,
+      "p95_ns": 225500,
+      "seconds": 0.3852505,
+      "writes_per_second": 5191.427395941083
+    },
+    {
+      "enabled": true,
+      "p95_ns": 226708,
+      "seconds": 0.391618208,
+      "writes_per_second": 5107.014840331428
+    },
+    {
+      "enabled": false,
+      "p95_ns": 188000,
+      "seconds": 0.342926125,
+      "writes_per_second": 5832.159914908786
+    },
+    {
+      "enabled": false,
+      "p95_ns": 223625,
+      "seconds": 0.37685525,
+      "writes_per_second": 5307.077452151721
+    },
+    {
+      "enabled": true,
+      "p95_ns": 230958,
+      "seconds": 0.388568291,
+      "writes_per_second": 5147.1003844727
+    }
+  ],
+  "writes_per_sample": 2000
+}

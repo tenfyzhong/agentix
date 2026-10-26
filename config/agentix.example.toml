@@ -127,3 +127,9 @@ owner_user_ids = []
 [output]
 show_reasoning = false
 show_tool_calls = false
+
+# Application-only Prometheus/OpenMetrics endpoint; restart after changes.
+# See docs/application-metrics.md for the existing-Alloy/Grafana Cloud integration.
+[metrics]
+enabled = false
+listen = "127.0.0.1:9464"

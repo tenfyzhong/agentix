@@ -285,7 +285,10 @@ impl ChannelAdapter for FeishuAdapter {
         conversation: &ConversationRef,
         view: &OutboundView,
     ) -> Result<MessageRef, ChannelError> {
-        self.send_cards(conversation, view).await
+        let guard = agentix_metrics::global().start(agentix_metrics::Operation::FeishuSend);
+        let result = self.send_cards(conversation, view).await;
+        guard.result(&result);
+        result
     }
 
     async fn update(
@@ -294,7 +297,10 @@ impl ChannelAdapter for FeishuAdapter {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError> {
-        self.update_cards(conversation, message, view).await
+        let guard = agentix_metrics::global().start(agentix_metrics::Operation::FeishuUpdate);
+        let result = self.update_cards(conversation, message, view).await;
+        guard.result(&result);
+        result
     }
 
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {
@@ -599,6 +605,7 @@ where
         agentix_domain::DeliveryAttempt::dispatched().await;
         match operation().await {
             Err(LarkError::RateLimited(error)) => {
+                agentix_metrics::global().event(agentix_metrics::Event::FeishuRetry, 1);
                 agentix_domain::DeliveryAttempt::waiting();
                 // SDK 0.3.11 drops Retry-After, so use capped backoff.
                 // Keep the deadline shared even if this head is cancelled.

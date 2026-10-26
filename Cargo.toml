@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/agentix-metrics",
   "crates/agentix",
   "crates/agentix-bridge",
   "crates/agentix-codex",

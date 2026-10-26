@@ -85,6 +85,7 @@ impl Api {
                 .await
                 .map_err(|error| ChannelError::Transport(error.without_url().to_string()))?;
             if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                agentix_metrics::global().event(agentix_metrics::Event::SlackRetry, 1);
                 agentix_domain::DeliveryAttempt::waiting();
                 let seconds = response
                     .headers()

@@ -1,0 +1,91 @@
+{
+  "profile": "debug",
+  "rows": 10000,
+  "samples": [
+    {
+      "enabled": false,
+      "p95_ns": 243583,
+      "seconds": 3.905333667,
+      "writes_per_second": 5121.201337801081
+    },
+    {
+      "enabled": true,
+      "p95_ns": 247708,
+      "seconds": 3.991281625,
+      "writes_per_second": 5010.921773779869
+    },
+    {
+      "enabled": true,
+      "p95_ns": 234708,
+      "seconds": 3.892530708,
+      "writes_per_second": 5138.045528811279
+    },
+    {
+      "enabled": false,
+      "p95_ns": 245375,
+      "seconds": 3.7129698749999998,
+      "writes_per_second": 5386.523638304499
+    },
+    {
+      "enabled": false,
+      "p95_ns": 242459,
+      "seconds": 4.162567625,
+      "writes_per_second": 4804.726746030942
+    },
+    {
+      "enabled": true,
+      "p95_ns": 228667,
+      "seconds": 3.8188737919999998,
+      "writes_per_second": 5237.146103622793
+    },
+    {
+      "enabled": true,
+      "p95_ns": 285250,
+      "seconds": 4.359595458,
+      "writes_per_second": 4587.581621432178
+    },
+    {
+      "enabled": false,
+      "p95_ns": 220167,
+      "seconds": 3.613036083,
+      "writes_per_second": 5535.5107285265385
+    },
+    {
+      "enabled": false,
+      "p95_ns": 252208,
+      "seconds": 4.567415625,
+      "writes_per_second": 4378.843889425982
+    },
+    {
+      "enabled": true,
+      "p95_ns": 260208,
+      "seconds": 4.230516666,
+      "writes_per_second": 4727.554948722191
+    },
+    {
+      "enabled": true,
+      "p95_ns": 236208,
+      "seconds": 3.881585792,
+      "writes_per_second": 5152.533287096286
+    },
+    {
+      "enabled": false,
+      "p95_ns": 251292,
+      "seconds": 4.637034667,
+      "writes_per_second": 4313.101246003689
+    },
+    {
+      "enabled": false,
+      "p95_ns": 232292,
+      "seconds": 3.838822917,
+      "writes_per_second": 5209.930343864309
+    },
+    {
+      "enabled": true,
+      "p95_ns": 232833,
+      "seconds": 3.893889042,
+      "writes_per_second": 5136.253186538539
+    }
+  ],
+  "writes_per_sample": 20000
+}

@@ -184,8 +184,12 @@ impl ChannelAdapter for SlackAdapter {
         conversation: &ConversationRef,
         view: &OutboundView,
     ) -> Result<MessageRef, ChannelError> {
-        self.messages
-            .outbound(Some(conversation), self.send_inner(conversation, view))
+        agentix_metrics::global()
+            .track(agentix_metrics::Operation::SlackSend, async {
+                self.messages
+                    .outbound(Some(conversation), self.send_inner(conversation, view))
+                    .await
+            })
             .await
     }
 
@@ -195,13 +199,17 @@ impl ChannelAdapter for SlackAdapter {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError> {
-        if conversation != &message.conversation {
-            return Err(ChannelError::InvalidPayload(
-                "Slack message belongs to another conversation".into(),
-            ));
-        }
-        self.messages
-            .outbound(Some(conversation), self.update_inner(message, view))
+        agentix_metrics::global()
+            .track(agentix_metrics::Operation::SlackUpdate, async {
+                if conversation != &message.conversation {
+                    return Err(ChannelError::InvalidPayload(
+                        "Slack message belongs to another conversation".into(),
+                    ));
+                }
+                self.messages
+                    .outbound(Some(conversation), self.update_inner(message, view))
+                    .await
+            })
             .await
     }
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {

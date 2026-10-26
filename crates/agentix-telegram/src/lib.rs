@@ -433,25 +433,31 @@ impl ChannelAdapter for TelegramAdapter {
         conversation: &ConversationRef,
         view: &OutboundView,
     ) -> Result<MessageRef, ChannelError> {
-        let chat_id = parse_chat_id(conversation)?;
-        let request = self
-            .bot
-            .send_message(chat_id, render_text(view))
-            .parse_mode(ParseMode::MarkdownV2)
-            .disable_link_preview(true);
-        let request = if let Some(keyboard) = render_keyboard(&view.actions) {
-            request.reply_markup(keyboard)
-        } else {
-            request
-        };
-        let message = self
-            .request(request, "sendMessage", Some(chat_id))
-            .await
-            .map_err(|error| delivery_error(&error))?;
-        Ok(MessageRef::new(
-            conversation.clone(),
-            message.id.0.to_string(),
-        ))
+        let guard = agentix_metrics::global().start(agentix_metrics::Operation::TelegramSend);
+        let result = async {
+            let chat_id = parse_chat_id(conversation)?;
+            let request = self
+                .bot
+                .send_message(chat_id, render_text(view))
+                .parse_mode(ParseMode::MarkdownV2)
+                .disable_link_preview(true);
+            let request = if let Some(keyboard) = render_keyboard(&view.actions) {
+                request.reply_markup(keyboard)
+            } else {
+                request
+            };
+            let message = self
+                .request(request, "sendMessage", Some(chat_id))
+                .await
+                .map_err(|error| delivery_error(&error))?;
+            Ok(MessageRef::new(
+                conversation.clone(),
+                message.id.0.to_string(),
+            ))
+        }
+        .await;
+        guard.result(&result);
+        result
     }
 
     async fn send_sectioned(
@@ -472,27 +478,32 @@ impl ChannelAdapter for TelegramAdapter {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError> {
-        let chat_id = parse_chat_id(conversation)?;
-        let message_id = message
-            .message_id
-            .parse::<i32>()
-            .map(MessageId)
-            .map_err(|error| ChannelError::InvalidPayload(error.to_string()))?;
-        let request = self
-            .bot
-            .edit_message_text(chat_id, message_id, render_text(view))
-            .parse_mode(ParseMode::MarkdownV2)
-            .disable_link_preview(true);
-        let keyboard = render_keyboard(&view.actions)
-            .unwrap_or_else(|| InlineKeyboardMarkup::new(Vec::<Vec<InlineKeyboardButton>>::new()));
-        self.request(
-            request.reply_markup(keyboard),
-            "editMessageText",
-            Some(chat_id),
-        )
-        .await
-        .map_err(|error| delivery_error(&error))?;
-        Ok(())
+        agentix_metrics::global()
+            .track(agentix_metrics::Operation::TelegramUpdate, async {
+                let chat_id = parse_chat_id(conversation)?;
+                let message_id = message
+                    .message_id
+                    .parse::<i32>()
+                    .map(MessageId)
+                    .map_err(|error| ChannelError::InvalidPayload(error.to_string()))?;
+                let request = self
+                    .bot
+                    .edit_message_text(chat_id, message_id, render_text(view))
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .disable_link_preview(true);
+                let keyboard = render_keyboard(&view.actions).unwrap_or_else(|| {
+                    InlineKeyboardMarkup::new(Vec::<Vec<InlineKeyboardButton>>::new())
+                });
+                self.request(
+                    request.reply_markup(keyboard),
+                    "editMessageText",
+                    Some(chat_id),
+                )
+                .await
+                .map_err(|error| delivery_error(&error))?;
+                Ok(())
+            })
+            .await
     }
 
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {

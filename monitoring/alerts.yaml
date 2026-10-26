@@ -1,0 +1,192 @@
+{
+  "groups": [
+    {
+      "name": "agentix-applications",
+      "interval": "1m",
+      "rules": [
+        {
+          "alert": "AgentixApplicationDataMissing",
+          "expr": "absent_over_time(agentix_build_info{job=\"agentix\",instance=\"local\"}[5m])",
+          "for": "0m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "agentix application data missing",
+            "description": "No application build sample for five minutes. Check the application and delivery path locally; this does not diagnose a host or collector fault. Customize the instance selector per deployment."
+          }
+        },
+        {
+          "alert": "TaskixApplicationDataMissing",
+          "expr": "absent_over_time(taskix_build_info{job=\"taskix\",instance=\"local\"}[5m])",
+          "for": "0m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "taskix application data missing",
+            "description": "No application build sample for five minutes. Check the application and delivery path locally; this does not diagnose a host or collector fault. Customize the instance selector per deployment."
+          }
+        },
+        {
+          "alert": "AgentixErrorRate",
+          "expr": "(sum by (instance,component,operation) (increase(agentix_operations_total{outcome=\"error\"}[10m])) / sum by (instance,component,operation) (increase(agentix_operations_total[10m])) > 0.05) and (sum by (instance,component,operation) (increase(agentix_operations_total[10m])) >= 20)",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Application operation error rate above 5%",
+            "description": "At least 20 operations in ten minutes. Inspect application logs locally; error text is not uploaded."
+          }
+        },
+        {
+          "alert": "TaskixErrorRate",
+          "expr": "(sum by (instance,component,operation) (increase(taskix_operations_total{outcome=\"error\"}[10m])) / sum by (instance,component,operation) (increase(taskix_operations_total[10m])) > 0.05) and (sum by (instance,component,operation) (increase(taskix_operations_total[10m])) >= 20)",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Application operation error rate above 5%",
+            "description": "At least 20 operations in ten minutes. Inspect application logs locally; error text is not uploaded."
+          }
+        },
+        {
+          "alert": "AgentixQueuePressure",
+          "expr": "sum by (instance,queue) (agentix_queue_items{state=\"pending\"}) / sum by (instance,queue) (agentix_queue_capacity) > 0.8",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Application queue above 80%",
+            "description": "Pending work is approaching the admission capacity."
+          }
+        },
+        {
+          "alert": "AgentixQueueNoProgress",
+          "expr": "(agentix_queue_items{state=\"pending\"} > 0) and on(instance,queue) (agentix_queue_oldest_age_seconds > 300) unless on(instance,queue) (label_replace(sum by (instance,component) (increase(agentix_operations_total{component=~\"engine|control\"}[5m])), \"queue\", \"$1\", \"component\", \"(.*)\") > 0)",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Queued application work has no dispatch progress",
+            "description": "Pending queue is older than five minutes without completed dispatch operations; this is not an agent turn duration alert."
+          }
+        },
+        {
+          "alert": "TaskixExpiredLeases",
+          "expr": "taskix_expired_leases > 0",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Task execution leases expired",
+            "description": "Inspect Taskix task ownership and recovery; do not automatically approve or retry tasks."
+          }
+        },
+        {
+          "alert": "TaskixProjectionBacklog",
+          "expr": "taskix_pending_documents > 0",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Workflow document projection pending",
+            "description": "Inspect Taskix document projection logs and vault availability."
+          }
+        },
+        {
+          "alert": "MemoryFailedWork",
+          "expr": "taskix_memory_failed_items > 0",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Memory work has failed",
+            "description": "Inspect failed Memory work and provider configuration locally."
+          }
+        },
+        {
+          "alert": "MemoryProjectionBacklog",
+          "expr": "taskix_memory_pending_projection > 0",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Memory document projection pending",
+            "description": "Inspect projection conflicts and repair logs locally."
+          }
+        },
+        {
+          "alert": "MemoryEmbeddingFailures",
+          "expr": "taskix_memory_embedding_failures > 0",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Memory embeddings need repair",
+            "description": "Inspect provider availability and embedding configuration locally."
+          }
+        },
+        {
+          "alert": "MemoryNoProgress",
+          "expr": "(taskix_memory_oldest_pending_age_seconds{kind=~\"extract|consolidate\"} > 300) unless on(instance,kind) (label_replace(sum by (instance,operation) (increase(taskix_operations_total{component=\"memory\",operation=~\"extract|consolidate\"}[5m])), \"kind\", \"$1\", \"operation\", \"(.*)\") > 0)",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Ready Memory work has no progress",
+            "description": "Ready work has not completed in five minutes. Future retry delays are excluded."
+          }
+        },
+        {
+          "alert": "ApplicationInteractiveLatency",
+          "expr": "histogram_quantile(0.95, sum by (instance,component,operation,le) (rate(agentix_operation_duration_seconds_bucket{operation=~\"rpc|send|update\"}[10m]))) > 10",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Interactive application operation p95 above ten seconds",
+            "description": "Tune per operation. Agent turn and first-output durations are intentionally excluded."
+          }
+        },
+        {
+          "alert": "MemoryProviderLatency",
+          "expr": "histogram_quantile(0.95, sum by (instance,component,operation,le) (rate(taskix_operation_duration_seconds_bucket{component=~\"model|embedding\",operation=\"request\"}[10m]))) > 120",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "service": "agentix-applications"
+          },
+          "annotations": {
+            "summary": "Memory provider p95 above two minutes",
+            "description": "Provider requests have a separate latency threshold from interactive application operations."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -77,13 +77,17 @@ impl HttpProvider {
     }
 
     async fn acquire(&self, query: bool) -> Result<(Option<Permit<'_>>, Permit<'_>)> {
-        // Acquire the background cap first so queued batches cannot occupy query capacity.
-        let background = if query {
-            None
-        } else {
-            Some(self.limits.background.acquire().await?)
-        };
-        Ok((background, self.limits.total.acquire().await?))
+        agentix_metrics::global()
+            .track(agentix_metrics::Operation::ProviderWait, async {
+                // Acquire the background cap first so queued batches cannot occupy query capacity.
+                let background = if query {
+                    None
+                } else {
+                    Some(self.limits.background.acquire().await?)
+                };
+                Ok((background, self.limits.total.acquire().await?))
+            })
+            .await
     }
 
     pub(crate) async fn post(&self, endpoint: &str, body: Value, timeout: u64) -> Result<Value> {

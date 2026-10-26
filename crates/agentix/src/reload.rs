@@ -113,6 +113,9 @@ pub(super) fn load_candidate(
     if next.storage.path != current.storage.path {
         bail!("changing storage.path requires restarting agentix serve");
     }
+    if next.metrics != current.metrics {
+        bail!("changing metrics requires restarting agentix serve");
+    }
     if next.logging != current.logging {
         bail!("changing logging requires restarting agentix serve");
     }

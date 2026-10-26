@@ -10,6 +10,8 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub(super) struct ConfigFile {
     #[serde(default)]
+    pub(super) metrics: agentix_metrics::Config,
+    #[serde(default)]
     pub(super) multiplexer: super::MultiplexerConfig,
     #[serde(default)]
     pub(super) slack_cli_path: Option<std::path::PathBuf>,
@@ -72,6 +74,7 @@ impl TryFrom<ConfigFile> for Config {
             Some(_) => bail!("agent must be a table"),
         };
         Ok(Self {
+            metrics: file.metrics,
             multiplexer: file.multiplexer,
             slack_cli_path: file.slack_cli_path,
             server: file.server,

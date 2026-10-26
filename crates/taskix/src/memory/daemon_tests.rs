@@ -101,6 +101,7 @@ async fn repository_test_application() -> (tempfile::TempDir, Arc<Application>, 
     let runtime = Arc::new(Runtime::build(config.clone(), &store, repositories.clone()));
     assert!(runtime.worker.is_some());
     let app = Arc::new(Application {
+        metrics: agentix_metrics::Config::taskix(),
         logging: crate::service::logging::LoggingConfig::default(),
         path: dir.path().join("config.toml"),
         location: MemoryLocation {
@@ -272,6 +273,7 @@ async fn check_project_concurrency(limit: usize, parallel: bool) {
     let repositories = Arc::new(Repositories(tasks.clone()));
     let runtime = Arc::new(Runtime::build(config.clone(), &store, repositories.clone()));
     let app = Arc::new(Application {
+        metrics: agentix_metrics::Config::taskix(),
         logging: crate::service::logging::LoggingConfig::default(),
         path: dir.path().join("config.toml"),
         location: MemoryLocation {
@@ -437,6 +439,7 @@ async fn idle_daemon_cpu_with_many_projects() {
     assert!(runtime.worker.is_some());
     assert!(runtime.embedding.is_some());
     let app = Arc::new(Application {
+        metrics: agentix_metrics::Config::taskix(),
         logging: crate::service::logging::LoggingConfig::default(),
         path: dir.path().join("config.toml"),
         location: MemoryLocation {
@@ -575,6 +578,7 @@ async fn check_reload_admission(deep_limit: bool) {
     let repositories = Arc::new(Repositories(tasks.clone()));
     let runtime = Arc::new(Runtime::build(config.clone(), &store, repositories.clone()));
     let app = Arc::new(Application {
+        metrics: agentix_metrics::Config::taskix(),
         logging: crate::service::logging::LoggingConfig::load(&path).unwrap(),
         path,
         location: MemoryLocation {

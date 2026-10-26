@@ -69,6 +69,7 @@ impl Connection {
             let instance = instance.clone();
             let state = state.clone();
             tokio::spawn(async move {
+                let _metric_connection = agentix_metrics::global().connected(&agent);
                 let mut last_seq = initial_seq;
                 while let Ok(frame) = read_frame(&mut reader).await {
                     if let Some(id) = frame["id"].as_str() {
@@ -167,58 +168,62 @@ impl Connection {
         });
     }
     async fn request(&self, method: &str, params: Value) -> Result<Value, AgentError> {
-        if !self.online.load(Ordering::Acquire) {
-            return Err(unavailable("bridge disconnected"));
-        }
-        let id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id.clone(), tx);
-        let mut guard = PendingRequest {
-            connection: self,
-            id: id.clone(),
-            writing: false,
-        };
-        let mut dispatched = false;
-        let mutating = !(matches!(method, "info" | "history" | "queue_state")
-            || method == "terminal_input" && params["clear"].is_null());
-        let result = tokio::time::timeout(Duration::from_secs(10), async {
-            let mut bytes = serde_json::to_vec(&wire::Request {
-                id,
-                method: method.into(),
-                params,
-            })
-            .map_err(unavailable)?;
-            bytes.push(b'\n');
-            if bytes.len() > wire::MAX_FRAME_BYTES {
-                return Err(AgentError::Protocol(
-                    "bridge request exceeds maximum frame size".into(),
-                ));
-            }
-            let mut writer = self.writer.lock().await;
-            if !self.online.load(Ordering::Acquire) {
-                return Err(unavailable("bridge disconnected"));
-            }
-            // Cancellation halfway through a frame makes this stream unusable.
-            guard.writing = true;
-            writer.write_all(&bytes).await.map_err(unavailable)?;
-            guard.writing = false;
-            dispatched = true;
-            drop(writer);
-            rx.await.map_err(unavailable)?
-        })
-        .await
-        .map_err(|_| {
-            tracing::warn!(target: "agentix::telemetry", backend = %self.agent, method,
+        agentix_metrics::global()
+            .track(agentix_metrics::Operation::rpc(&self.agent), async {
+                if !self.online.load(Ordering::Acquire) {
+                    return Err(unavailable("bridge disconnected"));
+                }
+                let id = uuid::Uuid::new_v4().to_string();
+                let (tx, rx) = oneshot::channel();
+                self.pending.lock().unwrap().insert(id.clone(), tx);
+                let mut guard = PendingRequest {
+                    connection: self,
+                    id: id.clone(),
+                    writing: false,
+                };
+                let mut dispatched = false;
+                let mutating = !(matches!(method, "info" | "history" | "queue_state")
+                    || method == "terminal_input" && params["clear"].is_null());
+                let result = tokio::time::timeout(Duration::from_secs(10), async {
+                    let mut bytes = serde_json::to_vec(&wire::Request {
+                        id,
+                        method: method.into(),
+                        params,
+                    })
+                    .map_err(unavailable)?;
+                    bytes.push(b'\n');
+                    if bytes.len() > wire::MAX_FRAME_BYTES {
+                        return Err(AgentError::Protocol(
+                            "bridge request exceeds maximum frame size".into(),
+                        ));
+                    }
+                    let mut writer = self.writer.lock().await;
+                    if !self.online.load(Ordering::Acquire) {
+                        return Err(unavailable("bridge disconnected"));
+                    }
+                    // Cancellation halfway through a frame makes this stream unusable.
+                    guard.writing = true;
+                    writer.write_all(&bytes).await.map_err(unavailable)?;
+                    guard.writing = false;
+                    dispatched = true;
+                    drop(writer);
+                    rx.await.map_err(unavailable)?
+                })
+                .await
+                .map_err(|_| {
+                    tracing::warn!(target: "agentix::telemetry", backend = %self.agent, method,
                 timeout_ms = 10000, "backend request timed out");
-            unavailable("bridge request timed out; check session state before retrying")
-        })
-        .and_then(std::convert::identity);
-        match result {
-            Err(AgentError::Unavailable(reason)) if dispatched && mutating => {
-                Err(AgentError::Uncertain(reason))
-            }
-            result => result,
-        }
+                    unavailable("bridge request timed out; check session state before retrying")
+                })
+                .and_then(std::convert::identity);
+                match result {
+                    Err(AgentError::Unavailable(reason)) if dispatched && mutating => {
+                        Err(AgentError::Uncertain(reason))
+                    }
+                    result => result,
+                }
+            })
+            .await
     }
 }
 

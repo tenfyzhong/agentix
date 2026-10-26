@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+agentix-metrics = { path = "../agentix-metrics" }
 agentix-domain = { path = "../agentix-domain" }
 async-trait.workspace = true
 larksuite-oapi-sdk-rs.workspace = true
@@ -17,6 +18,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+allocation-counter = "0.8.1"
 futures-util.workspace = true
 prost.workspace = true
 tokio-tungstenite.workspace = true

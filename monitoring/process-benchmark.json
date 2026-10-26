@@ -1,0 +1,91 @@
+{
+  "platform": "macOS arm64",
+  "profile": "release",
+  "scope": "Native process reads only; no formatting, task scheduling, HTTP or allocation-counting allocator. Alternating old sysinfo own-PID backend and direct native backend.",
+  "samples": [
+    {
+      "direct": false,
+      "round": 0,
+      "samples": 1000,
+      "elapsed_ns": 28357917
+    },
+    {
+      "direct": true,
+      "round": 0,
+      "samples": 1000,
+      "elapsed_ns": 651250
+    },
+    {
+      "direct": true,
+      "round": 1,
+      "samples": 1000,
+      "elapsed_ns": 771125
+    },
+    {
+      "direct": false,
+      "round": 1,
+      "samples": 1000,
+      "elapsed_ns": 19305625
+    },
+    {
+      "direct": false,
+      "round": 2,
+      "samples": 1000,
+      "elapsed_ns": 17213541
+    },
+    {
+      "direct": true,
+      "round": 2,
+      "samples": 1000,
+      "elapsed_ns": 512709
+    },
+    {
+      "direct": true,
+      "round": 3,
+      "samples": 1000,
+      "elapsed_ns": 512167
+    },
+    {
+      "direct": false,
+      "round": 3,
+      "samples": 1000,
+      "elapsed_ns": 14675083
+    },
+    {
+      "direct": false,
+      "round": 4,
+      "samples": 1000,
+      "elapsed_ns": 14793792
+    },
+    {
+      "direct": true,
+      "round": 4,
+      "samples": 1000,
+      "elapsed_ns": 455583
+    },
+    {
+      "direct": true,
+      "round": 5,
+      "samples": 1000,
+      "elapsed_ns": 456333
+    },
+    {
+      "direct": false,
+      "round": 5,
+      "samples": 1000,
+      "elapsed_ns": 13636959
+    },
+    {
+      "direct": false,
+      "round": 6,
+      "samples": 1000,
+      "elapsed_ns": 13211292
+    },
+    {
+      "direct": true,
+      "round": 6,
+      "samples": 1000,
+      "elapsed_ns": 449917
+    }
+  ]
+}

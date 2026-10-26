@@ -865,44 +865,48 @@ impl CodexClient {
     }
 
     async fn request_rpc(&self, method: &str, params: Value) -> Result<Value, ClientError> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (sender, receiver) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, sender);
-        let _pending = PendingRequest {
-            pending: &self.pending,
-            id,
-        };
-        let mut writing = false;
-        let response = tokio::time::timeout(Duration::from_secs(30), async {
-            let mut writer = self.writer.lock().await;
-            // A cancelled WebSocket send may already have buffered or transmitted
-            // the frame. Once sending begins, a mutation cannot safely be replayed.
-            writing = true;
-            writer
-                .send(Message::Text(
-                    json!({"id": id, "method": method, "params": params})
-                        .to_string()
-                        .into(),
-                ))
+        agentix_metrics::global()
+            .track(agentix_metrics::Operation::CodexRpc, async {
+                let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+                let (sender, receiver) = oneshot::channel();
+                self.pending.lock().unwrap().insert(id, sender);
+                let _pending = PendingRequest {
+                    pending: &self.pending,
+                    id,
+                };
+                let mut writing = false;
+                let response = tokio::time::timeout(Duration::from_secs(30), async {
+                    let mut writer = self.writer.lock().await;
+                    // A cancelled WebSocket send may already have buffered or transmitted
+                    // the frame. Once sending begins, a mutation cannot safely be replayed.
+                    writing = true;
+                    writer
+                        .send(Message::Text(
+                            json!({"id": id, "method": method, "params": params})
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .map_err(ClientError::WebSocket)?;
+                    drop(writer);
+                    receiver.await.map_err(|_| ClientError::ResponseClosed)
+                })
                 .await
-                .map_err(ClientError::WebSocket)?;
-            drop(writer);
-            receiver.await.map_err(|_| ClientError::ResponseClosed)
-        })
-        .await
-        .map_err(|_| request_timeout(method))
-        .and_then(std::convert::identity)
-        .map_err(|error| {
-            if writing {
-                request_transport_error(method, error)
-            } else {
-                error
-            }
-        })?;
-        response.map_err(|error| ClientError::Rpc {
-            code: error.code,
-            message: error.message,
-        })
+                .map_err(|_| request_timeout(method))
+                .and_then(std::convert::identity)
+                .map_err(|error| {
+                    if writing {
+                        request_transport_error(method, error)
+                    } else {
+                        error
+                    }
+                })?;
+                response.map_err(|error| ClientError::Rpc {
+                    code: error.code,
+                    message: error.message,
+                })
+            })
+            .await
     }
 
     async fn request_after_reconnect(
@@ -3015,7 +3019,10 @@ async fn read_loop(
     endpoint: CodexEndpoint,
     connection: Arc<ConnectionState>,
 ) {
+    let mut usage_deltas = agentix_metrics::TokenDeltas::default();
     loop {
+        usage_deltas.clear();
+        let metric_connection = agentix_metrics::global().connected("codex");
         let disconnected_generation = connection.generation.load(Ordering::Acquire);
         let mut disconnect_reason = "Codex socket closed".to_owned();
         while let Some(frame) = reader.next().await {
@@ -3031,6 +3038,16 @@ async fn read_loop(
                         && let Some(thread_id) = params.get("threadId").and_then(Value::as_str)
                         && let Some(usage) = params.get("tokenUsage")
                     {
+                        let total = &usage["total"];
+                        usage_deltas.record(
+                            agentix_metrics::global(),
+                            thread_id,
+                            agentix_metrics::Usage {
+                                input: total["inputTokens"].as_u64(),
+                                output: total["outputTokens"].as_u64(),
+                                cached: total["cachedInputTokens"].as_u64(),
+                            },
+                        );
                         token_usage
                             .lock()
                             .await
@@ -3083,6 +3100,7 @@ async fn read_loop(
                 }
             }
         }
+        drop(metric_connection);
         pending.lock().unwrap().clear();
         let _ = events.send(AgentEvent::Disconnected {
             generation: disconnected_generation,

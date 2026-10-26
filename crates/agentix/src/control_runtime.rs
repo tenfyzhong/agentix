@@ -112,6 +112,7 @@ pub(super) async fn run_control_handler_with_config(
             let worker = workers.spawn(async move {
                 let started = std::time::Instant::now();
                 let call = job.work;
+                let metric = agentix_metrics::global().start(agentix_metrics::Operation::Control);
                 let response = handle_control_request(
                     call.request.clone(),
                     &agent,
@@ -120,6 +121,7 @@ pub(super) async fn run_control_handler_with_config(
                     &config_path,
                 )
                 .await;
+                metric.result(&response);
                 call.respond(response);
                 tracing::debug!(target: "agentix::telemetry", runtime = "control",
                     wait_ms = job.queued_for.as_secs_f64() * 1000.0,
@@ -134,7 +136,10 @@ pub(super) async fn run_control_handler_with_config(
         tokio::select! {
             biased;
             () = shutdown.cancelled() => break,
-            _ = telemetry.tick() => queue.statistics().record("control"),
+            _ = telemetry.tick() => {
+                let stats=queue.statistics();stats.record("control");
+                agentix_metrics::global().queue(agentix_metrics::Queue::Control,stats.pending,stats.active,256,stats.oldest_pending);
+            },
             completed = workers.join_next_with_id(), if !workers.is_empty() => {
                 let task = match completed.expect("an active worker") {
                     Ok((task, _)) => task,
