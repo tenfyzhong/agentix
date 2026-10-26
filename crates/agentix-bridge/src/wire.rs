@@ -225,6 +225,8 @@ pub struct EventFrame {
     pub instance: String,
     pub seq: u64,
     pub event: Event,
+    #[serde(default)]
+    pub token_usage: Option<TokenUsage>,
 }
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SessionInfo {
@@ -232,6 +234,8 @@ pub struct SessionInfo {
     pub seq: u64,
     pub session: Session,
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub token_usage: Option<TokenUsage>,
 }
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SessionSwitchStarted {
@@ -264,4 +268,13 @@ pub struct InteractionRequested {
 pub struct InteractionResolved {
     pub session_id: String,
     pub request_id: String,
+}
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TokenUsage {
+    #[serde(default)]
+    pub input: Option<u64>,
+    #[serde(default)]
+    pub output: Option<u64>,
+    #[serde(default)]
+    pub cached: Option<u64>,
 }

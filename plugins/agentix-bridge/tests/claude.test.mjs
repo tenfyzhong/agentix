@@ -140,3 +140,18 @@ test('Claude accepts new asynchronously and reports terminal failure without a m
     assert.equal(events[1].SessionSwitchFailed.reason, 'pane changed');
     assert.equal(session.turns.length, 0);
 });
+
+test('Claude forwards only matching completed-turn transcript usage', () => {
+    const usage = [];
+    const session = new ClaudeSession({
+        readTranscript: () => [{ user_text: 'hello', items: [], token_usage: [{ id: 'msg', input: 17, output: 4 }] }],
+        usage: (id, value) => usage.push([id, value]),
+    });
+    session.hook(identity);
+    session.hook({ ...identity, hook_event_name: 'UserPromptSubmit', prompt: 'hello' });
+    session.hook({ ...identity, session_id: 'other', hook_event_name: 'Stop' });
+    assert.equal(usage.length, 0);
+    session.hook({ ...identity, hook_event_name: 'Stop' });
+    session.hook({ ...identity, hook_event_name: 'Stop' });
+    assert.deepEqual(usage, [['msg', { id: 'msg', input: 17, output: 4 }]]);
+});

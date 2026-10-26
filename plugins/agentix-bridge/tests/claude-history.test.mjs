@@ -197,3 +197,19 @@ test('Claude completion hooks reuse the session reader and retain reasoning and 
     }
     assert.equal(events.filter(event => event.TurnCompleted).length, 2);
 });
+
+test('Claude transcript preserves per-response usage without double counting content blocks', t => {
+    const root = mkdtempSync(join(tmpdir(), 'ax-usage-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+    const path = join(root, 's.jsonl');
+    const entries = [
+        { type: 'user', uuid: 'u', sessionId: 's', message: { content: 'hello' } },
+        ...['a1', 'a2'].map(uuid => ({ type: 'assistant', uuid, sessionId: 's', message: { id: 'msg_one', content: [], usage: { input_tokens: 17, output_tokens: 4, cache_read_input_tokens: 7 } } })),
+        { type: 'assistant', uuid: 'a3', sessionId: 's', message: { id: 'msg_two', content: [], usage: { input_tokens: 8, output_tokens: 2 } } },
+        { type: 'assistant', uuid: 'foreign', sessionId: 'other', message: { id: 'wrong', content: [], usage: { input_tokens: 999 } } },
+    ];
+    writeFileSync(path, entries.map(JSON.stringify).join('\n') + '\n');
+    const turn = latestReader()(path, 's');
+    assert.deepEqual(turn.token_usage, [
+        { id: 'msg_one', input: 17, output: 4, cached: 7 }, { id: 'msg_two', input: 8, output: 2 },
+    ]);
+});

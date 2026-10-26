@@ -16,7 +16,7 @@ dashboard. It explains the configured queries; it is not a live health assessmen
 - `No data` is not zero. A feature may be unused or disabled, a series may not yet exist, a rate may lack enough samples, or the reporting path may be unavailable. Zero observations also leave ratios and quantiles undefined.
 - Scrapes run every 60 seconds; database snapshots also refresh periodically. Expect sampling delay. Workflow and Memory state cover the instance's shared databases across projects; there is no project filter.
 - Different operations can describe nested stages of the same request. Adding all operation rates or in-flight gauges does not yield a unique request count.
-- Token usage is partial observed usage, not billing. Only Codex and Memory token sources are currently connected. Do not add cached input to input, or add these series to an existing OTLP pipeline covering the same requests.
+- Token usage is partial observed usage, not billing. Agent sources cover Codex, Pi, OMP, Claude and OpenCode; Memory stays separate. Native input/output semantics differ by host. Codex cached input is a subset of its input; other hosts may report cache reads separately. Do not combine these series with an OTLP pipeline covering the same requests.
 - The process start-time and uptime stat panels display a value from the selected range. When investigating current health, include the present time rather than an old historical range.
 
 ## Application overview
@@ -281,17 +281,17 @@ Rates of Memory retrieval events. fallback counts queries using fts_fallback or 
 
 ## Observed token usage
 
-### Codex input tokens / second
+### Agent input tokens / second
 
-Observed Codex input-token deltas per second, grouped by source. This is not current context length. The initial cumulative notification establishes a baseline, so the initial turn may be undercounted.
+Observed input-token deltas per second for all five agents, with `source · instance` legends. Sources are `codex_app_server`, `pi_bridge`, `omp_bridge`, `claude_bridge`, and `opencode_bridge`. This is not current context length. The initial cumulative notification establishes a baseline, so the initial turn may be undercounted.
 
-### Codex output tokens / second
+### Agent output tokens / second
 
-Observed Codex output-token deltas per second. Usage notifications can arrive in batches, so spikes do not represent instantaneous token-generation speed.
+Observed output-token deltas per second for all five agents, distinguished by source and instance. Usage notifications can arrive in batches, so spikes do not represent instantaneous token-generation speed.
 
-### Codex cached input / second
+### Agent cached tokens / second
 
-Observed cached-input token deltas per second. Cached input is a subset of input tokens: do not add it again to input when calculating total tokens.
+Observed cache-read token deltas per second for all five agents, distinguished by source and instance. Missing native usage remains absent. Codex includes cached input in its input count; other hosts can report cache reads separately. Cache writes are not included.
 
 ### Memory input tokens / second
 
@@ -301,7 +301,7 @@ Input tokens reported by actual Memory model responses per second, grouped by so
 
 Output tokens reported by actual Memory model responses per second. It covers observed usage only and does not establish billing cost or complete provider accounting.
 
-### Codex observed tokens in selected range
+### Agent observed tokens in selected range
 
 increase(agentix_tokens_total[$__range]), grouped by source and token kind. The rightmost point estimates the increment over the selected range. Because this is a time-series panel, earlier points use the same-length rolling window ending at each point; never sum the plotted points. Extrapolation can produce fractional values.
 
