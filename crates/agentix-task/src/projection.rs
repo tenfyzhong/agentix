@@ -1030,6 +1030,7 @@ impl Service {
         } else {
             json!(["agent/job"])
         };
+        properties["prs"] = json!(job_pull_requests(job));
         properties["title"] = json!(job.name);
         properties["project"] = json!(self.config.project_link(project));
         properties["issue"] = issue.map_or(Value::Null, |issue| {
@@ -1242,6 +1243,65 @@ fn task_state_properties(task: &Task) -> Result<Value> {
         "created_at":local_timestamp(task.created_at)?,"updated_at":local_timestamp(task.updated_at)?,
         "started_at":optional_local_timestamp(task.started_at)?,"completed_at":optional_local_timestamp(task.completed_at)?
     }))
+}
+
+// Derive links from captured replies so all hosts and projection retries share
+// the same behavior without introducing a second source of Job state.
+fn job_pull_requests(job: &crate::Job) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut links = Vec::new();
+    for message in job.conversation.iter().filter(|m| m.role == "assistant") {
+        for token in message.text.split(|c: char| {
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    '<' | '>' | '(' | ')' | '[' | ']' | '"' | '\'' | '`' | '。' | '，'
+                )
+        }) {
+            let Ok(mut url) = url::Url::parse(token.trim_end_matches(['.', ',', ';', '!', ':']))
+            else {
+                continue;
+            };
+            if !matches!(url.scheme(), "http" | "https")
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+            {
+                continue;
+            }
+            let segments: Vec<_> = url.path().split('/').skip(1).collect();
+            let marker = if segments.len() >= 4 && matches!(segments[2], "pull" | "pulls") {
+                2
+            } else if let Some(index) = segments
+                .windows(2)
+                .position(|pair| pair == ["-", "merge_requests"])
+                .filter(|index| *index >= 2)
+            {
+                index + 1
+            } else {
+                continue;
+            };
+            let Some(number) = segments.get(marker + 1) else {
+                continue;
+            };
+            if number.is_empty()
+                || !number.bytes().all(|c| c.is_ascii_digit())
+                || number.bytes().all(|c| c == b'0')
+                || segments[..marker].iter().any(|s| s.is_empty())
+            {
+                continue;
+            }
+            let path = format!("/{}", segments[..=marker + 1].join("/"));
+            url.set_path(&path);
+            url.set_query(None);
+            url.set_fragment(None);
+            let link = url.to_string();
+            if seen.insert(link.clone()) {
+                links.push(link);
+            }
+        }
+    }
+    links
 }
 
 fn frontmatter(mut properties: Value) -> String {
