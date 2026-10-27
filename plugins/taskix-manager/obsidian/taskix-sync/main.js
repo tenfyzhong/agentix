@@ -256,10 +256,24 @@ class SyncEngine {
                     current = await this.lookup(intent);
                 }
             }
-            if (!intent.reconcileOnly && intent.kind === "issue" &&
+            // A related Milestone can publish a new path without changing the
+            // Issue revision. An unchanged queued link is not reassignment intent.
+            if (intent.kind === "issue" && intent.properties &&
+                equal(intent.properties.milestone ?? null, intent.milestoneLink) &&
+                equal(intent.properties.milestone_id ?? null, intent.milestone) &&
+                equal(current.properties?.milestone_id ?? null, intent.milestone)) {
+                intent.milestoneLink = current.properties?.milestone ?? null;
+            }
+            if (intent.kind === "issue" &&
                 !equal(current.properties?.milestone ?? null, intent.milestoneLink) &&
                 equal(current.properties?.milestone_id ?? null, intent.milestone)) {
-                intent.milestone = await this.resolveMilestoneLink(current, intent.milestoneLink);
+                try {
+                    const resolved = await this.resolveMilestoneLink(current, intent.milestoneLink);
+                    intent.preserveMilestoneLink = resolved.pendingRename;
+                    if (!intent.reconcileOnly) intent.milestone = resolved.id;
+                } catch (error) {
+                    if (!intent.reconcileOnly) throw error;
+                }
                 if (this.disposed || this.generations.get(intent.path) !== intent.generation) return;
             }
             if (!intent.reconcileOnly && intent.kind === "issue" &&
@@ -348,6 +362,9 @@ class SyncEngine {
         // Issue type is authored input for delayed delivery, not status rollback.
         // Restoring its database value here can erase an edit before import.
         if (note.kind === "issue") delete properties.issue_type;
+        // Obsidian updates backlinks before the delayed Milestone rename import.
+        // Keep that same-ID link until publication catches up, including reconnect.
+        if (intent?.preserveMilestoneLink) delete properties.milestone;
         if (Object.entries(properties).every(([key, value]) => equal(file[key], value))) return;
         if (!this.disposed) {
             try {
@@ -373,7 +390,7 @@ class SyncEngine {
     }
 
     async resolveMilestoneLink(note, link) {
-        if (link === null || link === "") return null;
+        if (link === null || link === "") return { id: null, pendingRename: false };
         if (typeof link !== "string") throw new Error("Milestone must be one note link or empty.");
         const match = /^\[\[([^|\]#]+)(?:\|[^\]]*)?\]\]$/.exec(link.trim());
         if (!match) throw new Error("Milestone must link to a registered Milestone in this Project.");
@@ -383,8 +400,30 @@ class SyncEngine {
         const choices = Array.isArray(result) ? result.filter(item => item.project_id === note.project_id &&
             [normalize(path.posix.join(this.directory, item.document_path)), normalize(item.document_path),
                 normalize(path.posix.basename(item.document_path))].includes(target)) : [];
-        if (choices.length !== 1) throw new Error("Milestone link is missing, ambiguous, or belongs to another Project.");
-        return choices[0].id;
+        if (choices.length === 1) return { id: choices[0].id, pendingRename: false };
+        // A rename does not change association. Accept only the already-linked
+        // identity, in its original directory, after the registered source moved.
+        // All actual association changes still require a registered destination.
+        if (choices.length === 0 && this.io.resolveLink && this.io.exists) {
+            const linked = Array.isArray(result) ? result.filter(item =>
+                item.id === note.properties?.milestone_id && item.project_id === note.project_id) : [];
+            const moved = await this.io.resolveLink(match[1], note.path);
+            if (linked.length === 1 && moved?.id === linked[0].id) {
+                const original = path.posix.join(this.directory, linked[0].document_path);
+                const prefix = /^(\d{6}-\d+-)/.exec(path.posix.basename(original))?.[1];
+                if (prefix && moved.path !== original &&
+                    path.posix.dirname(moved.path) === path.posix.dirname(original) &&
+                    path.posix.basename(moved.path).startsWith(prefix) &&
+                    !(await this.io.exists(original))) {
+                    const properties = await this.io.read(moved.path);
+                    if (properties?.["taskix-generated"] === true && properties.id === linked[0].id &&
+                        properties.project_id === note.project_id && properties.revision === linked[0].revision) {
+                        return { id: linked[0].id, pendingRename: true };
+                    }
+                }
+            }
+        }
+        throw new Error("Milestone link is missing, ambiguous, or belongs to another Project.");
     }
 
     forget(filePath) {
@@ -958,6 +997,7 @@ class TaskixSyncPlugin extends Plugin {
         };
         const engine = new SyncEngine({
             execute, read,
+            exists: filePath => this.app.vault.getAbstractFileByPath(filePath) !== null,
             connection: async () => {
                 const { result } = await execute(["obsidian", "connection"]);
                 if (result?.protocol_version !== 1) throw new Error("Update taskix to support on-demand Obsidian queries.");

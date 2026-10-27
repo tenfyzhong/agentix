@@ -43,6 +43,15 @@ file is missing, preventing it from recreating the old note over an unimported
 rename. Ordinary status publication does not import existing Issue prose or
 invalidate a pending review. The source note's authored sections remain intact.
 
+Obsidian may update Issue backlinks before the five-second Milestone rename
+import. The status queue preserves a link to the same Milestone ID while its
+registered source is missing, provided the moved note retains its Project,
+revision, directory, numbered prefix, and managed identity. It does not reassign
+the Issue or roll the link back during this window. Copies with an existing
+source, foreign notes, and stale revisions still fail validation. An unchanged
+link on a queued status edit follows a newly published Milestone path without
+being treated as a reassignment.
+
 The plugin records pending document paths in vault-scoped local storage before
 starting the debounce timer; it does not store another copy of the prose. After
 reconnection or plugin reload it rereads those notes, including closed notes, and
