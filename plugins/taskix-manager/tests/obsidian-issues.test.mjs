@@ -353,3 +353,90 @@ for (const reconcileOnly of [false, true]) {
         }
     });
 }
+
+async function milestoneRenameFixture(t, options = {}) {
+    const f = await fixture(); t.after(() => f.engine.dispose());
+    const oldPath = "Tasks/Projects/Demo/Milestones/261026-0001-0.7.2.md";
+    const newPath = "Tasks/Projects/Demo/Milestones/261026-0001-0.8.0.md";
+    Object.assign(f.row, { kind: "issue", id: "issue_one", status: "PENDING_REVIEW" });
+    Object.assign(f.row.properties, { status: "PENDING_REVIEW", milestone_id: "milestone_one", milestone: `[[${oldPath.slice(0, -3)}]]` });
+    Object.assign(f.files.get(f.row.path), f.row.properties, { id: f.row.id });
+    await f.engine.initialize();
+    const milestone = { id: "milestone_one", project_id: "prj_one", revision: 2,
+        document_path: oldPath.slice("Tasks/".length) };
+    f.files.set(newPath, { ...milestone, "taskix-generated": true, ...options.properties });
+    if (options.copy) f.files.set(oldPath, { ...milestone, "taskix-generated": true });
+    f.io.exists = async filePath => f.files.has(filePath);
+    f.io.read = async filePath => copy(f.files.get(filePath) || null);
+    f.io.resolveLink = async () => ({ id: "milestone_one", path: newPath });
+    f.io.execute = async args => {
+        f.calls.push(copy(args));
+        assert.equal(args[0], "milestone", "renaming must not mutate an Issue");
+        return { result: [copy(milestone)] };
+    };
+    const file = f.files.get(f.row.path);
+    const link = `[[${newPath.slice(0, -3)}]]`;
+    file.milestone = link;
+    return { ...f, file, link, milestone, newPath };
+}
+
+test("Milestone rename preserves automatic Issue links before delayed database import without warnings", async t => {
+    const f = await milestoneRenameFixture(t);
+    for (let i = 0; i < 3; i++) {
+        f.engine.observe(f.row.path, copy(f.file));
+        await f.engine.flush();
+        assert.equal(f.file.milestone, f.link);
+        assert.equal(f.file.milestone_id, "milestone_one");
+        assert.equal(f.file.status, "PENDING_REVIEW");
+        assert.deepEqual(f.notices, []);
+    }
+    f.milestone.document_path = f.newPath.slice("Tasks/".length);
+    f.row.properties.milestone = f.link;
+    f.engine.observe(f.row.path, copy(f.file));
+    await f.engine.flush();
+    assert.deepEqual(f.notices, []);
+});
+
+for (const [name, options] of Object.entries({
+    copied: { copy: true }, foreign: { properties: { project_id: "prj_other" } },
+    stale: { properties: { revision: 1 } }, unmanaged: { properties: { "taskix-generated": false } },
+})) {
+    test(`Milestone rename does not bypass ${name} link validation`, async t => {
+        const f = await milestoneRenameFixture(t, options);
+        f.engine.observe(f.row.path, copy(f.file));
+        await f.engine.flush();
+        assert.notEqual(f.file.milestone, f.link);
+        assert.match(f.notices.at(-1), /Milestone link/);
+    });
+}
+
+test("reconnect preserves a pending same-ID Milestone rename", async t => {
+    const f = await milestoneRenameFixture(t);
+    f.engine.observe(f.row.path, copy(f.file), true);
+    await f.engine.flush();
+    assert.equal(f.file.milestone, f.link);
+    assert.deepEqual(f.notices, []);
+});
+
+test("queued status edits retain their Milestone when database rename overtakes the queue", async t => {
+    const f = await milestoneRenameFixture(t);
+    f.file.milestone = f.row.properties.milestone;
+    f.file.status = "COMPLETED";
+    f.engine.observe(f.row.path, copy(f.file));
+    f.row.properties.milestone = f.link;
+    f.milestone.document_path = f.newPath.slice("Tasks/".length);
+    f.io.execute = async args => {
+        f.calls.push(copy(args));
+        if (args[0] === "milestone") return { result: [f.milestone] };
+        assert.equal(args[0], "issue");
+        assert.equal(args[1], "approve");
+        f.row.status = "COMPLETED";
+        f.row.revision++;
+        f.row.properties.status = "COMPLETED";
+        return { result: copy(f.row) };
+    };
+    await f.engine.flush();
+    assert.equal(f.row.status, "COMPLETED");
+    assert.equal(f.file.milestone, f.link);
+    assert.deepEqual(f.notices, []);
+});

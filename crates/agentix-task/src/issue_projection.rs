@@ -490,21 +490,24 @@ impl Service {
         Ok(source)
     }
 
-    /// Find a moved Issue only when its registered source has disappeared.
+    /// Find a moved delivery note only when its registered source has disappeared.
     /// The immutable ID identifies it; the numbered filename supplies the new name.
-    fn renamed_issue_document(
+    fn renamed_delivery_document(
         &self,
-        issue: &Issue,
+        id: &str,
+        project_id: &str,
+        name: &str,
+        revision: i64,
+        prefix: &str,
         registered: &str,
     ) -> Result<Option<(String, String)>> {
         let parent = Path::new(registered)
             .parent()
-            .context("missing Issue directory")?;
-        let directory = self.safe_path(parent.to_str().context("invalid Issue directory")?)?;
+            .context("missing delivery directory")?;
+        let directory = self.safe_path(parent.to_str().context("invalid delivery directory")?)?;
         if !directory.is_dir() {
             return Ok(None);
         }
-        let prefix = crate::naming::numbered_name("", issue.created_at, issue.sequence)?;
         let mut candidate = None;
         for entry in std::fs::read_dir(directory)? {
             let entry = entry?;
@@ -523,45 +526,43 @@ impl Service {
             let Ok((properties, _)) = split_properties(&source) else {
                 continue;
             };
-            if properties["id"] != issue.id {
+            if properties["id"] != id {
                 continue;
             }
             ensure!(
                 candidate.is_none(),
-                "conflict: ambiguous renamed Issue documents for {}",
-                issue.id
+                "conflict: ambiguous renamed delivery documents for {id}"
             );
             ensure!(
-                properties["taskix-generated"] == true
-                    && properties["project_id"] == issue.project_id,
-                "conflict: renamed Issue document identity changed"
+                properties["taskix-generated"] == true && properties["project_id"] == project_id,
+                "conflict: renamed delivery document identity changed"
             );
             ensure!(
-                properties["revision"].as_i64() == Some(issue.revision),
-                "conflict: renamed Issue revision changed"
+                properties["revision"].as_i64() == Some(revision),
+                "conflict: renamed delivery revision changed"
             );
             let filename = entry.file_name();
-            let name = filename
+            let renamed_name = filename
                 .to_str()
                 .and_then(|s| s.strip_suffix(".md"))
-                .and_then(|s| s.strip_prefix(&prefix))
-                .context("invalid: preserve the Issue filename date and sequence prefix")?;
+                .and_then(|s| s.strip_prefix(prefix))
+                .context("invalid: preserve the delivery filename date and sequence prefix")?;
             ensure!(
-                !name.is_empty() && crate::naming::short_name(name) == name,
-                "invalid: Issue filename must use a portable name of at most 48 characters"
+                !renamed_name.is_empty() && crate::naming::short_name(renamed_name) == renamed_name,
+                "invalid: delivery filename must use a portable name of at most 48 characters"
             );
             ensure!(
-                properties["title"] == issue.name || properties["title"] == name,
-                "conflict: Issue filename and title were edited differently"
+                properties["title"] == name || properties["title"] == renamed_name,
+                "conflict: delivery filename and title were edited differently"
             );
-            candidate = Some((relative, name.to_owned()));
+            candidate = Some((relative, renamed_name.to_owned()));
         }
         Ok(candidate)
     }
 
-    async fn validate_issue_rename(
+    async fn validate_delivery_rename(
         &self,
-        issue: &Issue,
+        revision: i64,
         request: &Value,
         relative: &str,
     ) -> Result<()> {
@@ -570,14 +571,14 @@ impl Service {
             &mut preview,
             request,
             &WriteOptions {
-                expected_revision: Some(issue.revision),
+                expected_revision: Some(revision),
                 ..WriteOptions::default()
             },
             self.store().now(),
         )?;
         ensure!(
             result["document_path"] == relative,
-            "conflict: renamed Issue filename collides with another Issue name"
+            "conflict: renamed delivery filename collides with another delivery name"
         );
         Ok(())
     }
@@ -611,7 +612,14 @@ impl Service {
             let registered = self.safe_path(&path)?;
             let renamed = if !registered.exists() && !self.safe_path(&issue.document_path)?.exists()
             {
-                self.renamed_issue_document(&issue, &path)?
+                self.renamed_delivery_document(
+                    &issue.id,
+                    &issue.project_id,
+                    &issue.name,
+                    issue.revision,
+                    &crate::naming::numbered_name("", issue.created_at, issue.sequence)?,
+                    &path,
+                )?
             } else {
                 None
             };
@@ -685,7 +693,8 @@ impl Service {
                     request["name"] = json!(title);
                 }
                 if let Some((relative, _)) = &renamed {
-                    Box::pin(self.validate_issue_rename(&issue, &request, relative)).await?;
+                    Box::pin(self.validate_delivery_rename(issue.revision, &request, relative))
+                        .await?;
                 }
                 let outcome = self
                     .store()
@@ -710,11 +719,12 @@ impl Service {
                 );
             }
         }
-        imported.extend(self.reconcile_milestone_goals_locked(selected).await?);
+        imported.extend(self.reconcile_milestone_documents_locked(selected).await?);
         Ok(imported)
     }
 
-    async fn reconcile_milestone_goals_locked(
+    #[allow(clippy::too_many_lines)] // Keep source selection, guarded import, and revision mapping together.
+    async fn reconcile_milestone_documents_locked(
         &self,
         selected: Option<&Snapshot>,
     ) -> Result<BTreeMap<String, (i64, i64)>> {
@@ -737,7 +747,28 @@ impl Service {
                     .fetch_optional(&self.store().pool)
                     .await?;
             let Some(path) = registered else { continue };
-            let path = self.safe_path(&path)?;
+            let registered = self.safe_path(&path)?;
+            let renamed = if !registered.exists()
+                && !self.safe_path(&milestone.document_path)?.exists()
+            {
+                self.renamed_delivery_document(
+                    &milestone.id,
+                    &milestone.project_id,
+                    &milestone.name,
+                    milestone.revision,
+                    &crate::naming::numbered_name("", milestone.created_at, milestone.sequence)?,
+                    &path,
+                )?
+            } else {
+                None
+            };
+            let path = if let Some((relative, _)) = &renamed {
+                self.safe_path(relative)?
+            } else if registered.exists() {
+                registered
+            } else {
+                self.safe_path(&milestone.document_path)?
+            };
             if !path.exists() {
                 continue;
             }
@@ -748,26 +779,54 @@ impl Service {
                 "conflict: Milestone document identity changed"
             );
             let goal = section(&source, "goal")?.context("missing Milestone goal")?;
-            let hash = crate::store::hash_bytes(goal.as_bytes());
-            if self
-                .store()
-                .metadata(&format!("delivery:{}", milestone.id))
-                .await?
+            let publication_pending = self.store().document_generation(&key).await?.is_some();
+            let title = renamed
                 .as_ref()
-                .and_then(Value::as_str)
-                == Some(hash.as_str())
-            {
-                continue;
+                .map(|(_, name)| name.as_str())
+                .or_else(|| properties["title"].as_str())
+                .context("invalid: Milestone title must be text")?;
+            let title_changed =
+                renamed.is_some() || (title != milestone.name && !publication_pending);
+            if title_changed {
+                ensure!(
+                    !title.trim().is_empty() && !title.contains(['\n', '\r']),
+                    "invalid: Milestone title must be nonblank single-line text"
+                );
+                ensure!(
+                    properties["revision"].as_i64() == Some(milestone.revision),
+                    "conflict: Milestone title revision changed"
+                );
             }
+            let hash = crate::store::hash_bytes(goal.as_bytes());
+            let goal_changed = goal != milestone.goal
+                && self
+                    .store()
+                    .metadata(&format!("delivery:{}", milestone.id))
+                    .await?
+                    .as_ref()
+                    .and_then(Value::as_str)
+                    != Some(hash.as_str());
             ensure!(
-                self.store().document_generation(&key).await?.is_none() || goal == milestone.goal,
+                !publication_pending || !goal_changed,
                 "conflict: Milestone goal was edited while document publication is pending"
             );
-            if goal != milestone.goal {
+            if goal_changed || title_changed {
+                let mut request = json!({"command":"milestone.update","milestone":milestone.id});
+                if goal_changed {
+                    request["goal"] = json!(goal);
+                }
+                if title_changed {
+                    request["title"] = json!(title);
+                    request["name"] = json!(title);
+                }
+                if let Some((relative, _)) = &renamed {
+                    Box::pin(self.validate_delivery_rename(milestone.revision, &request, relative))
+                        .await?;
+                }
                 let outcome = self
                     .store()
                     .execute(
-                        json!({"command":"milestone.update","milestone":milestone.id,"goal":goal}),
+                        request,
                         WriteOptions {
                             actor_ref: "user:obsidian".into(),
                             expected_revision: Some(milestone.revision),
