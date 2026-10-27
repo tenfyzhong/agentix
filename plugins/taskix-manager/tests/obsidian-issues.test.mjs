@@ -122,6 +122,22 @@ test("direct managed Issues folder exposes New Issue and reads registered Milest
     f.workspaceEvents.get("file-menu")({ addItem() { assert.fail("nested folder"); } }, { path: `${folder.path}/nested`, children: [] });
 });
 
+test("new_issue_excludes_completed_milestones_and_preserves_other_options", async () => {
+    for (const statuses of [["PLANNED", "COMPLETED", "ACTIVE", "CANCELLED"], ["COMPLETED"], []]) {
+        const f = await connectionFixture();
+        f.plugin.engine = { directory: "11-Agents", watches: () => true };
+        let options;
+        f.plugin.openIssueDialog = (_project, _folder, milestones) => { options = milestones; };
+        const pending = f.plugin.prepareIssue("prj_demo", "11-Agents/Projects/Demo/Issues");
+        f.reply(null, undefined, { id: "prj_demo", key: "Demo", revision: 3, archived_at: null });
+        await new Promise(resolve => setImmediate(resolve));
+        const milestones = statuses.map(status => ({ id: `milestone_${status}`, title: status, status }));
+        f.reply(null, undefined, milestones);
+        await pending;
+        assert.deepEqual(JSON.parse(JSON.stringify(options)), milestones.filter(item => item.status !== "COMPLETED"));
+    }
+});
+
 test("copied or archived Issues folder cannot create a requirement", async () => {
     for (const [project, folderPath] of [
         [{ id: "prj_demo", key: "Demo", revision: 3, archived_at: null }, "11-Agents/Projects/Copy/Issues"],
