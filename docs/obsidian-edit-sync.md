@@ -16,8 +16,13 @@ over its previous projected title.
 The importer also persists `issue_type` changes under the note revision guard.
 Supported values are `feature`, `bug`, `enhancement`, `documentation`, `question`,
 and `refactor`; an empty, null, or removed property clears the type. Invalid
-values, stale revisions, and type changes on terminal Issues reject import
-without overwriting the note. Reopen a terminal Issue before changing its type.
+values and stale revisions reject import without overwriting the note.
+Targeted synchronization also rejects type changes on terminal Issues; reopen
+a terminal Issue before changing its type. Full synchronization restores terminal
+Issue types from the database, including invalid property values, so a rejected
+type edit cannot block synchronization of unrelated documents. It preserves the
+terminal status and does not update the stored type or revision merely to repair
+the property.
 Pending database publication takes priority over previously projected type values.
 Repeated synchronization of an unchanged type does not advance the revision.
 The plugin's separate status reconciliation excludes `issue_type` from restored

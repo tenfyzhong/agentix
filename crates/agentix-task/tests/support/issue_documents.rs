@@ -1958,3 +1958,60 @@ async fn obsidian_issue_type_rejects_invalid_stale_and_terminal_edits() {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
     }
 }
+
+#[tokio::test]
+async fn full_sync_restores_terminal_issue_type_without_reopening_or_blocking_other_issues() {
+    for terminal in ["issue.approve", "issue.cancel"] {
+        let f = Fixture::new().await;
+        let item = create_issue(&f).await;
+        let id = item["id"].as_str().unwrap();
+        for command in ["issue.submit", terminal] {
+            f.service
+                .execute(
+                    json!({"command":command,"issue":id}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        let before = f.service.store().issue_record(id).await.unwrap();
+        let path = f.service.config().output_dir().join(&before.document_path);
+        let source = std::fs::read_to_string(&path).unwrap();
+        let other = create_issue(&f).await;
+        let other_id = other["id"].as_str().unwrap();
+        let other_path = f
+            .service
+            .config()
+            .output_dir()
+            .join(other["document_path"].as_str().unwrap());
+        for kind in ["feature", "unknown", "[]"] {
+            std::fs::write(
+                &path,
+                source.replace("issue_type: null", &format!("issue_type: {kind}")),
+            )
+            .unwrap();
+            let other_source = std::fs::read_to_string(&other_path).unwrap();
+            std::fs::write(
+                &other_path,
+                other_source.replace("issue_type: null", "issue_type: bug"),
+            )
+            .unwrap();
+            f.service.sync().await.unwrap();
+            let after = f.service.store().issue_record(id).await.unwrap();
+            assert_eq!(after.status, before.status);
+            assert_eq!(after.revision, before.revision);
+            assert_eq!(after.issue_type, before.issue_type);
+            assert_eq!(after.content_hash, before.content_hash);
+            assert!(
+                std::fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("issue_type: null")
+            );
+            assert_eq!(
+                serde_json::to_value(f.service.store().issue_record(other_id).await.unwrap())
+                    .unwrap()["issue_type"],
+                "bug"
+            );
+        }
+    }
+}
