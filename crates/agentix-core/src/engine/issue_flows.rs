@@ -43,7 +43,7 @@ impl Engine {
         if project.archived_at.is_some() {
             return Err(EngineError::InvalidAction);
         }
-        if action.command == "execute.workspace" {
+        if action.command == "execute.workspace" && action.session_id.is_none() {
             if !self.multiplexer_enabled || !self.agent.capabilities().workspace_runtime {
                 return Err(EngineError::InvalidAction);
             }
@@ -122,7 +122,7 @@ impl Engine {
         }
         let assigned_job = assignment["job_id"].as_str();
         if assigned_job.is_some()
-            && (action.command == "new_round"
+            && (action.command == "execute.workspace"
                 || action
                     .job_id
                     .as_deref()
@@ -155,7 +155,7 @@ impl Engine {
             .map_err(issue_error)?;
         let jobs = rows["items"].as_array().ok_or(EngineError::InvalidAction)?;
         let total = rows["total"].as_u64().ok_or(EngineError::InvalidAction)?;
-        if action.command != "new_round"
+        if action.command != "execute.workspace"
             && action.job_id.is_none()
             && assigned_job.is_none()
             && total > 1
@@ -164,7 +164,7 @@ impl Engine {
                 .show_issue_job_choices(conversation, owner, action, &rows)
                 .await;
         }
-        let existing = if action.command == "new_round" {
+        let existing = if action.command == "execute.workspace" {
             None
         } else if let Some(id) = action.job_id.as_deref().or(assigned_job) {
             let job = service.store().job_record(id).await.map_err(issue_error)?;
@@ -418,9 +418,6 @@ impl Engine {
         }
         let mut action = pending.action;
         action.session_id = Some(session.clone());
-        if workspace {
-            action.command = "new_round".into();
-        }
         Box::pin(self.execute_issue_round(conversation, &pending.owner, action)).await
     }
 

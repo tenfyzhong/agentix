@@ -342,7 +342,7 @@ async fn readonly_issue_session_still_allows_milestone_edit_and_human_acceptance
 }
 
 #[tokio::test]
-async fn issue_new_round_preserves_the_sessions_existing_task_assignment() {
+async fn issue_details_omit_new_round_and_continue_the_existing_job() {
     let (_dir, service, _) = task_fixture().await;
     let state = service.store().snapshot().await.unwrap();
     let item = write(
@@ -361,19 +361,14 @@ async fn issue_new_round_preserves_the_sessions_existing_task_assignment() {
         .handle_inbound(input(&format!("/issue {}", item["id"].as_str().unwrap())))
         .await
         .unwrap();
-    click(&engine, button(&last(&channel), "New round")).await;
-    let token = button(&last(&channel), "thr_a");
     assert!(
-        engine
-            .handle_inbound(InboundEnvelope::action(
-                "new-round",
-                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
-                "owner",
-                token
-            ))
-            .await
-            .is_err()
+        !last(&channel)
+            .actions
+            .iter()
+            .any(|action| action.label == "New round")
     );
+    click(&engine, button(&last(&channel), "Continue")).await;
+    click(&engine, button(&last(&channel), "thr_a")).await;
     assert_eq!(
         service
             .store()
@@ -587,7 +582,14 @@ async fn job_completion_notice_keeps_issue_active_and_only_reaches_its_bound_con
         "{:?}",
         notices[0].1
     );
-    button(&notices[0].1, "New round");
+    button(&notices[0].1, "Open Issue");
+    assert!(
+        !notices[0]
+            .1
+            .actions
+            .iter()
+            .any(|action| action.label == "New round")
+    );
     assert_eq!(
         service
             .store()
