@@ -1,6 +1,49 @@
 use super::*;
 
 #[tokio::test]
+async fn project_board_orders_milestones_before_issues_jobs_and_tasks() {
+    let f = Fixture::new().await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Board.md");
+    for _ in 0..2 {
+        let board = std::fs::read_to_string(&path).unwrap();
+        let headings: Vec<_> = board
+            .lines()
+            .filter(|line| line.starts_with("## "))
+            .collect();
+        assert_eq!(
+            headings,
+            [
+                "## Milestones",
+                "## Issues",
+                "## Job board",
+                "## Task board"
+            ]
+        );
+        let milestones = board
+            .split("## Milestones\n")
+            .nth(1)
+            .unwrap()
+            .split("\n## ")
+            .next()
+            .unwrap();
+        let issues = board
+            .split("## Issues\n")
+            .nth(1)
+            .unwrap()
+            .split("\n## ")
+            .next()
+            .unwrap();
+        assert!(milestones.contains("/Milestone.base]]"));
+        assert!(issues.contains("/Issue.base#Issue board]]"));
+        f.service.sync().await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn generated_documents_migrate_duplicate_timestamps_and_keep_authored_content() {
     let f = Fixture::new().await;
     let task = f.task("Canonical dates").await;
