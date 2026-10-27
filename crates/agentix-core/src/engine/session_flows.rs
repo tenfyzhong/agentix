@@ -132,8 +132,8 @@ impl Engine {
                     "Browse Project issues; choose a Project when unattached.",
                 ),
                 (
-                    "/issue <id> | new -title \"Title\" [description]",
-                    "Create, read, edit, execute or accept an Issue.",
+                    "/issue <id> | new -title \"Title\" [-type <type>] [description]",
+                    "Create, read, edit, execute or accept an Issue. Optional -type: feature, bug, enhancement, documentation, question or refactor. Place -type before or after the description; use -- before literal text. Example: /issue new -title \"Login fails\" Details -type bug.",
                 ),
                 ("/milestones", "Browse Project milestones and their Issues."),
             ]);
