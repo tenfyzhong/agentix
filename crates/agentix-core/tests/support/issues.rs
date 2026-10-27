@@ -1244,3 +1244,119 @@ async fn issue_creation_reports_invalid_title_in_attached_conversation() {
     assert!(view.body.contains("title"), "{view:?}");
     assert!(service.store().snapshot().await.unwrap().issues.is_empty());
 }
+
+#[tokio::test]
+async fn issue_type_after_description_is_saved_through_project_picker() {
+    for kind in [
+        "feature",
+        "bug",
+        "enhancement",
+        "documentation",
+        "question",
+        "refactor",
+    ] {
+        for (description, expected) in [
+            (
+                format!("First line\n  Second line -type {kind}"),
+                "First line\n  Second line",
+            ),
+            (format!("First -type '{kind}' second"), "First second"),
+        ] {
+            let (_dir, service, _) = task_fixture().await;
+            let (engine, channel) = engine(service.clone()).await;
+            engine
+                .handle_inbound(input(&format!(
+                    "/issue new -title 'Login failure' {description}"
+                )))
+                .await
+                .unwrap();
+            click(&engine, button(&last(&channel), "demo")).await;
+            let state = service.store().snapshot().await.unwrap();
+            assert_eq!(
+                serde_json::to_value(&state.issues[0]).unwrap()["issue_type"],
+                kind
+            );
+            assert_eq!(
+                service
+                    .issue_content(&state.issues[0].id)
+                    .await
+                    .unwrap()
+                    .requirement,
+                expected
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn issue_type_after_description_rejects_invalid_missing_and_duplicate_values() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    for content in [
+        "Details -type unknown",
+        "Details -type",
+        "-type bug Details -type feature",
+    ] {
+        engine
+            .handle_inbound(input(&format!("/issue new -title Title {content}")))
+            .await
+            .unwrap();
+        assert_eq!(last(&channel).title, "Issue creation failed");
+        assert!(service.store().snapshot().await.unwrap().issues.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn issue_type_literals_in_description_are_preserved() {
+    for (content, expected) in [
+        (
+            "Document '-type bug' literally",
+            "Document '-type bug' literally",
+        ),
+        ("-- -type bug is literal", "-type bug is literal"),
+        ("Details -- -type bug", "Details -type bug"),
+        ("Quote 'example'-type bug", "Quote 'example'-type bug"),
+    ] {
+        let (_dir, service, _) = task_fixture().await;
+        let (engine, _channel) = engine(service.clone()).await;
+        engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+        engine
+            .handle_inbound(input(&format!("/issue new -title Title {content}")))
+            .await
+            .unwrap();
+        let state = service.store().snapshot().await.unwrap();
+        assert_eq!(state.issues.len(), 1);
+        assert!(state.issues[0].issue_type.is_none());
+        assert_eq!(
+            service
+                .issue_content(&state.issues[0].id)
+                .await
+                .unwrap()
+                .requirement,
+            expected
+        );
+    }
+}
+
+#[tokio::test]
+async fn issue_type_help_explains_syntax_and_supported_values() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, channel) = engine(service).await;
+    engine.handle_inbound(input("/help")).await.unwrap();
+    let help = last(&channel).body;
+    assert!(help.contains("-type <type>"));
+    for kind in [
+        "feature",
+        "bug",
+        "enhancement",
+        "documentation",
+        "question",
+        "refactor",
+    ] {
+        assert!(help.contains(kind), "missing {kind}");
+    }
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    engine.handle_inbound(input("/issues")).await.unwrap();
+    assert!(last(&channel).body.contains("-type <type>"));
+}

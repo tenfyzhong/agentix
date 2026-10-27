@@ -436,7 +436,7 @@ impl TaskBoardView<'_> {
         let mut view = OutboundView::text(
             "Project issues",
             format!(
-                "**Project:** {}\n**Issues ({total})**\nStatus: {}\n\nUse /issue new -title \"Title\" [description] to create a requirement.",
+                "**Project:** {}\n**Issues ({total})**\nStatus: {}\n\nUse /issue new -title \"Title\" [-type <type>] [description] to create a requirement.",
                 escape(&short(&project.name)),
                 status.map_or("All", issue_status_label)
             ),
@@ -1041,11 +1041,11 @@ impl TaskBoardView<'_> {
     }
 }
 
-fn parse_issue_creation(content: &str) -> Result<(&str, Option<IssueType>, &str), EngineError> {
+fn parse_issue_creation(content: &str) -> Result<(&str, Option<IssueType>, String), EngineError> {
     let mut remaining = content.trim();
     let mut title = None;
     let mut issue_type = None;
-    while remaining.starts_with('-') {
+    while remaining.starts_with('-') && remaining.split_whitespace().next() != Some("--") {
         let (option, tail) = remaining
             .split_once(char::is_whitespace)
             .ok_or_else(|| error("Issue options require a value"))?;
@@ -1076,7 +1076,54 @@ fn parse_issue_creation(content: &str) -> Result<(&str, Option<IssueType>, &str)
             "Issue title is required. Use /issue new -title \"Title\" [-type <type>] [description]",
         )
     })?;
-    Ok((title, issue_type, remaining))
+    let description = extract_description_type(remaining, &mut issue_type)?;
+    Ok((title, issue_type, description))
+}
+
+// Scan description tokens without rewriting quoted text or internal whitespace.
+// A standalone -- makes the rest literal, including option-looking words.
+fn extract_description_type(
+    mut remaining: &str,
+    issue_type: &mut Option<IssueType>,
+) -> Result<String, EngineError> {
+    let mut description = String::new();
+    while !remaining.is_empty() {
+        let token_end = if let Some(quote @ ('"' | '\'')) = remaining.chars().next() {
+            remaining[1..].find(quote).map_or(remaining.len(), |end| {
+                let quoted_end = end + 2;
+                quoted_end
+                    + remaining[quoted_end..]
+                        .find(char::is_whitespace)
+                        .unwrap_or(remaining.len() - quoted_end)
+            })
+        } else {
+            remaining
+                .find(char::is_whitespace)
+                .unwrap_or(remaining.len())
+        };
+        let token = &remaining[..token_end];
+        let tail = &remaining[token_end..];
+        if token == "--" {
+            description.push_str(tail.trim_start());
+            break;
+        }
+        if token == "-type" {
+            if issue_type.is_some() {
+                return Err(error("Repeated Issue option: -type."));
+            }
+            let (value, tail) = issue_option_value(tail.trim_start())?;
+            *issue_type = Some(serde_json::from_value(json!(value)).map_err(|_| {
+                error("Unknown Issue type. Choose feature, bug, enhancement, documentation, question or refactor.")
+            })?);
+            remaining = tail.trim_start();
+        } else {
+            let next = tail.trim_start();
+            let consumed = remaining.len() - next.len();
+            description.push_str(&remaining[..consumed]);
+            remaining = next;
+        }
+    }
+    Ok(description.trim_end().to_owned())
 }
 
 fn issue_option_value(input: &str) -> Result<(&str, &str), EngineError> {
