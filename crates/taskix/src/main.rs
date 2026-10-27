@@ -91,8 +91,10 @@ enum Command {
         #[command(subcommand)]
         action: ObsidianCommand,
     },
-    /// Check for missing Plan files and documents that are behind the event log.
+    /// Check service configuration, availability, Plan files and document synchronization.
     Doctor,
+    /// Inspect Memory and metrics service availability.
+    Status,
     /// Regenerate task documents from the current database state.
     Sync {
         /// Retry only pending document publications without a full rebuild.
@@ -679,6 +681,14 @@ async fn run(cli: &Cli) -> Result<Value> {
         #[cfg(not(any(unix, windows)))]
         bail!("service commands require Unix or Windows");
     }
+    if matches!(cli.command, Command::Doctor | Command::Status) {
+        #[cfg(any(unix, windows))]
+        return Ok(response(
+            service::diagnostics(cli, matches!(cli.command, Command::Doctor)).await?,
+        ));
+        #[cfg(not(any(unix, windows)))]
+        bail!("service commands require Unix or Windows");
+    }
     if let Command::Memory { action } = &cli.command {
         #[cfg(any(unix, windows))]
         return Ok(response(memory::run(cli, action).await?));
@@ -822,7 +832,6 @@ async fn dispatch_task_command(cli: &Cli, service: &Service) -> Result<Value> {
         Command::Conversation { action } => conversation(cli, service, action).await,
         Command::Issue { action } => issues::issue(cli, service, action).await,
         Command::Milestone { action } => issues::milestone(cli, service, action).await,
-        Command::Doctor => doctor(service).await,
         Command::Sync { pending } => {
             if *pending {
                 service.sync_pending_documents().await?;
@@ -846,7 +855,9 @@ async fn dispatch_task_command(cli: &Cli, service: &Service) -> Result<Value> {
         Command::Obsidian {
             action: ObsidianCommand::Snapshot,
         } => Ok(response(service.obsidian_snapshot().await?)),
-        Command::Serve
+        Command::Doctor
+        | Command::Status
+        | Command::Serve
         | Command::Reload
         | Command::Memory { .. }
         | Command::Event {

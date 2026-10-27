@@ -3,9 +3,12 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum MemoryCommand {
+    // Internal diagnostic actions reused by the top-level service commands.
     /// Inspect queue, index coverage and provider availability.
+    #[command(skip)]
     Status,
     /// Inspect service configuration and local availability without a model request.
+    #[command(skip)]
     Doctor,
     /// Restore one page of read-only project memory notes from the database.
     Sync {
