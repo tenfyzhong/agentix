@@ -310,3 +310,30 @@ test("Issue type edits and clearing trigger delivery without body changes", asyn
         assert.equal(f.requests.length, count);
     }
 });
+
+for (const reconcileOnly of [false, true]) {
+    test(`Issue type edits survive status reconciliation (reconcileOnly=${reconcileOnly})`, async t => {
+        const f = await fixture(); t.after(() => f.engine.dispose());
+        Object.assign(f.row, { kind: "issue", id: "issue_one", status: "ACTIVE" });
+        Object.assign(f.row.properties, { status: "ACTIVE", issue_type: null, milestone_id: "milestone_one" });
+        const file = f.files.get(f.row.path);
+        Object.assign(file, { id: f.row.id, status: "ACTIVE", issue_type: null,
+            milestone_id: "milestone_one", milestone: "[[Tasks/Projects/Demo/Milestones/MVP]]" });
+        f.io.execute = async args => {
+            f.calls.push(copy(args));
+            assert.equal(args[0], "milestone");
+            return { result: [{ id: "milestone_one", project_id: "prj_one",
+                document_path: "Projects/Demo/Milestones/MVP.md" }] };
+        };
+        await f.engine.initialize();
+        for (const value of ["feature", "bug", null]) {
+            file.issue_type = value;
+            f.row.properties.issue_type = value === null ? "feature" : null;
+            f.engine.observe(f.row.path, copy(file), reconcileOnly);
+            await f.engine.flush();
+            assert.equal(file.issue_type, value);
+            assert.equal(file.status, "ACTIVE");
+            assert.equal(file.revision, 1);
+        }
+    });
+}

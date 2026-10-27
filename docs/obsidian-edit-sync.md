@@ -20,6 +20,9 @@ values, stale revisions, and type changes on terminal Issues reject import
 without overwriting the note. Reopen a terminal Issue before changing its type.
 Pending database publication takes priority over previously projected type values.
 Repeated synchronization of an unchanged type does not advance the revision.
+The plugin's separate status reconciliation excludes `issue_type` from restored
+database properties, preserving pending type edits during status or Milestone
+checks and reconnect recovery until the delivery importer validates them.
 
 Renaming an Issue file in its existing directory also queues delivery. When the
 registered path is missing, the importer locates the single managed note with the

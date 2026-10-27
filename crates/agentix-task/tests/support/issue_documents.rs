@@ -1871,7 +1871,7 @@ async fn obsidian_issue_type_edits_and_clearing_persist_without_body_changes() {
         .output_dir()
         .join(item["document_path"].as_str().unwrap());
     for kind in [
-        "bug", "refactor", "", "feature", "null", "question", "removed",
+        "bug", "refactor", "", "feature", "null", "question", "removed", "bug", "\"\"",
     ] {
         let source = std::fs::read_to_string(&path).unwrap();
         let edited = source
@@ -1895,7 +1895,7 @@ async fn obsidian_issue_type_edits_and_clearing_persist_without_body_changes() {
             f.service.sync_delivery_document(id).await.unwrap();
         }
         let updated = f.service.store().issue_record(id).await.unwrap();
-        let expected = if kind.is_empty() || matches!(kind, "null" | "removed") {
+        let expected = if kind.is_empty() || matches!(kind, "null" | "removed" | "\"\"") {
             Value::Null
         } else {
             json!(kind)

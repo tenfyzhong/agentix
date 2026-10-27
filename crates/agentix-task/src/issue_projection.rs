@@ -640,6 +640,8 @@ impl Service {
             let publication_pending = self.store().document_generation(&key).await?.is_some();
             let issue_type: Option<crate::IssueType> = if publication_pending {
                 issue.issue_type
+            } else if properties["issue_type"].as_str() == Some("") {
+                None
             } else {
                 serde_json::from_value(properties["issue_type"].clone())
                     .context("invalid: unknown Issue type")?

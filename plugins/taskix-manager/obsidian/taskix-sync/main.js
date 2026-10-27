@@ -345,6 +345,9 @@ class SyncEngine {
             return;
         }
         const properties = { ...note.properties, status: note.status, revision: note.revision };
+        // Issue type is authored input for delayed delivery, not status rollback.
+        // Restoring its database value here can erase an edit before import.
+        if (note.kind === "issue") delete properties.issue_type;
         if (Object.entries(properties).every(([key, value]) => equal(file[key], value))) return;
         if (!this.disposed) {
             try {
