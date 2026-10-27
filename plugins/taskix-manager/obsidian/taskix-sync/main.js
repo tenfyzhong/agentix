@@ -721,12 +721,20 @@ class TaskixSyncPlugin extends Plugin {
         class IssueDialog extends Modal {
             onOpen() {
                 this.contentEl.createEl("h2", { text: "New Issue" });
-                const fields = { title: "", milestone: "" };
+                const fields = { title: "", milestone: "", issue_type: "" };
                 let key = randomUUID();
                 new Setting(this.contentEl).setName("Title").addText(text => text.onChange(value => {
                     if (value !== fields.title) key = randomUUID();
                     fields.title = value;
                 }));
+                new Setting(this.contentEl).setName("Type").addDropdown(dropdown => {
+                    dropdown.addOption("", "None");
+                    for (const type of ["feature", "bug", "enhancement", "documentation", "question", "refactor"]) dropdown.addOption(type, type);
+                    dropdown.onChange(value => {
+                        if (value !== fields.issue_type) key = randomUUID();
+                        fields.issue_type = value;
+                    });
+                });
                 new Setting(this.contentEl).setName("Milestone").addDropdown(dropdown => {
                     dropdown.addOption("", "None");
                     for (const milestone of milestones) dropdown.addOption(milestone.id, milestone.title);
@@ -768,6 +776,7 @@ class TaskixSyncPlugin extends Plugin {
         if (!fields.title?.trim()) throw new Error(`${kind} title is required.`);
         const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
         const args = [kind.toLowerCase(), "create", "--project", project.id, "--title", fields.title.trim(), "--idempotency-key", key];
+        if (kind === "Issue" && fields.issue_type) args.push("--type", fields.issue_type);
         if (kind === "Issue" && fields.milestone) args.push("--milestone", fields.milestone);
         if (kind === "Milestone" && fields.goal?.trim()) args.push("--goal", fields.goal.trim());
         const response = await runCli(settings, args, this.children);

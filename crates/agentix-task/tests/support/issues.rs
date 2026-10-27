@@ -1453,3 +1453,59 @@ async fn milestone_base_renames_registered_plural_file_preserving_custom_views()
         base
     );
 }
+
+#[tokio::test]
+async fn issue_type_is_validated_persisted_and_optional_for_legacy_issues() {
+    let f = Fixture::new().await;
+    for kind in [
+        "feature",
+        "bug",
+        "enhancement",
+        "documentation",
+        "question",
+        "refactor",
+    ] {
+        let item = f.service.execute(json!({"command":"issue.create","project":f.project,"title":"Typed issue","issue_type":kind}), WriteOptions::default()).await.unwrap().result;
+        assert_eq!(item["issue_type"], kind);
+        let stored = f
+            .service
+            .store()
+            .issue_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(serde_json::to_value(&stored).unwrap()["issue_type"], kind);
+        let document = f
+            .service
+            .config()
+            .document_path(std::path::Path::new(&stored.document_path))
+            .unwrap();
+        let doc = std::fs::read_to_string(document).unwrap();
+        let properties: Value = serde_yaml::from_str(doc.split("---").nth(1).unwrap()).unwrap();
+        assert_eq!(properties["issue_type"], kind);
+        let updated = f
+            .service
+            .execute(
+                json!({"command":"issue.update","issue":item["id"],"issue_type":null}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        assert!(updated["issue_type"].is_null());
+    }
+    for invalid in [json!("unknown"), json!("task"), json!(42), json!(["bug"])] {
+        assert!(f.service.execute(json!({"command":"issue.create","project":f.project,"title":"Invalid","issue_type":invalid}),WriteOptions::default()).await.is_err());
+    }
+    let item = issue(&f).await;
+    assert!(item["issue_type"].is_null());
+    let mut legacy = serde_json::to_value(
+        f.service
+            .store()
+            .issue_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    legacy.as_object_mut().unwrap().remove("issue_type");
+    assert!(serde_json::from_value::<agentix_task::Issue>(legacy).is_ok());
+}

@@ -32,6 +32,7 @@ impl Service {
             "formula.name",
             "project",
             "status",
+            "issue_type",
             "milestone",
             "updated_at"
         ]);
@@ -45,6 +46,7 @@ impl Service {
                 "formula.name":{"displayName":"Issue"},
                 "note.project":{"displayName":"Project"},
                 "note.status":{"displayName":"Status"},
+                "note.issue_type":{"displayName":"Type"},
                 "note.milestone":{"displayName":"Milestone"},
                 "note.updated_at":{"displayName":"Updated"}
             },
@@ -70,7 +72,7 @@ impl Service {
             json!({
                 "type":"kanban","name":name,"filters":filters,
                 "groupBy":{"property":"note.status","direction":"ASC"},
-                "groupOrder":statuses,"order":["formula.name","status"],"sort":completion_sort(),
+                "groupOrder":statuses,"order":if name == "Related Jobs" { json!(["formula.name","status"]) } else { json!(["formula.name","status","issue_type"]) },"sort":completion_sort(),
                 "hideEmptyColumns":false,"columnWidth":300
             })
         };

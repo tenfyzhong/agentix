@@ -120,6 +120,8 @@ pub(crate) fn apply(
         let milestone_id = optional_id(state, request, "milestone")?;
         milestone_project(state, milestone_id.as_deref(), &project.id)?;
         let issue = Issue {
+            issue_type: serde_json::from_value(request["issue_type"].clone())
+                .map_err(|_| anyhow::anyhow!("invalid: unknown Issue type"))?,
             id: request["id"]
                 .as_str()
                 .map_or_else(|| new_id("issue"), str::to_owned),
@@ -211,6 +213,15 @@ pub(crate) fn apply(
             )?;
             if request.get("milestone").is_some() {
                 issue.milestone_id = milestone;
+            }
+            if request.get("issue_type").is_some() {
+                let issue_type = serde_json::from_value(request["issue_type"].clone())
+                    .map_err(|_| anyhow::anyhow!("invalid: unknown Issue type"))?;
+                ensure!(
+                    !issue.status.terminal() || issue.issue_type == issue_type,
+                    "conflict: reopen terminal Issue before updating type"
+                );
+                issue.issue_type = issue_type;
             }
         }
         "issue.start" => {

@@ -287,7 +287,7 @@ async fn schema_nineteen_migrates_workspace_paths_and_preserves_history_and_curs
         .fetch_one(&migrated.pool)
         .await
         .unwrap();
-    assert_eq!(version, 25);
+    assert_eq!(version, 26);
     assert!(
         migrated
             .events(None, 0, 100)
@@ -575,7 +575,7 @@ async fn schema_sixteen_and_seventeen_upgrade_to_relative_document_paths() {
             .fetch_one(&reopened.pool)
             .await
             .unwrap();
-        assert_eq!(version, 25);
+        assert_eq!(version, 26);
         assert_eq!(
             reopened.snapshot().await.unwrap().projects,
             snapshot.projects
@@ -621,7 +621,7 @@ async fn assert_schema_fifteen_upgrade(has_memory: bool) {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(version, 25);
+    assert_eq!(version, 26);
     assert!(
         store.event_policy(None, None, None).await.unwrap()["enabled"]
             .as_bool()

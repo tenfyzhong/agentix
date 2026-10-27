@@ -4794,12 +4794,16 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__issue__subcmd__create)
-            opts="-h --title --name --requirement --acceptance --notes --milestone --unlink-milestone --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --type --clear-type --title --name --requirement --acceptance --notes --milestone --unlink-milestone --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --type)
+                    COMPREPLY=($(compgen -W "feature bug enhancement documentation question refactor" -- "${cur}"))
+                    return 0
+                    ;;
                 --title)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
@@ -5522,12 +5526,16 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__issue__subcmd__update)
-            opts="-h --title --name --requirement --acceptance --notes --milestone --unlink-milestone --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --type --clear-type --title --name --requirement --acceptance --notes --milestone --unlink-milestone --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --type)
+                    COMPREPLY=($(compgen -W "feature bug enhancement documentation question refactor" -- "${cur}"))
+                    return 0
+                    ;;
                 --title)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0

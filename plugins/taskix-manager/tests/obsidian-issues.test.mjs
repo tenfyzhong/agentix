@@ -145,9 +145,11 @@ test("Issue creation invokes the shared CLI template and opens the returned note
     f.plugin.app.vault.getAbstractFileByPath = candidate => candidate === file.path ? file : null;
     let opened;
     f.plugin.app.workspace.getLeaf = () => ({ openFile: async file => { opened = file; } });
-    const pending = f.plugin.createIssue({ id: "prj_demo", key: "Demo" }, "11-Agents/Projects/Demo/Issues", { title: "Login", milestone: "milestone_one" }, "create-once");
+    const pending = f.plugin.createIssue({ id: "prj_demo", key: "Demo" }, "11-Agents/Projects/Demo/Issues", { title: "Login", milestone: "milestone_one", issue_type: "bug" }, "create-once");
     assert.ok(f.requests.at(-1).args.includes("issue"));
     assert.ok(f.requests.at(-1).args.includes("--milestone"));
+    assert.ok(f.requests.at(-1).args.includes("--type"));
+    assert.ok(f.requests.at(-1).args.includes("bug"));
     assert.ok(f.requests.at(-1).args.includes("--idempotency-key"));
     assert.ok(f.requests.at(-1).args.includes("create-once"));
     f.reply(null, undefined, { id: "issue_one", project_id: "prj_demo", document_path: "Projects/Demo/Issues/261010-0001-Login.md" });
@@ -254,4 +256,40 @@ test("renaming an Issue note queues delivery under the new path with its stable 
     assert.equal(deliveries.length, 1);
     assert.equal(deliveries[0][0], f.file.path);
     assert.equal(deliveries[0][2].id, "issue_one");
+});
+
+test("Issue dialog offers type labels and submits the selected type", async () => {
+    const settings = [];
+    const Plugin = loadPlugin({
+        Modal: class {
+            constructor() { this.contentEl = { createEl() {}, empty() {} }; }
+            open() { this.onOpen(); }
+            close() {}
+        },
+        Setting: class {
+            constructor() { settings.push(this); }
+            setName(name) { this.name = name; return this; }
+            addText(callback) { callback({ onChange: handler => { this.change = handler; } }); return this; }
+            addDropdown(callback) {
+                this.options = [];
+                const dropdown = { addOption: (value, label) => { this.options.push([value, label]); return dropdown; }, onChange: handler => { this.change = handler; return dropdown; } };
+                callback(dropdown); return this;
+            }
+            addButton(callback) {
+                const button = { setButtonText: () => button, setCta: () => button, setDisabled: () => button, onClick: handler => { this.click = handler; return button; } };
+                callback(button); return this;
+            }
+        },
+    });
+    const plugin = new Plugin();
+    let saved;
+    plugin.createIssue = async (_project, _folder, fields) => { saved = { ...fields }; };
+    plugin.openIssueDialog({ id: "prj_demo" }, "Issues", []);
+    const type = settings.find(setting => setting.name === "Type");
+    assert.ok(type);
+    assert.deepEqual(type.options.map(option => option[0]), ["", "feature", "bug", "enhancement", "documentation", "question", "refactor"]);
+    settings.find(setting => setting.name === "Title").change("Login");
+    type.change("refactor");
+    await settings.find(setting => setting.click).click();
+    assert.equal(saved.issue_type, "refactor");
 });

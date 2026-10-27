@@ -374,3 +374,32 @@ fn milestone_cli_supports_manual_lifecycle_and_archive() {
         assert_eq!(cli.ok(&["milestone", command, id])["status"], status);
     }
 }
+
+#[test]
+fn issue_type_cli_creates_updates_and_clears_labels() {
+    let cli = Cli::new();
+    let project = cli.ok(&["project", "register", "--name", "Demo"]);
+    let item = cli.ok(&[
+        "issue",
+        "create",
+        "--project",
+        project["id"].as_str().unwrap(),
+        "--title",
+        "Typed",
+        "--type",
+        "bug",
+    ]);
+    assert_eq!(item["issue_type"], "bug");
+    let id = item["id"].as_str().unwrap();
+    assert_eq!(
+        cli.ok(&["issue", "update", id, "--type", "refactor"])["issue_type"],
+        "refactor"
+    );
+    assert!(cli.ok(&["issue", "update", id, "--clear-type"])["issue_type"].is_null());
+    assert_eq!(
+        cli.run(&["issue", "update", id, "--type", "task"])
+            .status
+            .code(),
+        Some(2)
+    );
+}

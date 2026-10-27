@@ -39,8 +39,45 @@ impl fmt::Display for IssueStatus {
     }
 }
 
+/// A single optional classification label, independent of Issue lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IssueType {
+    Feature,
+    Bug,
+    Enhancement,
+    Documentation,
+    Question,
+    Refactor,
+}
+
+impl IssueType {
+    pub const ALL: [Self; 6] = [
+        Self::Feature,
+        Self::Bug,
+        Self::Enhancement,
+        Self::Documentation,
+        Self::Question,
+        Self::Refactor,
+    ];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Feature => "feature",
+            Self::Bug => "bug",
+            Self::Enhancement => "enhancement",
+            Self::Documentation => "documentation",
+            Self::Question => "question",
+            Self::Refactor => "refactor",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Issue {
+    #[serde(default)]
+    pub issue_type: Option<IssueType>,
     pub id: String,
     pub project_id: String,
     pub milestone_id: Option<String>,
