@@ -293,3 +293,47 @@ test("Issue dialog offers type labels and submits the selected type", async () =
     await settings.find(setting => setting.click).click();
     assert.equal(saved.issue_type, "refactor");
 });
+
+test("Issue type edits and clearing trigger delivery without body changes", async t => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    f.plugin.engine = { watches: () => true, flush: async () => {}, disposed: false, dispose() {} };
+    const source = ["requirement", "acceptance", "notes"].map(key => `<!-- taskix:${key}:start -->\nText\n<!-- taskix:${key}:end -->`).join("\n");
+    const props = { id: "issue_one", title: "Title", "taskix-generated": true };
+    const path = "11-Agents/Projects/Demo/Issues/One.md";
+    let count = 0;
+    for (const issue_type of [null, "bug", "refactor", null]) {
+        const pending = f.plugin.syncDelivery(path, source, { ...props, issue_type });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(f.requests.length, ++count);
+        f.reply(null, undefined, { id: props.id }); await pending;
+        await f.plugin.syncDelivery(path, source, { ...props, issue_type });
+        assert.equal(f.requests.length, count);
+    }
+});
+
+for (const reconcileOnly of [false, true]) {
+    test(`Issue type edits survive status reconciliation (reconcileOnly=${reconcileOnly})`, async t => {
+        const f = await fixture(); t.after(() => f.engine.dispose());
+        Object.assign(f.row, { kind: "issue", id: "issue_one", status: "ACTIVE" });
+        Object.assign(f.row.properties, { status: "ACTIVE", issue_type: null, milestone_id: "milestone_one" });
+        const file = f.files.get(f.row.path);
+        Object.assign(file, { id: f.row.id, status: "ACTIVE", issue_type: null,
+            milestone_id: "milestone_one", milestone: "[[Tasks/Projects/Demo/Milestones/MVP]]" });
+        f.io.execute = async args => {
+            f.calls.push(copy(args));
+            assert.equal(args[0], "milestone");
+            return { result: [{ id: "milestone_one", project_id: "prj_one",
+                document_path: "Projects/Demo/Milestones/MVP.md" }] };
+        };
+        await f.engine.initialize();
+        for (const value of ["feature", "bug", null]) {
+            file.issue_type = value;
+            f.row.properties.issue_type = value === null ? "feature" : null;
+            f.engine.observe(f.row.path, copy(file), reconcileOnly);
+            await f.engine.flush();
+            assert.equal(file.issue_type, value);
+            assert.equal(file.status, "ACTIVE");
+            assert.equal(file.revision, 1);
+        }
+    });
+}

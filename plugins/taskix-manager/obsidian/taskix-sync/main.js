@@ -345,6 +345,9 @@ class SyncEngine {
             return;
         }
         const properties = { ...note.properties, status: note.status, revision: note.revision };
+        // Issue type is authored input for delayed delivery, not status rollback.
+        // Restoring its database value here can erase an edit before import.
+        if (note.kind === "issue") delete properties.issue_type;
         if (Object.entries(properties).every(([key, value]) => equal(file[key], value))) return;
         if (!this.disposed) {
             try {
@@ -621,7 +624,7 @@ class TaskixSyncPlugin extends Plugin {
                 if (starts.length !== 1 || ends.length !== 1 || starts[0] >= ends[0]) throw new Error(`Restore ${key} markers before sync.`);
                 return lines.slice(starts[0] + 1, ends[0]).join("\n");
             });
-            const body = JSON.stringify(properties.id.startsWith("issue_") ? [properties.title, ...bodies] : bodies);
+            const body = JSON.stringify(properties.id.startsWith("issue_") ? [properties.title, properties.issue_type ?? null, ...bodies] : bodies);
             if (this.deliveryBodies.get(filePath) === body) { acknowledge(); return; }
             await engine.flush();
             if (engine !== this.engine || engine.disposed || this.stopped) return;

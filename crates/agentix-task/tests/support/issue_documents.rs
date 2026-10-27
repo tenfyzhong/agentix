@@ -1859,3 +1859,102 @@ async fn obsidian_issue_filename_rename_rejects_stale_foreign_and_conflicting_ed
         );
     }
 }
+
+#[tokio::test]
+async fn obsidian_issue_type_edits_and_clearing_persist_without_body_changes() {
+    let f = Fixture::new().await;
+    let item = create_issue(&f).await;
+    let id = item["id"].as_str().unwrap();
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(item["document_path"].as_str().unwrap());
+    for kind in [
+        "bug", "refactor", "", "feature", "null", "question", "removed", "bug", "\"\"",
+    ] {
+        let source = std::fs::read_to_string(&path).unwrap();
+        let edited = source
+            .lines()
+            .filter(|line| kind != "removed" || !line.starts_with("issue_type:"))
+            .map(|line| {
+                if line.starts_with("issue_type:") {
+                    format!("issue_type: {kind}")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        assert_ne!(source, edited);
+        std::fs::write(&path, edited).unwrap();
+        if kind == "removed" {
+            f.service.sync().await.unwrap();
+        } else {
+            f.service.sync_delivery_document(id).await.unwrap();
+        }
+        let updated = f.service.store().issue_record(id).await.unwrap();
+        let expected = if kind.is_empty() || matches!(kind, "null" | "removed" | "\"\"") {
+            Value::Null
+        } else {
+            json!(kind)
+        };
+        assert_eq!(
+            serde_json::to_value(&updated).unwrap()["issue_type"],
+            expected
+        );
+        assert_eq!(updated.content_hash, item["content_hash"]);
+        let revision = updated.revision;
+        f.service.sync_delivery_document(id).await.unwrap();
+        assert_eq!(
+            f.service.store().issue_record(id).await.unwrap().revision,
+            revision
+        );
+    }
+}
+
+#[tokio::test]
+async fn obsidian_issue_type_rejects_invalid_stale_and_terminal_edits() {
+    for case in ["task", "unknown", "42", "[]", "stale", "terminal"] {
+        let f = Fixture::new().await;
+        let mut item = create_issue(&f).await;
+        let id = item["id"].as_str().unwrap().to_owned();
+        if case == "terminal" {
+            item = f
+                .service
+                .execute(
+                    json!({"command":"issue.cancel","issue":id}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap()
+                .result;
+        }
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(item["document_path"].as_str().unwrap());
+        let source = std::fs::read_to_string(&path).unwrap();
+        let kind = if matches!(case, "stale" | "terminal") {
+            "bug"
+        } else {
+            case
+        };
+        let mut edited = source.replace("issue_type: null", &format!("issue_type: {kind}"));
+        if case == "stale" {
+            edited = edited.replace("revision: 1", "revision: 0");
+        }
+        assert_ne!(source, edited);
+        std::fs::write(&path, &edited).unwrap();
+        assert!(
+            f.service.sync_delivery_document(&id).await.is_err(),
+            "{case}"
+        );
+        let stored = f.service.store().issue_record(&id).await.unwrap();
+        assert!(stored.issue_type.is_none());
+        assert_eq!(stored.revision, item["revision"]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    }
+}
