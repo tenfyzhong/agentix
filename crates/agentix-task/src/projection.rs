@@ -1053,9 +1053,9 @@ impl Service {
         );
         doc.push_str(&Self::header(&title));
         doc.push_str(&format!(
-            "\n## Issues\n\n![[{}#Issue board]]\n\n## Milestones\n\n![[{}]]\n",
-            self.base_link(&format!("{}/Issue.base", project.document_directory())),
-            self.base_link(&format!("{}/Milestone.base", project.document_directory()))
+            "\n## Milestones\n\n![[{}]]\n\n## Issues\n\n![[{}#Issue board]]\n",
+            self.base_link(&format!("{}/Milestone.base", project.document_directory())),
+            self.base_link(&format!("{}/Issue.base", project.document_directory()))
         ));
         for (kind, statuses) in [
             ("Job", json!(crate::JobStatus::ALL)),
