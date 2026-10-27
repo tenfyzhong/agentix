@@ -293,3 +293,20 @@ test("Issue dialog offers type labels and submits the selected type", async () =
     await settings.find(setting => setting.click).click();
     assert.equal(saved.issue_type, "refactor");
 });
+
+test("Issue type edits and clearing trigger delivery without body changes", async t => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    f.plugin.engine = { watches: () => true, flush: async () => {}, disposed: false, dispose() {} };
+    const source = ["requirement", "acceptance", "notes"].map(key => `<!-- taskix:${key}:start -->\nText\n<!-- taskix:${key}:end -->`).join("\n");
+    const props = { id: "issue_one", title: "Title", "taskix-generated": true };
+    const path = "11-Agents/Projects/Demo/Issues/One.md";
+    let count = 0;
+    for (const issue_type of [null, "bug", "refactor", null]) {
+        const pending = f.plugin.syncDelivery(path, source, { ...props, issue_type });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(f.requests.length, ++count);
+        f.reply(null, undefined, { id: props.id }); await pending;
+        await f.plugin.syncDelivery(path, source, { ...props, issue_type });
+        assert.equal(f.requests.length, count);
+    }
+});

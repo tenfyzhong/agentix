@@ -636,14 +636,27 @@ impl Service {
             if self.issue_content_path(&issue)?.exists() {
                 continue;
             }
-            // Pending publication still carries the previous projected title.
+            // Pending publication still carries the previous projected metadata.
+            let publication_pending = self.store().document_generation(&key).await?.is_some();
+            let issue_type: Option<crate::IssueType> = if publication_pending {
+                issue.issue_type
+            } else {
+                serde_json::from_value(properties["issue_type"].clone())
+                    .context("invalid: unknown Issue type")?
+            };
+            let type_changed = issue_type != issue.issue_type;
+            if type_changed {
+                ensure!(
+                    properties["revision"].as_i64() == Some(issue.revision),
+                    "conflict: Issue type revision changed"
+                );
+            }
             let title = renamed
                 .as_ref()
                 .map(|(_, name)| name.as_str())
                 .or_else(|| properties["title"].as_str())
                 .context("invalid: Issue title must be text")?;
-            let title_changed = renamed.is_some()
-                || (title != issue.name && self.store().document_generation(&key).await?.is_none());
+            let title_changed = renamed.is_some() || (title != issue.name && !publication_pending);
             if title_changed {
                 ensure!(
                     !title.trim().is_empty() && !title.contains(['\n', '\r']),
@@ -654,9 +667,12 @@ impl Service {
                     "conflict: Issue title revision changed"
                 );
             }
-            if source_hash != issue.content_hash || title_changed {
+            if source_hash != issue.content_hash || title_changed || type_changed {
                 let mut request = json!({"command":"issue.update","issue":issue.id,
                     "content_hash":source_hash,"review_content_hash":content.review_hash()});
+                if type_changed {
+                    request["issue_type"] = json!(issue_type);
+                }
                 if title_changed {
                     request["title"] = json!(title);
                     request["name"] = json!(title);
