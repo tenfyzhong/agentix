@@ -49,7 +49,7 @@ fn message_count(streaming: bool, payload_len: usize) -> usize {
 }
 
 // Independent binary axes of the diagnostic transport matrix.
-#[allow(clippy::fn_params_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools, clippy::too_many_lines)]
 async fn sample(
     front_tcp: bool,
     back_tcp: bool,
@@ -80,6 +80,15 @@ async fn sample(
             let payload = server_payload.clone();
             jobs.spawn(async move {
                 let mut ws = tokio_tungstenite::accept_async(io).await.unwrap();
+                let start: serde_json::Value =
+                    serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap())
+                        .unwrap();
+                ws.send(Message::text(
+                    json!({"id":start["id"],"result":{"thread":{"id":start["params"]["cwd"]}}})
+                        .to_string(),
+                ))
+                .await
+                .unwrap();
                 if streaming {
                     assert!(ws.next().await.unwrap().unwrap().is_text());
                     for _ in 0..count {
@@ -93,6 +102,19 @@ async fn sample(
                         ws.send(msg).await.unwrap();
                     }
                 }
+                let probe: serde_json::Value =
+                    serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap())
+                        .unwrap();
+                ws.send(Message::text(
+                    json!({"id":probe["id"],"result":{"thread":{"id":probe["params"]["cwd"]}}})
+                        .to_string(),
+                ))
+                .await
+                .unwrap();
+                assert_eq!(
+                    ws.next().await.unwrap().unwrap().to_text().unwrap(),
+                    "finished"
+                );
             });
         }
         while let Some(result) = jobs.join_next().await {
@@ -119,10 +141,21 @@ async fn sample(
     }
     let handshake_us = handshake.elapsed().as_secs_f64() * 1_000_000.0
         / f64::from(u32::try_from(clients).unwrap());
+    for (i, ws) in sockets.iter_mut().enumerate() {
+        ws.send(Message::text(
+            json!({"id":1,"method":"thread/start","params":{"cwd":format!("before_{i}")}})
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+        assert!(ws.next().await.unwrap().unwrap().is_text());
+    }
     let start = Instant::now();
+    let cpu = cpu_time::ProcessTime::now();
     let mut jobs = tokio::task::JoinSet::new();
-    for mut ws in sockets {
+    for (i, mut ws) in sockets.into_iter().enumerate() {
         let payload = payload.clone();
+        let registry = proxy.as_ref().map(CodexProxy::registry);
         jobs.spawn(async move {
             let mut timings = Vec::new();
             if streaming {
@@ -140,6 +173,23 @@ async fn sample(
             if streaming {
                 ws.send(Message::text("done")).await.unwrap();
             }
+            let after = format!("after_{i}");
+            ws.send(Message::text(
+                json!({"id":2,"method":"thread/start","params":{"cwd":after}}).to_string(),
+            ))
+            .await
+            .unwrap();
+            assert!(ws.next().await.unwrap().unwrap().is_text());
+            if let Some(registry) = registry {
+                assert!(
+                    registry
+                        .snapshot()
+                        .iter()
+                        .any(|c| c.sessions.contains(&after)),
+                    "session observation stopped during benchmark"
+                );
+            }
+            ws.send(Message::text("finished")).await.unwrap();
             timings
         });
     }
@@ -148,12 +198,13 @@ async fn sample(
         timings.extend(result.unwrap());
     }
     let elapsed = start.elapsed();
+    let cpu_ms = cpu.elapsed().as_secs_f64() * 1000.0;
     server.await.unwrap();
     if let Some(proxy) = proxy {
         proxy.shutdown().await;
     }
     timings.sort_unstable();
-    json!({"front":if front_tcp {"ws"} else {"unix"},"upstream":if back_tcp {"ws"} else {"unix"},"proxied":proxied,"clients":clients,"payload_bytes":payload.len(),"streaming":streaming,"messages":count*clients,"elapsed_ms":elapsed.as_secs_f64()*1000.0,"mib_per_second":f64::from(u32::try_from(payload.len()*count*clients).unwrap())/1_048_576.0/elapsed.as_secs_f64(),"p50_us":timings[timings.len()/2],"p99_us":timings[timings.len()*99/100],"handshake_us":handshake_us})
+    json!({"front":if front_tcp {"ws"} else {"unix"},"upstream":if back_tcp {"ws"} else {"unix"},"proxied":proxied,"clients":clients,"payload_bytes":payload.len(),"streaming":streaming,"messages":count*clients,"elapsed_ms":elapsed.as_secs_f64()*1000.0,"mib_per_second":f64::from(u32::try_from(payload.len()*count*clients).unwrap())/1_048_576.0/elapsed.as_secs_f64(),"p50_us":timings[timings.len()/2],"p95_us":timings[timings.len()*95/100],"p99_us":timings[timings.len()*99/100],"cpu_ms":cpu_ms,"tracking_verified":true,"handshake_us":handshake_us})
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

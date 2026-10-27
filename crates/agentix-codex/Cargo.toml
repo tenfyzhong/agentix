@@ -33,6 +33,7 @@ url.workspace = true
 nix = { version = "0.31", default-features = false, features = ["user", "socket", "process", "net", "fs", "signal"] }
 
 [dev-dependencies]
+cpu-time = "1.0.0"
 tokio = { workspace = true, features = ["test-util"] }
 agentix-core = { path = "../agentix-core" }
 tempfile = "3.23"

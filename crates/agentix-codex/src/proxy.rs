@@ -435,14 +435,21 @@ async fn forward_direction<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     } else {
         Role::Client
     });
-    let text = |text: &str| {
-        if from_client {
+    let text = |text: &str, projected: bool| {
+        if projected {
+            registration
+                .registry
+                .projected_frame(registration.id, text, from_client);
+        } else if from_client {
             registration.registry.client_frame(registration.id, text);
         } else {
             registration.registry.server_frame(registration.id, text);
         }
     };
-    let open = observer.feed(&pending, text).unwrap_or(true);
+    let open = observer.feed_with(&pending, text).unwrap_or_else(|_| {
+        registration.registry.disconnect(registration.id);
+        true
+    });
     destination.write_all(&pending).await?;
     if !open {
         closed.cancel();
@@ -454,7 +461,10 @@ async fn forward_direction<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             return Ok(());
         }
         let bytes = &buffer[..count];
-        let open = observer.feed(bytes, text).unwrap_or(true);
+        let open = observer.feed_with(bytes, text).unwrap_or_else(|_| {
+            registration.registry.disconnect(registration.id);
+            true
+        });
         destination.write_all(bytes).await?;
         if !open {
             closed.cancel();
