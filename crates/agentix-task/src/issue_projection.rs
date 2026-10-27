@@ -72,7 +72,7 @@ impl Service {
             json!({
                 "type":"kanban","name":name,"filters":filters,
                 "groupBy":{"property":"note.status","direction":"ASC"},
-                "groupOrder":statuses,"order":if name == "Related Jobs" { json!(["formula.name","status"]) } else { json!(["formula.name","status","issue_type"]) },"sort":completion_sort(),
+                "groupOrder":statuses,"order":if name == "Related Jobs" { json!(["formula.name","status"]) } else { json!(["formula.name","status","issue_type","milestone"]) },"sort":completion_sort(),
                 "hideEmptyColumns":false,"columnWidth":300
             })
         };
@@ -93,6 +93,40 @@ impl Service {
                 board("Milestone Issues",json!({"and":["file.hasTag(\"agent/issue\")","this.file.hasTag(\"agent/milestone\")","milestone_id == this.id"]}),json!(IssueStatus::ALL))
             ]
         });
+        Ok(format!(
+            "# taskix-generated: issues:{}\n{}",
+            project.id,
+            serde_yaml::to_string(&base)?
+        ))
+    }
+
+    fn migrate_issue_base(source: String, project: &Project) -> Result<String> {
+        let mut base: Value = serde_yaml::from_str(&source)?;
+        let Some(views) = base["views"].as_array_mut() else {
+            return Ok(source);
+        };
+        let mut changed = false;
+        for view in views {
+            if view["type"] != "kanban"
+                || !matches!(
+                    view["name"].as_str(),
+                    Some("Issue board" | "By Milestone" | "Milestone Issues")
+                )
+            {
+                continue;
+            }
+            if let Some(order) = view["order"].as_array_mut()
+                && !order
+                    .iter()
+                    .any(|column| column == "milestone" || column == "note.milestone")
+            {
+                order.push(json!("milestone"));
+                changed = true;
+            }
+        }
+        if !changed {
+            return Ok(source);
+        }
         Ok(format!(
             "# taskix-generated: issues:{}\n{}",
             project.id,
@@ -458,7 +492,9 @@ impl Service {
             return Ok(default);
         }
         let existing = std::fs::read_to_string(self.safe_path(source)?)?;
-        if kind == "milestone-base" {
+        if kind == "issue-base" {
+            Self::migrate_issue_base(existing, project)
+        } else if kind == "milestone-base" {
             Self::migrate_milestones_base(existing, project)
         } else {
             Ok(existing)
