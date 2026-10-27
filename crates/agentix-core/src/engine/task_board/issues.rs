@@ -1045,7 +1045,7 @@ fn parse_issue_creation(content: &str) -> Result<(&str, Option<IssueType>, &str)
     let mut remaining = content.trim();
     let mut title = None;
     let mut issue_type = None;
-    while remaining.starts_with("-") {
+    while remaining.starts_with('-') {
         let (option, tail) = remaining
             .split_once(char::is_whitespace)
             .ok_or_else(|| error("Issue options require a value"))?;
@@ -1094,7 +1094,7 @@ fn issue_option_value(input: &str) -> Result<(&str, &str), EngineError> {
         return Ok((&rest[..end], tail));
     }
     let (value, tail) = input.split_once(char::is_whitespace).unwrap_or((input, ""));
-    if value.is_empty() || value.starts_with("-") {
+    if value.is_empty() || value.starts_with('-') {
         return Err(error("Issue options require a value"));
     }
     Ok((value, tail))
