@@ -86,6 +86,8 @@ See the [Slack architecture and performance review](slack-review.md) for bounded
 
 ## Codex proxy transport and observation
 
+The October 2026 [bounded streaming observer comparison](codex-streaming-observer.md) measures observer CPU/RSS and a registry-verified relay matrix against the previous implementation, including raw results and remaining observed regressions.
+
 The local release benchmarks exercise the production proxy with reusable socket fixtures, without starting a model or touching the running shared app-server:
 
 ```sh

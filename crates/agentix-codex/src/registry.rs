@@ -188,6 +188,36 @@ impl ClientRegistry {
         }
     }
 
+    /// Large messages carry validated lifecycle metadata only. Never replay
+    /// truncated interactive requests or answers; content hints wake recovery.
+    pub(crate) fn projected_frame(&self, connection: u64, text: &str, from_client: bool) {
+        let Ok(value) = serde_json::from_str::<Value>(text) else {
+            return;
+        };
+        if from_client {
+            if value.get("method").is_none() {
+                self.observe_question_answer(connection, text);
+            }
+            if matches!(
+                value["method"].as_str(),
+                Some(
+                    "initialize"
+                        | "thread/start"
+                        | "thread/resume"
+                        | "thread/fork"
+                        | "thread/unsubscribe"
+                )
+            ) {
+                self.client_message(connection, &value);
+            }
+        } else if let Some(method) = value["method"].as_str() {
+            self.observe_content_frame(connection, method, text);
+        } else {
+            self.observe_async_question_acceptance(connection, &value);
+            self.server_message(connection, &value);
+        }
+    }
+
     fn observe_content_frame(&self, connection: u64, method: &str, text: &str) {
         if !(method.starts_with("item/")
             || method.starts_with("turn/")

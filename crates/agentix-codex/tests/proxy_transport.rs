@@ -680,6 +680,27 @@ async fn raw_pair() -> (tempfile::TempDir, CodexProxy, UnixStream, UnixStream) {
 }
 
 #[tokio::test]
+async fn framing_loss_retires_sessions_without_interrupting_forwarding() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (_d, proxy, mut cli, mut server) = raw_pair().await;
+    let registry = proxy.registry();
+    let id = registry.snapshot()[0].connection_id;
+    registry.client_frame(id, r#"{"id":1,"method":"thread/start"}"#);
+    registry.server_frame(id, r#"{"id":1,"result":{"thread":{"id":"stale"}}}"#);
+    assert_eq!(registry.snapshot()[0].sessions, ["stale"]);
+    let invalid = [0x83, 0];
+    server.write_all(&invalid).await.unwrap();
+    let mut received = [0; 2];
+    cli.read_exact(&mut received).await.unwrap();
+    assert_eq!(received, invalid);
+    assert!(
+        registry.snapshot().is_empty(),
+        "untrustworthy session ownership must be retired"
+    );
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
 async fn observer_errors_do_not_interrupt_either_direction() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -1297,4 +1318,71 @@ async fn cancelled_upstream_startup_removes_unready_child_socket() {
         !path.exists(),
         "cancelled startup left the unready socket behind"
     );
+}
+
+#[tokio::test]
+async fn oversized_native_new_lists_and_attaches_only_the_replacement() {
+    use agentix_domain::{AgentAdapter, SessionId};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let (d, proxy, mut cli, mut native_server) = raw_pair().await;
+        let registry = proxy.registry();
+        let id = registry.snapshot()[0].connection_id;
+        registry.client_frame(id, r#"{"id":1,"method":"thread/start"}"#);
+        registry.server_frame(id, r#"{"id":1,"result":{"thread":{"id":"old"}}}"#);
+        registry.client_frame(id, r#"{"id":2,"method":"thread/unsubscribe","params":{"threadId":"old"}}"#);
+        registry.server_frame(id, r#"{"id":2,"result":{"status":"unsubscribed"}}"#);
+        registry.client_frame(id, r#"{"id":3,"method":"thread/start"}"#);
+        let prefix = br#"{"result":{"thread":{"turns":[{"text":""#;
+        let suffix = br#""}],"id":"new"}},"id":3}"#;
+        let size = 65 * 1024 * 1024;
+        let mut header = vec![0x81, 127];
+        header.extend_from_slice(&((prefix.len()+size+suffix.len()) as u64).to_be_bytes());
+        let bytes = header.len()+prefix.len()+size+suffix.len();
+        let send = async {
+            native_server.write_all(&header).await.unwrap();
+            native_server.write_all(prefix).await.unwrap();
+            let block = vec![b'x'; 16*1024];
+            for _ in 0..size/block.len() { native_server.write_all(&block).await.unwrap(); }
+            native_server.write_all(suffix).await.unwrap();
+        };
+        let receive = async {
+            let mut remaining = bytes;
+            let mut block = vec![0; 16*1024];
+            while remaining > 0 {
+                let n = remaining.min(block.len());
+                cli.read_exact(&mut block[..n]).await.unwrap();
+                remaining -= n;
+            }
+        };
+        tokio::join!(send, receive);
+        assert_eq!(registry.snapshot()[0].sessions, ["new"]);
+        let upstream = d.path().join("read.sock");
+        let listener = UnixListener::bind(&upstream).unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                let value: Value = serde_json::from_str(&text).unwrap();
+                let result = match value["method"].as_str() {
+                    Some("initialize") => json!({}),
+                    Some("initialized") => continue,
+                    Some("thread/read" | "thread/resume") => json!({"thread":{"id":value["params"]["threadId"],"path":null,"createdAt":1,"updatedAt":2,"status":{"type":"idle"}}}),
+                    method => panic!("unexpected RPC: {method:?}"),
+                };
+                ws.send(Message::text(json!({"id":value["id"],"result":result}).to_string())).await.unwrap();
+            }
+        });
+        let client = agentix_codex::CodexClient::connect_with_registry(
+            agentix_codex::CodexEndpoint::from_socket_path(&upstream).unwrap(),
+            std::path::Path::new("codex"), d.path(), false, registry,
+        ).await.unwrap();
+        let sessions = client.list_sessions(None, 25).await.unwrap().sessions;
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id.as_str(), "new");
+        client.attach(&SessionId::new("new")).await.unwrap();
+        assert!(client.attach(&SessionId::new("old")).await.unwrap_err().to_string().contains("no connected Codex client"));
+        server.abort();
+        proxy.shutdown().await;
+    }).await.unwrap();
 }

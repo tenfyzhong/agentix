@@ -94,6 +94,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
+ "cpu-time",
  "dirs",
  "futures-util",
  "jsonwebtoken",
