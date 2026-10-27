@@ -146,6 +146,9 @@ preserving saved views and updating the generated Board embed.
 
 New `Milestone.base` tables default to PLANNED or ACTIVE within their Project and
 include both the Milestones table and a Milestone board grouped by status. The board
+is the default view. Both generated views sort by `order` ascending, then `created_at`
+descending. Synchronization upgrades the previous default view order and filename
+sort while preserving custom views, filters, and non-default sorting. The board
 orders columns as PLANNED, ACTIVE, COMPLETED, CANCELLED and shows due dates and Issue
 counts. Its four status columns remain visible, including empty columns, and its
 contents are not restricted by the table's open-stage filter. Dragging uses the

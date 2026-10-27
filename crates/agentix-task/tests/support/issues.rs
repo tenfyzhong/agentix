@@ -1078,13 +1078,13 @@ async fn milestone_legacy_defaults_and_board_show_only_open_stages() {
     let board = std::fs::read_to_string(root.join("Projects/demo/Milestone.base")).unwrap();
     let yaml: serde_json::Value = serde_yaml::from_str(&board).unwrap();
     assert!(
-        yaml["views"][0]["filters"]["and"]
+        yaml["views"][1]["filters"]["and"]
             .as_array()
             .unwrap()
             .contains(&json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}))
     );
     assert!(
-        yaml["views"][0]["order"]
+        yaml["views"][1]["order"]
             .as_array()
             .unwrap()
             .contains(&json!("status"))
@@ -1148,7 +1148,7 @@ async fn milestone_existing_default_base_upgrades_and_preserves_later_filters() 
         .join("Projects/demo/Milestone.base");
     let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     base["filters"] = json!({"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(f.project))]});
-    base["views"][0]["order"]
+    base["views"][1]["order"]
         .as_array_mut()
         .unwrap()
         .retain(|column| column != "status");
@@ -1156,13 +1156,13 @@ async fn milestone_existing_default_base_upgrades_and_preserves_later_filters() 
     f.service.sync().await.unwrap();
     let upgraded: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert!(
-        upgraded["views"][0]["filters"]["and"]
+        upgraded["views"][1]["filters"]["and"]
             .as_array()
             .unwrap()
             .contains(&json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}))
     );
     let mut customized = upgraded;
-    customized["views"][0]["filters"]["and"]
+    customized["views"][1]["filters"]["and"]
         .as_array_mut()
         .unwrap()
         .pop();
@@ -1307,6 +1307,65 @@ async fn milestone_cancelled_archive_requires_restore_before_reopening() {
 }
 
 #[tokio::test]
+async fn milestone_base_defaults_to_board_sorted_by_order_then_newest_creation() {
+    let f = Fixture::new().await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Milestone.base");
+    let base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(base["views"][0]["name"], "Milestone board");
+    for view in base["views"].as_array().unwrap() {
+        assert_eq!(
+            view["sort"],
+            json!([
+                {"column":"order","direction":"ASC"},
+                {"column":"created_at","direction":"DESC"}
+            ])
+        );
+    }
+}
+
+#[tokio::test]
+async fn milestone_base_migrates_default_view_and_sort_without_losing_customizations() {
+    let f = Fixture::new().await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Milestone.base");
+    let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let views = base["views"].as_array_mut().unwrap();
+    views.sort_by_key(|view| view["type"] == "kanban");
+    for view in views.iter_mut() {
+        view["sort"] =
+            json!([{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}]);
+    }
+    views[1]["columnWidth"] = json!(420);
+    views[1]["filters"] = json!("order > 0");
+    let custom =
+        json!({"name":"Custom","type":"table","sort":[{"column":"due_date","direction":"DESC"}]});
+    views.push(custom.clone());
+    std::fs::write(&path, serde_yaml::to_string(&base).unwrap()).unwrap();
+    f.service.sync().await.unwrap();
+    let migrated: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(migrated["views"][0]["name"], "Milestone board");
+    assert_eq!(migrated["views"][0]["columnWidth"], 420);
+    assert_eq!(migrated["views"][0]["filters"], "order > 0");
+    for view in &migrated["views"].as_array().unwrap()[..2] {
+        assert_eq!(
+            view["sort"],
+            json!([{"column":"order","direction":"ASC"},{"column":"created_at","direction":"DESC"}])
+        );
+    }
+    assert_eq!(migrated["views"][2], custom);
+    let content = std::fs::read_to_string(&path).unwrap();
+    f.service.sync().await.unwrap();
+    assert_eq!(std::fs::read_to_string(path).unwrap(), content);
+}
+
+#[tokio::test]
 async fn milestone_base_board_has_all_statuses_while_table_defaults_to_open() {
     let f = Fixture::new().await;
     let path = f
@@ -1345,7 +1404,7 @@ async fn milestone_base_board_has_all_statuses_while_table_defaults_to_open() {
         json!({"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(f.project))]})
     );
     assert!(
-        base["views"][0]["filters"]["and"]
+        base["views"][1]["filters"]["and"]
             .as_array()
             .unwrap()
             .contains(&json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}))
@@ -1397,12 +1456,12 @@ async fn milestone_base_upgrade_moves_default_global_status_filter_to_table() {
     let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let open = json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]});
     base["filters"] = json!({"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(f.project)),open]});
-    base["views"][0].as_object_mut().unwrap().remove("filters");
+    base["views"][1].as_object_mut().unwrap().remove("filters");
     std::fs::write(&path, serde_yaml::to_string(&base).unwrap()).unwrap();
     f.service.sync().await.unwrap();
     let upgraded: Value = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(upgraded["filters"]["and"].as_array().unwrap().len(), 2);
-    assert_eq!(upgraded["views"][0]["filters"], json!({"and":[open]}));
+    assert_eq!(upgraded["views"][1]["filters"], json!({"and":[open]}));
     assert!(
         upgraded["views"]
             .as_array()

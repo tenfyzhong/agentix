@@ -134,12 +134,16 @@ impl Service {
         ))
     }
 
+    fn milestone_sort() -> Value {
+        json!([{"column":"order","direction":"ASC"},{"column":"created_at","direction":"DESC"}])
+    }
+
     fn milestone_status_board() -> Value {
         json!({"type":"kanban","name":"Milestone board",
             "groupBy":{"property":"note.status","direction":"ASC"},
             "groupOrder":["PLANNED","ACTIVE","COMPLETED","CANCELLED"],
             "order":["formula.name","status","due_date","completed_issues","total_issues","cancelled_issues"],
-            "sort":[{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}],
+            "sort":Self::milestone_sort(),
             "hideEmptyColumns":false,"columnWidth":300})
     }
 
@@ -193,6 +197,30 @@ impl Service {
             views.push(Self::milestone_status_board());
             changed = true;
         }
+        let legacy_sort =
+            json!([{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}]);
+        for view in views.iter_mut() {
+            if matches!(
+                view["name"].as_str(),
+                Some("Milestones" | "Milestone board")
+            ) && view["sort"] == legacy_sort
+            {
+                view["sort"] = Self::milestone_sort();
+                changed = true;
+            }
+        }
+        if views
+            .first()
+            .is_some_and(|view| view["name"] == "Milestones")
+            && let Some(index) = views
+                .iter()
+                .position(|view| view["name"] == "Milestone board" && view["type"] == "kanban")
+            && index != 0
+        {
+            let board = views.remove(index);
+            views.insert(0, board);
+            changed = true;
+        }
         if !changed {
             return Ok(source);
         }
@@ -208,8 +236,8 @@ impl Service {
 
     fn milestones_base(project: &Project) -> Result<String> {
         let base = json!({"filters":{"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(project.id))]},
-            "formulas":{"name":NAME_FORMULA},"views":[{"type":"table","name":"Milestones","filters":{"and":[{"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}]},"order":["formula.name","status","order","due_date","completed_issues","total_issues","cancelled_issues"],
-                "sort":[{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}]},Self::milestone_status_board()]});
+            "formulas":{"name":NAME_FORMULA},"views":[Self::milestone_status_board(),{"type":"table","name":"Milestones","filters":{"and":[{"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}]},"order":["formula.name","status","order","due_date","completed_issues","total_issues","cancelled_issues"],
+                "sort":Self::milestone_sort()}]});
         Ok(format!(
             "# taskix-generated: milestones:{}\n{}",
             project.id,
