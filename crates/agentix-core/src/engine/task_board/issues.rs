@@ -240,15 +240,42 @@ impl TaskBoardView<'_> {
         owner: &str,
         intent: IssueProjectIntent,
     ) -> Result<(), EngineError> {
-        if let IssueProjectIntent::Create { content, .. } = &intent {
-            parse_issue_creation(content)?;
-        }
-        if let Some(project) = self.current_issue_project(conversation).await? {
-            self.issue_project(conversation, owner, &project.id, intent)
-                .await
-        } else {
-            self.show_issue_projects(conversation, owner, intent, 0)
-                .await
+        let creating = matches!(&intent, IssueProjectIntent::Create { .. });
+        // Keep the intake future out of the shared inbound handler's stack frame.
+        let result = Box::pin(async {
+            if let IssueProjectIntent::Create { content, .. } = &intent {
+                parse_issue_creation(content)?;
+            }
+            if let Some(project) = self.current_issue_project(conversation).await? {
+                self.issue_project(conversation, owner, &project.id, intent)
+                    .await
+            } else {
+                self.show_issue_projects(conversation, owner, intent, 0)
+                    .await
+            }
+        })
+        .await;
+        self.report_issue_creation_result(conversation, creating, result)
+            .await
+    }
+
+    async fn report_issue_creation_result(
+        &self,
+        conversation: &ConversationRef,
+        creating: bool,
+        result: Result<(), EngineError>,
+    ) -> Result<(), EngineError> {
+        match result {
+            Err(EngineError::InvalidInput(reason)) if creating => {
+                self.ui
+                    .send_view(
+                        conversation,
+                        &OutboundView::text("Issue creation failed", reason),
+                    )
+                    .await?;
+                Ok(())
+            }
+            result => result,
         }
     }
 
@@ -307,6 +334,19 @@ impl TaskBoardView<'_> {
     }
 
     pub(super) async fn issue_project(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+        project: &str,
+        intent: IssueProjectIntent,
+    ) -> Result<(), EngineError> {
+        let creating = matches!(&intent, IssueProjectIntent::Create { .. });
+        let result = Box::pin(self.apply_issue_project(conversation, owner, project, intent)).await;
+        self.report_issue_creation_result(conversation, creating, result)
+            .await
+    }
+
+    async fn apply_issue_project(
         &self,
         conversation: &ConversationRef,
         owner: &str,
@@ -396,7 +436,7 @@ impl TaskBoardView<'_> {
         let mut view = OutboundView::text(
             "Project issues",
             format!(
-                "**Project:** {}\n**Issues ({total})**\nStatus: {}\n\nUse /issue new --title \"Title\" [description] to create a requirement.",
+                "**Project:** {}\n**Issues ({total})**\nStatus: {}\n\nUse /issue new -title \"Title\" [description] to create a requirement.",
                 escape(&short(&project.name)),
                 status.map_or("All", issue_status_label)
             ),
@@ -1005,34 +1045,36 @@ fn parse_issue_creation(content: &str) -> Result<(&str, Option<IssueType>, &str)
     let mut remaining = content.trim();
     let mut title = None;
     let mut issue_type = None;
-    while remaining.starts_with("--") {
+    while remaining.starts_with("-") {
         let (option, tail) = remaining
             .split_once(char::is_whitespace)
             .ok_or_else(|| error("Issue options require a value"))?;
         let (value, tail) = issue_option_value(tail.trim_start())?;
         match option {
-            "--title" if title.is_none() => {
+            "-title" if title.is_none() => {
                 let value = value.trim();
                 if value.is_empty() {
                     return Err(error("Issue title is required and cannot be blank"));
                 }
                 title = Some(value);
             }
-            "--type" if issue_type.is_none() => {
+            "-type" if issue_type.is_none() => {
                 issue_type = Some(serde_json::from_value(json!(value)).map_err(|_| {
                     error("Unknown Issue type. Choose feature, bug, enhancement, documentation, question or refactor.")
                 })?);
             }
             _ => {
                 return Err(error(
-                    "Unknown or repeated Issue option. Use --title and optional --type.",
+                    "Unknown or repeated Issue option. Use -title and optional -type.",
                 ));
             }
         }
         remaining = tail.trim_start();
     }
     let title = title.ok_or_else(|| {
-        error("Issue title is required. Use /issue new --title \"Title\" [--type <type>] [description]")
+        error(
+            "Issue title is required. Use /issue new -title \"Title\" [-type <type>] [description]",
+        )
     })?;
     Ok((title, issue_type, remaining))
 }
@@ -1052,7 +1094,7 @@ fn issue_option_value(input: &str) -> Result<(&str, &str), EngineError> {
         return Ok((&rest[..end], tail));
     }
     let (value, tail) = input.split_once(char::is_whitespace).unwrap_or((input, ""));
-    if value.is_empty() || value.starts_with("--") {
+    if value.is_empty() || value.starts_with("-") {
         return Err(error("Issue options require a value"));
     }
     Ok((value, tail))

@@ -755,7 +755,7 @@ async fn issue_commands_create_template_requirements_without_an_agent_turn() {
     let original = "Passkey login\nKeep the original requirement.\n- Mobile support";
     engine
         .handle_inbound(input(&format!(
-            "/issue@agentix_bot new --title \"Passkey login\" {original}"
+            "/issue@agentix_bot new -title \"Passkey login\" {original}"
         )))
         .await
         .unwrap();
@@ -1074,7 +1074,7 @@ async fn issue_type_im_creation_and_selection_preserve_requirement() {
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     engine
         .handle_inbound(input(
-            "/issue new --type refactor --title \"Login failure\" Login failure\nKeep details",
+            "/issue new -type refactor -title \"Login failure\" Login failure\nKeep details",
         ))
         .await
         .unwrap();
@@ -1117,18 +1117,17 @@ async fn issue_type_im_creation_and_selection_preserve_requirement() {
 #[tokio::test]
 async fn issue_type_im_rejects_invalid_options_without_creating_issues() {
     let (_dir, service, _) = task_fixture().await;
-    let (engine, _channel) = engine(service.clone()).await;
+    let (engine, channel) = engine(service.clone()).await;
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     for command in [
-        "/issue new --type invalid --title Title Description",
-        "/issue new --type task --title Title Description",
-        "/issue new --type",
-        "/issue new --type bug",
+        "/issue new -type invalid -title Title Description",
+        "/issue new -type task -title Title Description",
+        "/issue new -type",
+        "/issue new -type bug",
     ] {
-        assert!(matches!(
-            engine.handle_inbound(input(command)).await,
-            Err(EngineError::InvalidInput(_))
-        ));
+        engine.handle_inbound(input(command)).await.unwrap();
+        assert_eq!(last(&channel).title, "Issue creation failed");
+        assert!(!last(&channel).body.is_empty());
         assert!(service.store().snapshot().await.unwrap().issues.is_empty());
     }
 }
@@ -1136,25 +1135,32 @@ async fn issue_type_im_rejects_invalid_options_without_creating_issues() {
 #[tokio::test]
 async fn issue_creation_requires_an_explicit_nonblank_title() {
     let (_dir, service, _) = task_fixture().await;
-    let (engine, _channel) = engine(service.clone()).await;
+    let (engine, channel) = engine(service.clone()).await;
     for command in [
         "/issue new Description only",
-        "/issue new --type bug Description",
-        "/issue new --title",
-        "/issue new --title \"\" Description",
-        "/issue new --title \"   \" Description",
-        "/issue new --title \"Unclosed",
-        "/issue new --title One --title Two",
-        "/issue new --title --type bug",
-        "/issue new --title \"Title\"suffix",
-        "/issue new --title Title --type bug --type feature",
+        "/issue new -type bug Description",
+        "/issue new -title",
+        "/issue new -title \"\" Description",
+        "/issue new -title \"   \" Description",
+        "/issue new -title \"Unclosed",
+        "/issue new -title One -title Two",
+        "/issue new --title Title",
+        "/issue new -title Title --type bug",
+        "/issue new -title -type bug",
+        "/issue new -title \"Title\"suffix",
+        "/issue new -title Title -type bug -type feature",
     ] {
-        assert!(
-            matches!(
-                engine.handle_inbound(input(command)).await,
-                Err(EngineError::InvalidInput(_))
-            ),
-            "{command}"
+        let request = input(command);
+        let before = channel.sent().len();
+        engine.handle_inbound(request.clone()).await.unwrap();
+        assert_eq!(channel.sent().len(), before + 1, "{command}");
+        assert_eq!(last(&channel).title, "Issue creation failed");
+        assert!(!last(&channel).body.is_empty());
+        engine.handle_inbound(request).await.unwrap();
+        assert_eq!(
+            channel.sent().len(),
+            before + 1,
+            "duplicate error: {command}"
         );
         assert!(service.store().snapshot().await.unwrap().issues.is_empty());
     }
@@ -1164,13 +1170,13 @@ async fn issue_creation_requires_an_explicit_nonblank_title() {
 async fn issue_creation_preserves_explicit_title_and_optional_requirement_through_project_picker() {
     for (command, title, requirement) in [
         (
-            "/issue new --title '  登录失败  ' --type bug First line\n  Second line",
+            "/issue new -title '  登录失败  ' -type bug First line\n  Second line",
             "登录失败",
             "First line\n  Second line",
         ),
-        ("/issue new --title Title", "Title", ""),
+        ("/issue new -title Title", "Title", ""),
         (
-            "/issue new --title \"A title\" Description with 'quotes' and --flags",
+            "/issue new -title \"A title\" Description with 'quotes' and --flags",
             "A title",
             "Description with 'quotes' and --flags",
         ),
@@ -1193,4 +1199,48 @@ async fn issue_creation_preserves_explicit_title_and_optional_requirement_throug
         );
         assert_eq!(state.jobs.len(), jobs_before);
     }
+}
+
+#[tokio::test]
+async fn issue_creation_reports_archived_project_after_project_selection() {
+    let (dir, service, _) = task_fixture().await;
+    let root = dir.path().join("empty-project");
+    std::fs::create_dir(&root).unwrap();
+    let project = write(
+        &service,
+        json!({"command":"project.register","root":root,"name":"Empty project"}),
+    )
+    .await["id"]
+        .clone();
+    let (engine, channel) = engine(service.clone()).await;
+    engine
+        .handle_inbound(input("/issue new -title Example"))
+        .await
+        .unwrap();
+    let token = button(&last(&channel), "Empty project");
+    write(
+        &service,
+        json!({"command":"project.archive","project":project}),
+    )
+    .await;
+    click(&engine, token).await;
+    let view = last(&channel);
+    assert_eq!(view.title, "Issue creation failed");
+    assert!(view.body.to_lowercase().contains("archived"), "{view:?}");
+    assert!(service.store().snapshot().await.unwrap().issues.is_empty());
+}
+
+#[tokio::test]
+async fn issue_creation_reports_invalid_title_in_attached_conversation() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    engine
+        .handle_inbound(input("/issue new -title '  '"))
+        .await
+        .unwrap();
+    let view = last(&channel);
+    assert_eq!(view.title, "Issue creation failed");
+    assert!(view.body.contains("title"), "{view:?}");
+    assert!(service.store().snapshot().await.unwrap().issues.is_empty());
 }
