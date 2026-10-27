@@ -2015,3 +2015,300 @@ async fn full_sync_restores_terminal_issue_type_without_reopening_or_blocking_ot
         }
     }
 }
+
+#[tokio::test]
+async fn obsidian_milestone_title_only_edit_imports_without_body_changes() {
+    let f = Fixture::new().await;
+    let item = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"Login","goal":"Original goal"}), WriteOptions::default()).await.unwrap().result;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(item["document_path"].as_str().unwrap());
+    let source = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        source.replace("title: \"Login\"", "title: New login"),
+    )
+    .unwrap();
+    f.service
+        .sync_delivery_document(item["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    let updated = f
+        .service
+        .store()
+        .milestone_record(item["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(updated.title, "New login");
+    assert_eq!(updated.goal, "Original goal");
+    assert!(read(&f, &updated.document_path).contains("\n# New login\n"));
+}
+
+#[tokio::test]
+async fn obsidian_milestone_title_rejects_invalid_and_stale_edits_without_overwriting_note() {
+    for title in ["''", "42", "\"Line one\\nLine two\"", "'New login'"] {
+        let f = Fixture::new().await;
+        let item = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"Login","goal":"Original goal"}), WriteOptions::default()).await.unwrap().result;
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(item["document_path"].as_str().unwrap());
+        let mut edited = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("title: \"Login\"", &format!("title: {title}"));
+        if title == "'New login'" {
+            edited = edited.replace("revision: 1", "revision: 0");
+        }
+        std::fs::write(&path, &edited).unwrap();
+        assert!(
+            f.service
+                .sync_delivery_document(item["id"].as_str().unwrap())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            f.service
+                .store()
+                .milestone_record(item["id"].as_str().unwrap())
+                .await
+                .unwrap()
+                .title,
+            "Login"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    }
+}
+
+#[tokio::test]
+async fn obsidian_milestone_filename_rename_imports_title_and_preserves_body() {
+    for pending in [false, true] {
+        let f = Fixture::new().await;
+        let item = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"Login","goal":"Original goal"}), WriteOptions::default()).await.unwrap().result;
+        let old = f
+            .service
+            .config()
+            .output_dir()
+            .join(item["document_path"].as_str().unwrap());
+        let renamed = old.with_file_name(
+            old.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace("Login", "New login"),
+        );
+        std::fs::rename(&old, &renamed).unwrap();
+        let source = std::fs::read_to_string(&renamed).unwrap().replace(
+            "Original goal",
+            if pending {
+                "Original goal"
+            } else {
+                "Preserve renamed note content."
+            },
+        );
+        std::fs::write(&renamed, &source).unwrap();
+        if pending {
+            let mut conn = super::incremental::connection(&f).await;
+            sqlx::query(
+                "INSERT OR REPLACE INTO pending_documents(key,generation) VALUES(?,'rename-test')",
+            )
+            .bind(format!("milestone:{}", item["id"].as_str().unwrap()))
+            .execute(&mut conn)
+            .await
+            .unwrap();
+            f.service.sync_pending_documents().await.unwrap();
+        } else {
+            f.service
+                .sync_delivery_document(item["id"].as_str().unwrap())
+                .await
+                .unwrap();
+        }
+        let updated = f
+            .service
+            .store()
+            .milestone_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(updated.title, "New login");
+        assert_eq!(updated.name, "New login");
+        assert_eq!(
+            f.service.config().output_dir().join(&updated.document_path),
+            renamed
+        );
+        assert!(!old.exists());
+        let body = std::fs::read_to_string(&renamed).unwrap();
+        assert!(body.contains("\n# New login\n"));
+        assert!(body.contains(if pending {
+            "Original goal"
+        } else {
+            "Preserve renamed note content."
+        }));
+        f.service.sync().await.unwrap();
+        assert!(!old.exists());
+    }
+}
+
+#[tokio::test]
+async fn obsidian_milestone_filename_rename_rejects_ambiguous_candidates_without_recreating_old_note()
+ {
+    let f = Fixture::new().await;
+    let item = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"Login","goal":"Original goal"}), WriteOptions::default()).await.unwrap().result;
+    let old = f
+        .service
+        .config()
+        .output_dir()
+        .join(item["document_path"].as_str().unwrap());
+    let source = std::fs::read_to_string(&old).unwrap();
+    for name in ["First", "Second"] {
+        let target = old.with_file_name(
+            old.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace("Login", name),
+        );
+        std::fs::write(target, &source).unwrap();
+    }
+    std::fs::remove_file(&old).unwrap();
+    assert!(
+        f.service
+            .sync_delivery_document(item["id"].as_str().unwrap())
+            .await
+            .is_err()
+    );
+    assert!(!old.exists());
+    assert_eq!(
+        f.service
+            .store()
+            .milestone_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .title,
+        "Login"
+    );
+}
+
+#[tokio::test]
+async fn obsidian_milestone_filename_rename_rejects_stale_foreign_and_conflicting_edits() {
+    for case in ["stale", "foreign", "title", "prefix", "collision", "long"] {
+        let f = Fixture::new().await;
+        let item = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"Login","goal":"Original goal"}), WriteOptions::default()).await.unwrap().result;
+        let old = f
+            .service
+            .config()
+            .output_dir()
+            .join(item["document_path"].as_str().unwrap());
+        let source = std::fs::read_to_string(&old).unwrap();
+        if case == "collision" {
+            f.service
+                .execute(
+                    json!({"command":"milestone.create","project":f.project,"title":"New login"}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        let name = if case == "long" {
+            "x".repeat(49)
+        } else {
+            "New login".into()
+        };
+        let filename = if case == "prefix" {
+            "New login.md".into()
+        } else {
+            old.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace("Login", &name)
+        };
+        let target = old.with_file_name(filename);
+        std::fs::rename(&old, &target).unwrap();
+        let edited = match case {
+            "stale" => source.replace("revision: 1", "revision: 0"),
+            "foreign" => source.replace(&f.project, "prj_foreign"),
+            "title" => source.replace("title: \"Login\"", "title: Different title"),
+            _ => source,
+        };
+        std::fs::write(&target, &edited).unwrap();
+        assert!(
+            f.service
+                .sync_delivery_document(item["id"].as_str().unwrap())
+                .await
+                .is_err(),
+            "{case}"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), edited);
+        assert!(!old.exists(), "{case}");
+        assert_eq!(
+            f.service
+                .store()
+                .milestone_record(item["id"].as_str().unwrap())
+                .await
+                .unwrap()
+                .title,
+            "Login"
+        );
+    }
+}
+
+#[tokio::test]
+async fn obsidian_milestone_title_and_goal_refresh_related_links_idempotently() {
+    let f = Fixture::new().await;
+    let item = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"Release","goal":"Original goal"}), WriteOptions::default()).await.unwrap().result;
+    let issue = f.service.execute(json!({"command":"issue.create","project":f.project,"title":"Feature","milestone":item["id"]}), WriteOptions::default()).await.unwrap().result;
+    let old = f
+        .service
+        .config()
+        .output_dir()
+        .join(item["document_path"].as_str().unwrap());
+    let source = std::fs::read_to_string(&old)
+        .unwrap()
+        .replace("title: \"Release\"", "title: New release")
+        .replace("Original goal", "Authored goal.\n# Authored heading");
+    std::fs::write(&old, source).unwrap();
+    let id = item["id"].as_str().unwrap();
+    f.service.sync_delivery_document(id).await.unwrap();
+    let updated = f.service.store().milestone_record(id).await.unwrap();
+    assert_eq!(updated.title, "New release");
+    assert_eq!(updated.name, "New release");
+    assert_eq!(updated.goal, "Authored goal.\n# Authored heading");
+    assert!(!old.exists());
+    let document = read(&f, &updated.document_path);
+    assert!(document.contains("\n# New release\n"));
+    assert!(document.contains("Authored goal.\n# Authored heading"));
+    let linked = read(&f, issue["document_path"].as_str().unwrap());
+    assert!(linked.contains("New release"));
+    assert!(!linked.contains(item["document_path"].as_str().unwrap()));
+    f.service.sync_delivery_document(id).await.unwrap();
+    f.service.sync().await.unwrap();
+    assert_eq!(
+        f.service
+            .store()
+            .milestone_record(id)
+            .await
+            .unwrap()
+            .revision,
+        updated.revision
+    );
+}
+
+#[tokio::test]
+async fn obsidian_milestone_pending_title_publication_does_not_reimport_old_title() {
+    let f = Fixture::new().await;
+    let item = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"Old release","goal":"Original goal"}), WriteOptions::default()).await.unwrap().result;
+    let updated = f.service.store().execute(json!({"command":"milestone.update","milestone":item["id"],"title":"CLI release","name":"CLI release","goal":"CLI goal"}), WriteOptions::default()).await.unwrap().result;
+    f.service.sync_pending_documents().await.unwrap();
+    let milestone = f
+        .service
+        .store()
+        .milestone_record(item["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(milestone.title, "CLI release");
+    assert_eq!(milestone.goal, "CLI goal");
+    assert_eq!(milestone.revision, updated["revision"]);
+    assert!(read(&f, &milestone.document_path).contains("\n# CLI release\n"));
+}

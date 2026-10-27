@@ -1,10 +1,11 @@
 # Obsidian editing synchronization
 
 Taskix Sync waits for **five idle seconds** before synchronizing saved Issue or
-Milestone body edits and Issue `title` or `issue_type` property edits. Each edit restarts that
-note's timer. Human status changes keep their separate 300 ms delay.
+Milestone body or `title` property edits, and Issue `issue_type` property edits.
+Each edit restarts that note's timer. Human status changes keep their separate 300 ms delay.
 
-Issue delivery fingerprints include `title` and `issue_type`, so a property-only edit reaches the
+Issue and Milestone delivery fingerprints include `title` (and Issue fingerprints
+also include `issue_type`), so a property-only edit reaches the
 same import path as body edits. The importer updates the database title and
 readable name together under the note revision guard. Existing name normalization,
 collision handling, and numbered filename rules apply. Publication refreshes the
@@ -29,7 +30,7 @@ The plugin's separate status reconciliation excludes `issue_type` from restored
 database properties, preserving pending type edits during status or Milestone
 checks and reconnect recovery until the delivery importer validates them.
 
-Renaming an Issue file in its existing directory also queues delivery. When the
+Renaming an Issue or Milestone file in its existing directory also queues delivery. When the
 registered path is missing, the importer locates the single managed note with the
 same immutable ID and Project, checks its revision, and derives the title from
 the filename after the existing date/sequence prefix. The new name must already
@@ -37,7 +38,7 @@ satisfy portable naming rules (at most 48 characters). Ambiguous copies, conflic
 property edits, changed prefixes, and name collisions reject import. Previewing
 the normal mutation ensures its resulting path matches the moved source before
 committing; publication can recover that source even when the registry still
-contains the old path. Pending Issue publication performs this reconciliation only when the canonical
+contains the old path. Pending publication recovers renamed notes when the canonical
 file is missing, preventing it from recreating the old note over an unimported
 rename. Ordinary status publication does not import existing Issue prose or
 invalidate a pending review. The source note's authored sections remain intact.

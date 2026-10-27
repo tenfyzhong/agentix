@@ -105,3 +105,36 @@ test("Milestone status edit restores rejected completion with revision guards", 
     assert.equal(file.status, "ACTIVE");
     assert.match(f.notices.at(-1), /unfinished Issues/);
 });
+
+test("title-only Milestone edits trigger delivery after an unchanged body was synchronized", async t => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    f.plugin.engine = { watches: () => true, flush: async () => {}, disposed: false, dispose() {} };
+    const source = ["goal"].map(key => `<!-- taskix:${key}:start -->\nAuthored ${key}\n<!-- taskix:${key}:end -->`).join("\n");
+    const props = { id: "milestone_one", title: "Old title", "taskix-generated": true };
+    const path = "11-Agents/Projects/Demo/Milestones/One.md";
+    let pending = f.plugin.syncDelivery(path, source, props);
+    await new Promise(resolve => setImmediate(resolve));
+    f.reply(null, undefined, { id: "milestone_one" }); await pending;
+    pending = f.plugin.syncDelivery(path, source, { ...props, title: "New title" });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.requests.length, 2);
+    f.reply(null, undefined, { id: "milestone_one" }); await pending;
+});
+
+test("renaming a Milestone note queues delivery under the new path with its stable ID", async t => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    const forgotten = [], deliveries = [];
+    f.plugin.engine = { directory: "11-Agents", watches: () => true, disposed: false,
+        dispose() {}, forget: path => forgotten.push(path), observe() {} };
+    const props = { id: "milestone_one", title: "Old title", "taskix-generated": true };
+    const source = `---\n${JSON.stringify(props)}\n---\n# Old title\n`;
+    f.plugin.app.vault.read = async () => source;
+    f.plugin.queueDelivery = (...args) => deliveries.push(args);
+    const oldPath = "11-Agents/Projects/Demo/Milestones/261026-0001-Old title.md";
+    f.file.path = "11-Agents/Projects/Demo/Milestones/261026-0001-New title.md";
+    await f.vaultEvents.get("rename")(f.file, oldPath);
+    assert.deepEqual(forgotten, [oldPath]);
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0][0], f.file.path);
+    assert.equal(deliveries[0][2].id, "milestone_one");
+});
