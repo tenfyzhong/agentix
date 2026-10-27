@@ -156,13 +156,11 @@ impl Service {
             .as_array_mut()
             .unwrap()
             .push(open.clone());
-        let move_filter = base["filters"] == old_filtered;
-        let default_scope = base["filters"] == scope;
+        let remove_filter = base["filters"] == old_filtered;
         let Some(views) = base["views"].as_array_mut() else {
             return Ok(source);
         };
-        let mut changed = move_filter;
-        let mut legacy_table = false;
+        let mut changed = remove_filter;
         if let Some(order) = views
             .iter_mut()
             .find(|view| view["name"] == "Milestones" && view["type"] == "table")
@@ -173,18 +171,24 @@ impl Service {
         {
             order.insert(usize::from(!order.is_empty()), json!("status"));
             changed = true;
-            legacy_table = true;
         }
-        if move_filter || (legacy_table && default_scope) {
-            for view in views.iter_mut().filter(|view| view["type"] == "table") {
-                let filters = view
-                    .get("filters")
-                    .filter(|value| !value.is_null())
-                    .cloned();
-                view["filters"] = filters.map_or_else(
-                    || json!({"and":[open]}),
-                    |filters| json!({"and":[filters,open]}),
-                );
+        for view in views.iter_mut().filter(|view| view["type"] == "table") {
+            if let Some(filters) = view
+                .get_mut("filters")
+                .and_then(|filters| filters.get_mut("and"))
+                .and_then(Value::as_array_mut)
+            {
+                let previous_len = filters.len();
+                filters.retain(|filter| filter != &open);
+                if filters.len() != previous_len {
+                    changed = true;
+                    if filters.is_empty() {
+                        view.as_object_mut().unwrap().remove("filters");
+                    }
+                }
+            } else if view["filters"] == open {
+                view.as_object_mut().unwrap().remove("filters");
+                changed = true;
             }
         }
         if !views.iter().any(|view| {
@@ -224,7 +228,7 @@ impl Service {
         if !changed {
             return Ok(source);
         }
-        if move_filter {
+        if remove_filter {
             base["filters"] = scope;
         }
         Ok(format!(
@@ -236,7 +240,7 @@ impl Service {
 
     fn milestones_base(project: &Project) -> Result<String> {
         let base = json!({"filters":{"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(project.id))]},
-            "formulas":{"name":NAME_FORMULA},"views":[Self::milestone_status_board(),{"type":"table","name":"Milestones","filters":{"and":[{"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}]},"order":["formula.name","status","order","due_date","completed_issues","total_issues","cancelled_issues"],
+            "formulas":{"name":NAME_FORMULA},"views":[Self::milestone_status_board(),{"type":"table","name":"Milestones","order":["formula.name","status","order","due_date","completed_issues","total_issues","cancelled_issues"],
                 "sort":Self::milestone_sort()}]});
         Ok(format!(
             "# taskix-generated: milestones:{}\n{}",
