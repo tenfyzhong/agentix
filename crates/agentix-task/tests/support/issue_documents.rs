@@ -1,6 +1,89 @@
 use super::*;
 
 #[tokio::test]
+async fn issue_boards_show_milestones_and_migrate_existing_views() {
+    let f = Fixture::new().await;
+    let item = create_issue(&f).await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Issue.base");
+    let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    for view in base["views"].as_array().unwrap() {
+        if view["type"] == "kanban" && view["name"] != "Related Jobs" {
+            assert!(
+                view["order"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("milestone"))
+            );
+        }
+    }
+    let doc = read(&f, item["document_path"].as_str().unwrap());
+    let properties: Value = serde_yaml::from_str(doc.split("---").nth(1).unwrap()).unwrap();
+    assert!(properties["milestone"].is_null());
+    let milestone = f
+        .service
+        .execute(
+            json!({"command":"milestone.create","project":f.project,"title":"Release 1"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    f.service
+        .execute(
+            json!({"command":"issue.update","issue":item["id"],"milestone":milestone["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let doc = read(&f, item["document_path"].as_str().unwrap());
+    let properties: Value = serde_yaml::from_str(doc.split("---").nth(1).unwrap()).unwrap();
+    assert!(
+        properties["milestone"]
+            .as_str()
+            .unwrap()
+            .contains("|Release 1]]")
+    );
+    for view in base["views"].as_array_mut().unwrap() {
+        if view["type"] == "kanban" && view["name"] != "Related Jobs" {
+            view["order"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|column| column != "milestone");
+            view["columnWidth"] = json!(420);
+        }
+    }
+    base["views"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"Custom","type":"table","order":["status"]}));
+    std::fs::write(&path, serde_yaml::to_string(&base).unwrap()).unwrap();
+    f.service.sync().await.unwrap();
+    let migrated: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    for view in migrated["views"].as_array().unwrap() {
+        if view["type"] == "kanban" && view["name"] != "Related Jobs" {
+            assert!(
+                view["order"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("milestone"))
+            );
+            assert_eq!(view["columnWidth"], 420);
+        }
+    }
+    assert_eq!(
+        migrated["views"].as_array().unwrap().last().unwrap(),
+        base["views"].as_array().unwrap().last().unwrap()
+    );
+    let source = std::fs::read_to_string(&path).unwrap();
+    f.service.sync().await.unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+}
+
+#[tokio::test]
 async fn global_issue_base_exposes_cross_project_table_board_and_archive_filters() {
     let f = Fixture::new().await;
     let first = create_issue(&f).await;
