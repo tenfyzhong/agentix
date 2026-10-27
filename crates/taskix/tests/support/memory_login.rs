@@ -40,7 +40,7 @@ fn check_login_service(shell_body: &str, inherited_key: Option<&str>, credential
     let mut daemon = LoginDaemon(command.spawn().unwrap());
     let deadline = Instant::now() + Duration::from_secs(10);
     let status = loop {
-        let output = cli.run(&["memory", "status"]);
+        let output = cli.run(&["status"]);
         if output.status.success() {
             let value: Value = serde_json::from_slice(&output.stdout).unwrap();
             if value["result"]["online"] == true {
@@ -94,7 +94,7 @@ fn check_login_service(shell_body: &str, inherited_key: Option<&str>, credential
         );
         std::thread::sleep(Duration::from_millis(25));
     }
-    assert_eq!(cli.ok(&["memory", "status"])["online"], false);
+    assert_eq!(cli.ok(&["status"])["online"], false);
 }
 
 const RECORD_CALL: &str =

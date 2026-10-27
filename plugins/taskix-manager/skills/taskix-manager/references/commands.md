@@ -266,11 +266,23 @@ Both use the same `--review-policy` and mandatory `--expect-job-revision` pair.
 Older CLIs reject these flags; upgrade Taskix and the plugin together. Missing
 completed-scope metadata also causes a safe main-agent fallback.
 
+## Service diagnostics
+
+```sh
+taskix status --project PROJECT_ID --json
+taskix doctor --json
+```
+
+These top-level commands inspect Memory and metrics, including metrics-only
+services. `memory_enabled` and `memory_online` describe Memory; `metrics.online`
+describes the configured metrics endpoint. Overall `online` means either is
+reachable. Doctor also retains task Plan/document consistency checks (`healthy`)
+and does not initialize missing databases. The old `memory status` and
+`memory doctor` subcommands are no longer accepted.
+
 ## Project memory (optional, macOS/Linux)
 
 ```sh
-taskix memory status --project PROJECT_ID --json
-taskix memory doctor --json
 taskix memory search 'decision keywords' --project PROJECT_ID --json
 taskix memory show mem_ID --project PROJECT_ID --json
 taskix memory source receipt_ID --message MESSAGE_ID --offset 0 --project PROJECT_ID --json

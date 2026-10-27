@@ -1637,7 +1637,7 @@ async fn automatic_worker_drains_backlog_after_cli_exit() {
 
 #[test]
 fn service_commands_are_top_level_and_old_memory_entrypoints_are_rejected() {
-    for command in ["serve", "reload"] {
+    for command in ["serve", "reload", "doctor", "status"] {
         let output = Command::new(env!("CARGO_BIN_EXE_taskix"))
             .args([command, "--help"])
             .output()

@@ -705,39 +705,7 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-memory-command-$line[1]:"
         case $line[1] in
-            (status)
-_arguments "${_arguments_options[@]}" : \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(doctor)
-_arguments "${_arguments_options[@]}" : \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(sync)
+            (sync)
 _arguments "${_arguments_options[@]}" : \
 '--after=[]:AFTER:_default' \
 '--limit=[]:LIMIT:_default' \
@@ -1092,15 +1060,7 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-memory-help-command-$line[1]:"
         case $line[1] in
-            (status)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(doctor)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(sync)
+            (sync)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1491,6 +1451,22 @@ esac
 esac
 ;;
 (doctor)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(status)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -3307,15 +3283,7 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-help-memory-command-$line[1]:"
         case $line[1] in
-            (status)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(doctor)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(sync)
+            (sync)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3468,6 +3436,10 @@ _arguments "${_arguments_options[@]}" : \
 esac
 ;;
 (doctor)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3848,7 +3820,8 @@ _taskix_commands() {
 'completions:Print a shell completion script without loading task configuration' \
 'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
 'obsidian:Install and configure Obsidian task views in the configured vault' \
-'doctor:Check for missing Plan files and documents that are behind the event log' \
+'doctor:Check service configuration, availability, Plan files and document synchronization' \
+'status:Inspect Memory and metrics service availability' \
 'sync:Regenerate task documents from the current database state' \
 'project:Register, inspect, archive, or delete Projects shared across worktrees' \
 'job:Manage Jobs that group Tasks for an independently deliverable requirement' \
@@ -3999,7 +3972,8 @@ _taskix__subcmd__help_commands() {
 'completions:Print a shell completion script without loading task configuration' \
 'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
 'obsidian:Install and configure Obsidian task views in the configured vault' \
-'doctor:Check for missing Plan files and documents that are behind the event log' \
+'doctor:Check service configuration, availability, Plan files and document synchronization' \
+'status:Inspect Memory and metrics service availability' \
 'sync:Regenerate task documents from the current database state' \
 'project:Register, inspect, archive, or delete Projects shared across worktrees' \
 'job:Manage Jobs that group Tasks for an independently deliverable requirement' \
@@ -4287,8 +4261,6 @@ _taskix__subcmd__help__subcmd__job__subcmd__update_commands() {
 (( $+functions[_taskix__subcmd__help__subcmd__memory_commands] )) ||
 _taskix__subcmd__help__subcmd__memory_commands() {
     local commands; commands=(
-'status:Inspect queue, index coverage and provider availability' \
-'doctor:Inspect service configuration and local availability without a model request' \
 'sync:Restore one page of read-only project memory notes from the database' \
 'document:Read the authoritative Markdown for a managed vault-relative memory path' \
 'projection-status:Inspect pending publication and preserved edit conflicts' \
@@ -4335,11 +4307,6 @@ _taskix__subcmd__help__subcmd__memory__subcmd__context_commands() {
 _taskix__subcmd__help__subcmd__memory__subcmd__create_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help memory create commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__doctor_commands] )) ||
-_taskix__subcmd__help__subcmd__memory__subcmd__doctor_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help memory doctor commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__document_commands] )) ||
 _taskix__subcmd__help__subcmd__memory__subcmd__document_commands() {
@@ -4395,11 +4362,6 @@ _taskix__subcmd__help__subcmd__memory__subcmd__show_commands() {
 _taskix__subcmd__help__subcmd__memory__subcmd__source_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help memory source commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__status_commands] )) ||
-_taskix__subcmd__help__subcmd__memory__subcmd__status_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help memory status commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__sync_commands] )) ||
 _taskix__subcmd__help__subcmd__memory__subcmd__sync_commands() {
@@ -4654,6 +4616,11 @@ _taskix__subcmd__help__subcmd__routing__subcmd__snapshot_commands() {
 _taskix__subcmd__help__subcmd__serve_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help serve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__status_commands] )) ||
+_taskix__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help status commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__sync_commands] )) ||
 _taskix__subcmd__help__subcmd__sync_commands() {
@@ -5193,8 +5160,6 @@ _taskix__subcmd__job__subcmd__update_commands() {
 (( $+functions[_taskix__subcmd__memory_commands] )) ||
 _taskix__subcmd__memory_commands() {
     local commands; commands=(
-'status:Inspect queue, index coverage and provider availability' \
-'doctor:Inspect service configuration and local availability without a model request' \
 'sync:Restore one page of read-only project memory notes from the database' \
 'document:Read the authoritative Markdown for a managed vault-relative memory path' \
 'projection-status:Inspect pending publication and preserved edit conflicts' \
@@ -5243,11 +5208,6 @@ _taskix__subcmd__memory__subcmd__create_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory create commands' commands "$@"
 }
-(( $+functions[_taskix__subcmd__memory__subcmd__doctor_commands] )) ||
-_taskix__subcmd__memory__subcmd__doctor_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix memory doctor commands' commands "$@"
-}
 (( $+functions[_taskix__subcmd__memory__subcmd__document_commands] )) ||
 _taskix__subcmd__memory__subcmd__document_commands() {
     local commands; commands=()
@@ -5261,8 +5221,6 @@ _taskix__subcmd__memory__subcmd__forget_commands() {
 (( $+functions[_taskix__subcmd__memory__subcmd__help_commands] )) ||
 _taskix__subcmd__memory__subcmd__help_commands() {
     local commands; commands=(
-'status:Inspect queue, index coverage and provider availability' \
-'doctor:Inspect service configuration and local availability without a model request' \
 'sync:Restore one page of read-only project memory notes from the database' \
 'document:Read the authoritative Markdown for a managed vault-relative memory path' \
 'projection-status:Inspect pending publication and preserved edit conflicts' \
@@ -5310,11 +5268,6 @@ _taskix__subcmd__memory__subcmd__help__subcmd__context_commands() {
 _taskix__subcmd__memory__subcmd__help__subcmd__create_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory help create commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__doctor_commands] )) ||
-_taskix__subcmd__memory__subcmd__help__subcmd__doctor_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix memory help doctor commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__document_commands] )) ||
 _taskix__subcmd__memory__subcmd__help__subcmd__document_commands() {
@@ -5376,11 +5329,6 @@ _taskix__subcmd__memory__subcmd__help__subcmd__source_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory help source commands' commands "$@"
 }
-(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__status_commands] )) ||
-_taskix__subcmd__memory__subcmd__help__subcmd__status_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix memory help status commands' commands "$@"
-}
 (( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__sync_commands] )) ||
 _taskix__subcmd__memory__subcmd__help__subcmd__sync_commands() {
     local commands; commands=()
@@ -5440,11 +5388,6 @@ _taskix__subcmd__memory__subcmd__show_commands() {
 _taskix__subcmd__memory__subcmd__source_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory source commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__memory__subcmd__status_commands] )) ||
-_taskix__subcmd__memory__subcmd__status_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix memory status commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__memory__subcmd__sync_commands] )) ||
 _taskix__subcmd__memory__subcmd__sync_commands() {
@@ -5994,6 +5937,11 @@ _taskix__subcmd__routing__subcmd__snapshot_commands() {
 _taskix__subcmd__serve_commands() {
     local commands; commands=()
     _describe -t commands 'taskix serve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__status_commands] )) ||
+_taskix__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix status commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__sync_commands] )) ||
 _taskix__subcmd__sync_commands() {

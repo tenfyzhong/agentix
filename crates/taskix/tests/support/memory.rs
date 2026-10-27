@@ -26,7 +26,7 @@ fn memory_cli_uses_the_environment_switch_without_a_memory_config_section() {
         Some("true"),
         Some("1"),
     ] {
-        let mut command = cli.command(&["memory", "doctor"]);
+        let mut command = cli.command(&["doctor"]);
         if let Some(value) = value {
             command.env("TASKIX_MEMORY_ENABLED", value);
         }
@@ -95,7 +95,7 @@ fn memory_daemon_cli_and_offline_fallback_do_not_require_a_vault_or_model_creden
     );
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let output = cli.run(&["memory", "status", "--project", project]);
+        let output = cli.run(&["status", "--project", project]);
         if output.status.success() {
             let status: Value = serde_json::from_slice(&output.stdout).unwrap();
             if status["result"]["online"] == true
@@ -204,7 +204,7 @@ fn memory_reload_rejects_ipc_limits_without_changing_the_running_configuration()
     );
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if cli.ok(&["memory", "status"])["online"] == true {
+        if cli.ok(&["status"])["online"] == true {
             break;
         }
         assert!(
@@ -221,20 +221,22 @@ fn memory_reload_rejects_ipc_limits_without_changing_the_running_configuration()
     .unwrap();
     let result = cli.run(&["reload"]);
     assert!(!result.status.success(), "IPC bounds require a restart");
-    assert_eq!(cli.ok(&["memory", "status"])["model"], "gpt-6-astra");
+    assert_eq!(cli.ok(&["status"])["model"], "gpt-6-astra");
+    assert_eq!(cli.ok(&["status"])["memory_enabled"], true);
+    assert_eq!(cli.ok(&["status"])["enabled"], true);
     std::fs::write(&path, config.replace("gpt-6-astra", "gpt-6-sol")).unwrap();
     assert_eq!(cli.ok(&["reload"])["reloaded"], true);
-    assert_eq!(cli.ok(&["memory", "status"])["model"], "gpt-6-sol");
+    assert_eq!(cli.ok(&["status"])["model"], "gpt-6-sol");
     std::fs::write(&path, format!("{config}reasoning_effort='low'\n")).unwrap();
     assert_eq!(cli.ok(&["reload"])["reloaded"], true);
-    assert_eq!(cli.ok(&["memory", "status"])["reasoning_effort"], "low");
+    assert_eq!(cli.ok(&["status"])["reasoning_effort"], "low");
     assert_eq!(
-        cli.ok(&["memory", "doctor"])["configuration"]["reasoning_effort"],
+        cli.ok(&["doctor"])["configuration"]["reasoning_effort"],
         "low"
     );
     std::fs::write(&path, format!("{config}reasoning_effort='loow'\n")).unwrap();
     assert!(!cli.run(&["reload"]).status.success());
-    assert_eq!(cli.ok(&["memory", "status"])["reasoning_effort"], "low");
+    assert_eq!(cli.ok(&["status"])["reasoning_effort"], "low");
 }
 
 #[allow(clippy::too_many_lines)]
@@ -265,7 +267,7 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
             .unwrap(),
     );
     let deadline = Instant::now() + Duration::from_secs(10);
-    while cli.ok(&["memory", "status"])["online"] != true {
+    while cli.ok(&["status"])["online"] != true {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -366,7 +368,7 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
             .unwrap(),
     );
     let deadline = Instant::now() + Duration::from_secs(10);
-    while cli.ok(&["memory", "status"])["online"] != true {
+    while cli.ok(&["status"])["online"] != true {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -388,7 +390,7 @@ fn start_memory(cli: &Cli, expected_sources: i64) -> Daemon {
     );
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let status = cli.run(&["memory", "status"]);
+        let status = cli.run(&["status"]);
         if status.status.success() {
             let value: Value = serde_json::from_slice(&status.stdout).unwrap();
             if value["result"]["online"] == true && value["result"]["sources"] == expected_sources {
@@ -457,7 +459,7 @@ fn memory_replay_retries_a_failed_acknowledged_receipt_after_later_receipts_succ
     );
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let status = cli.ok(&["memory", "status"]);
+        let status = cli.ok(&["status"]);
         if status["background_errors"]
             .to_string()
             .contains("injected transient replay failure")
@@ -507,9 +509,7 @@ fn memory_replay_retries_a_failed_acknowledged_receipt_after_later_receipts_succ
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut count;
     loop {
-        count = cli.ok(&["memory", "status"])["sources"]
-            .as_i64()
-            .unwrap_or(0);
+        count = cli.ok(&["status"])["sources"].as_i64().unwrap_or(0);
         if count == 3 || Instant::now() >= deadline {
             break;
         }
@@ -694,10 +694,10 @@ fn memory_diagnostics_handle_a_missing_database_directory_without_creating_it() 
         ),
     )
     .unwrap();
-    let doctor = cli.ok(&["memory", "doctor"]);
+    let doctor = cli.ok(&["doctor"]);
     assert_eq!(doctor["online"], false);
     assert_eq!(doctor["database"]["exists"], false);
-    let status = cli.ok(&["memory", "status"]);
+    let status = cli.ok(&["status"]);
     assert_eq!(status["initialized"], false);
     assert_eq!(status["online"], false);
     assert!(!directory.exists());
@@ -713,7 +713,7 @@ fn memory_doctor_reports_invalid_model_configuration_without_a_provider_request(
         format!("{config}\n[memory]\n[memory.agent]\nmodel=false\n"),
     )
     .unwrap();
-    let result = cli.ok(&["memory", "doctor"]);
+    let result = cli.ok(&["doctor"]);
     assert_eq!(result["configuration"]["valid"], false);
     assert_eq!(result["database"]["exists"], false);
     assert!(!cli.dir.path().join("memory.sqlite3").exists());
@@ -849,7 +849,7 @@ async fn memory_jev_triage_uses_existing_environment_and_reports_skip_extract_an
         );
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let status = cli.ok(&["memory", "status"]);
+            let status = cli.ok(&["status"]);
             if status["online"] == true && status["sources"] == 1 {
                 break;
             }
@@ -1105,4 +1105,79 @@ fn service_file_logging_prunes_old_rotations_without_removing_other_files() {
             .unwrap()
             .contains("task database must be initialized")
     );
+}
+
+#[test]
+fn service_diagnostics_report_metrics_without_memory() {
+    let cli = Cli::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let path = cli.dir.path().join("config.toml");
+    let config = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        format!("{config}\n[metrics]\nenabled=true\nlisten='{address}'\n"),
+    )
+    .unwrap();
+    for command in ["status", "doctor"] {
+        let result = cli.ok(&[command]);
+        assert_eq!(result["metrics"]["enabled"], true);
+        assert_eq!(result["metrics"]["online"], false);
+        assert_eq!(result["online"], false);
+    }
+    let mut daemon = Daemon(
+        cli.command(&["serve"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let result = cli.ok(&["status"]);
+        if result["metrics"]["online"] == true {
+            assert_eq!(result["online"], true);
+            assert_eq!(result["memory_enabled"], false);
+            break;
+        }
+        assert!(daemon.0.try_wait().unwrap().is_none());
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let doctor = cli.ok(&["doctor"]);
+    assert_eq!(doctor["metrics"]["online"], true);
+    assert!(doctor["missing_plans"].is_array());
+    assert!(!cli.dir.path().join("memory.sqlite3").exists());
+    for command in ["status", "doctor"] {
+        assert_eq!(cli.run(&["memory", command]).status.code(), Some(2));
+    }
+}
+
+#[test]
+fn service_diagnostics_report_invalid_metrics_configuration_without_secrets() {
+    let cli = Cli::new();
+    let path = cli.dir.path().join("config.toml");
+    let config = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        format!("{config}\n[metrics]\nenabled=true\nlisten='secret-invalid-address'\n"),
+    )
+    .unwrap();
+    for command in ["doctor", "status"] {
+        let result = cli.ok(&[command]);
+        assert_eq!(result["metrics"]["configuration_valid"], false);
+        assert_eq!(result["metrics"]["online"], false);
+        assert!(!result.to_string().contains("secret-invalid-address"));
+    }
+}
+
+#[test]
+fn service_doctor_does_not_initialize_a_missing_task_database() {
+    let cli = Cli::new();
+    std::fs::remove_file(cli.dir.path().join("state.sqlite3")).unwrap();
+    let result = cli.ok(&["doctor"]);
+    assert_eq!(result["task_database_exists"], false);
+    assert_eq!(result["healthy"], false);
+    assert!(!cli.dir.path().join("state.sqlite3").exists());
 }
