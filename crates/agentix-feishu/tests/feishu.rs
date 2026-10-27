@@ -34,7 +34,7 @@ async fn issue_controls_send_opaque_tokens_through_the_feishu_adapter() {
     for (n, label) in [
         "Start",
         "Continue",
-        "New round",
+        "Open Issue",
         "Edit requirement",
         "Milestone",
         "Submit",

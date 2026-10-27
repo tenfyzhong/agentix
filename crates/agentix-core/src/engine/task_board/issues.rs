@@ -162,43 +162,29 @@ impl TaskBoardView<'_> {
             )],
         )
         .await;
-        if item.archived_at.is_none() {
-            if item.status == IssueStatus::Active {
-                self.add_issue_action(
-                    conversation,
-                    owner,
-                    view,
-                    "New round",
-                    &item,
-                    "new_round",
-                    None,
-                    None,
-                )
-                .await;
-            } else if item.status == IssueStatus::PendingReview {
-                self.add_issue_action(
-                    conversation,
-                    owner,
-                    view,
-                    "Accept",
-                    &item,
-                    "issue.approve",
-                    None,
-                    None,
-                )
-                .await;
-                self.add_issue_action(
-                    conversation,
-                    owner,
-                    view,
-                    "Reject",
-                    &item,
-                    "issue.reject",
-                    None,
-                    None,
-                )
-                .await;
-            }
+        if item.archived_at.is_none() && item.status == IssueStatus::PendingReview {
+            self.add_issue_action(
+                conversation,
+                owner,
+                view,
+                "Accept",
+                &item,
+                "issue.approve",
+                None,
+                None,
+            )
+            .await;
+            self.add_issue_action(
+                conversation,
+                owner,
+                view,
+                "Reject",
+                &item,
+                "issue.reject",
+                None,
+                None,
+            )
+            .await;
         }
         Ok(())
     }
@@ -712,7 +698,6 @@ impl TaskBoardView<'_> {
                 ],
                 IssueStatus::Active => vec![
                     ("Continue", "execute"),
-                    ("New round", "new_round"),
                     ("Submit", "issue.submit"),
                     ("Cancel", "issue.cancel"),
                 ],
@@ -861,7 +846,7 @@ impl TaskBoardView<'_> {
         }
         if matches!(
             action.command.as_str(),
-            "execute" | "new_round" | "execute.new_session" | "execute.workspace"
+            "execute" | "execute.new_session" | "execute.workspace"
         ) {
             return self.ui.execute_issue(conversation, owner, action).await;
         }
