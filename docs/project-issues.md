@@ -218,7 +218,7 @@ Reusable tests cover domain lifecycle and associations, SQL paging, body imports
 ## Issue type labels (schema 26, unreleased)
 
 `issue_type` is a nullable classification independent of status: `feature`, `bug`,
-`enhancement`, `documentation`, `question`, or `task`. Existing records without the
+`enhancement`, `documentation`, `question`, or `refactor`. Existing records without the
 field remain unclassified; no label is inferred. Invalid values are rejected.
 Type changes use the normal Issue revision guard and require reopening terminal
 Issues. Type metadata is projected into Issue frontmatter and new Base views.

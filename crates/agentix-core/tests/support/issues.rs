@@ -1071,14 +1071,16 @@ async fn issue_type_im_creation_and_selection_preserve_requirement() {
     let (engine, channel) = engine(service.clone()).await;
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     engine
-        .handle_inbound(input("/issue new --type bug Login failure\nKeep details"))
+        .handle_inbound(input(
+            "/issue new --type refactor Login failure\nKeep details",
+        ))
         .await
         .unwrap();
     let state = service.store().snapshot().await.unwrap();
     assert_eq!(state.issues[0].title, "Login failure");
     assert_eq!(
         serde_json::to_value(&state.issues[0]).unwrap()["issue_type"],
-        "bug"
+        "refactor"
     );
     assert_eq!(
         service
@@ -1117,6 +1119,7 @@ async fn issue_type_im_rejects_invalid_options_without_creating_issues() {
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     for command in [
         "/issue new --type invalid Description",
+        "/issue new --type task Description",
         "/issue new --type",
         "/issue new --type bug",
     ] {

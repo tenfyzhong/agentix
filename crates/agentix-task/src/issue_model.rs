@@ -48,7 +48,7 @@ pub enum IssueType {
     Enhancement,
     Documentation,
     Question,
-    Task,
+    Refactor,
 }
 
 impl IssueType {
@@ -58,7 +58,7 @@ impl IssueType {
         Self::Enhancement,
         Self::Documentation,
         Self::Question,
-        Self::Task,
+        Self::Refactor,
     ];
 
     #[must_use]
@@ -69,7 +69,7 @@ impl IssueType {
             Self::Enhancement => "enhancement",
             Self::Documentation => "documentation",
             Self::Question => "question",
-            Self::Task => "task",
+            Self::Refactor => "refactor",
         }
     }
 }

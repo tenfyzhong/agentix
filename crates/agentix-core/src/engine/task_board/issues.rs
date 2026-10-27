@@ -1011,7 +1011,7 @@ fn parse_issue_type(content: &str) -> Result<(Option<IssueType>, &str), EngineEr
         .split_once(char::is_whitespace)
         .ok_or_else(|| error("Use /issue new --type <type> <description>"))?;
     let kind = serde_json::from_value(json!(kind))
-        .map_err(|_| error("Unknown Issue type. Choose feature, bug, enhancement, documentation, question or task."))?;
+        .map_err(|_| error("Unknown Issue type. Choose feature, bug, enhancement, documentation, question or refactor."))?;
     let content = content.trim();
     if content.is_empty() {
         return Err(error("Issue description is required"));

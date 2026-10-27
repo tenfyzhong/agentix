@@ -85,7 +85,7 @@ bug\t''
 enhancement\t''
 documentation\t''
 question\t''
-task\t''"
+refactor\t''"
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l title -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l name -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l requirement -r
@@ -110,7 +110,7 @@ bug\t''
 enhancement\t''
 documentation\t''
 question\t''
-task\t''"
+refactor\t''"
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l title -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l name -r
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l requirement -r

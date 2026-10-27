@@ -1463,7 +1463,7 @@ async fn issue_type_is_validated_persisted_and_optional_for_legacy_issues() {
         "enhancement",
         "documentation",
         "question",
-        "task",
+        "refactor",
     ] {
         let item = f.service.execute(json!({"command":"issue.create","project":f.project,"title":"Typed issue","issue_type":kind}), WriteOptions::default()).await.unwrap().result;
         assert_eq!(item["issue_type"], kind);
@@ -1493,7 +1493,7 @@ async fn issue_type_is_validated_persisted_and_optional_for_legacy_issues() {
             .result;
         assert!(updated["issue_type"].is_null());
     }
-    for invalid in [json!("unknown"), json!(42), json!(["bug"])] {
+    for invalid in [json!("unknown"), json!("task"), json!(42), json!(["bug"])] {
         assert!(f.service.execute(json!({"command":"issue.create","project":f.project,"title":"Invalid","issue_type":invalid}),WriteOptions::default()).await.is_err());
     }
     let item = issue(&f).await;

@@ -287,9 +287,9 @@ test("Issue dialog offers type labels and submits the selected type", async () =
     plugin.openIssueDialog({ id: "prj_demo" }, "Issues", []);
     const type = settings.find(setting => setting.name === "Type");
     assert.ok(type);
-    assert.deepEqual(type.options.map(option => option[0]), ["", "feature", "bug", "enhancement", "documentation", "question", "task"]);
+    assert.deepEqual(type.options.map(option => option[0]), ["", "feature", "bug", "enhancement", "documentation", "question", "refactor"]);
     settings.find(setting => setting.name === "Title").change("Login");
-    type.change("bug");
+    type.change("refactor");
     await settings.find(setting => setting.click).click();
-    assert.equal(saved.issue_type, "bug");
+    assert.equal(saved.issue_type, "refactor");
 });

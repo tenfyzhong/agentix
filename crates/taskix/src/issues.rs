@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 #[derive(Args)]
 pub struct IssueFields {
     /// Classification label for this Issue.
-    #[arg(long = "type", value_parser = ["feature", "bug", "enhancement", "documentation", "question", "task"], conflicts_with = "clear_type")]
+    #[arg(long = "type", value_parser = ["feature", "bug", "enhancement", "documentation", "question", "refactor"], conflicts_with = "clear_type")]
     pub issue_type: Option<String>,
     #[arg(long)]
     pub clear_type: bool,

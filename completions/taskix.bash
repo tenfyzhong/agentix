@@ -4801,7 +4801,7 @@ _taskix() {
             fi
             case "${prev}" in
                 --type)
-                    COMPREPLY=($(compgen -W "feature bug enhancement documentation question task" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "feature bug enhancement documentation question refactor" -- "${cur}"))
                     return 0
                     ;;
                 --title)
@@ -5533,7 +5533,7 @@ _taskix() {
             fi
             case "${prev}" in
                 --type)
-                    COMPREPLY=($(compgen -W "feature bug enhancement documentation question task" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "feature bug enhancement documentation question refactor" -- "${cur}"))
                     return 0
                     ;;
                 --title)

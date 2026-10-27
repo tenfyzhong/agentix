@@ -392,12 +392,12 @@ fn issue_type_cli_creates_updates_and_clears_labels() {
     assert_eq!(item["issue_type"], "bug");
     let id = item["id"].as_str().unwrap();
     assert_eq!(
-        cli.ok(&["issue", "update", id, "--type", "enhancement"])["issue_type"],
-        "enhancement"
+        cli.ok(&["issue", "update", id, "--type", "refactor"])["issue_type"],
+        "refactor"
     );
     assert!(cli.ok(&["issue", "update", id, "--clear-type"])["issue_type"].is_null());
     assert_eq!(
-        cli.run(&["issue", "update", id, "--type", "invalid"])
+        cli.run(&["issue", "update", id, "--type", "task"])
             .status
             .code(),
         Some(2)

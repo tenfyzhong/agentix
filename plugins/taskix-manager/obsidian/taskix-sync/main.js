@@ -729,7 +729,7 @@ class TaskixSyncPlugin extends Plugin {
                 }));
                 new Setting(this.contentEl).setName("Type").addDropdown(dropdown => {
                     dropdown.addOption("", "None");
-                    for (const type of ["feature", "bug", "enhancement", "documentation", "question", "task"]) dropdown.addOption(type, type);
+                    for (const type of ["feature", "bug", "enhancement", "documentation", "question", "refactor"]) dropdown.addOption(type, type);
                     dropdown.onChange(value => {
                         if (value !== fields.issue_type) key = randomUUID();
                         fields.issue_type = value;
