@@ -638,14 +638,19 @@ impl Service {
             }
             // Pending publication still carries the previous projected metadata.
             let publication_pending = self.store().document_generation(&key).await?.is_some();
-            let issue_type: Option<crate::IssueType> = if publication_pending {
-                issue.issue_type
-            } else if properties["issue_type"].as_str() == Some("") {
-                None
-            } else {
-                serde_json::from_value(properties["issue_type"].clone())
-                    .context("invalid: unknown Issue type")?
-            };
+            // A full sync repairs terminal metadata instead of attempting an
+            // illegal edit that would block every unrelated document. Targeted
+            // sync still reports the rejected edit to the initiating user.
+            let restore_terminal_type = selected.is_none() && issue.status.terminal();
+            let issue_type: Option<crate::IssueType> =
+                if publication_pending || restore_terminal_type {
+                    issue.issue_type
+                } else if properties["issue_type"].as_str() == Some("") {
+                    None
+                } else {
+                    serde_json::from_value(properties["issue_type"].clone())
+                        .context("invalid: unknown Issue type")?
+                };
             let type_changed = issue_type != issue.issue_type;
             if type_changed {
                 ensure!(

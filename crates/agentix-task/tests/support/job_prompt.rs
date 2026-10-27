@@ -562,3 +562,41 @@ async fn planning_capture_restores_original_prompt_and_order_without_changing_re
         assert!(doc.contains("    Which scope?\n    Local"));
     }
 }
+
+#[tokio::test]
+async fn job_pr_properties_follow_agent_replies_and_deduplicate_on_sync() {
+    let f = job_with_conversation().await;
+    let read_prs = |path: &std::path::Path| {
+        let doc = std::fs::read_to_string(path).unwrap();
+        let yaml = doc.split("---\n").nth(1).unwrap();
+        serde_yaml::from_str::<Value>(yaml).unwrap()["prs"].clone()
+    };
+    let state = f.service.store().snapshot().await.unwrap();
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(&state.jobs[0].document_path);
+    assert_eq!(read_prs(&path), json!([]));
+    let request = json!({"command":"session.record","session":"section-order","job":f.job,"messages":[
+        {"id":"user-pr","role":"user","text":"Review https://github.com/other/repo/pull/99"},
+        {"id":"agent-pr","role":"assistant","text":"Created [PR](https://github.com/acme/repo/pull/12). Also https://github.com/acme/repo/pull/12/files#diff and <https://git.example.com/acme/repo/pulls/3>。 https://gitlab.example.com/group/repo/-/merge_requests/4?view=inline https://github.com/acme/repo/issues/7 https://github.com/acme/repo/pull/nope"}
+    ]});
+    let options = WriteOptions {
+        session_ref: Some("section-order".into()),
+        ..WriteOptions::default()
+    };
+    let expected = json!([
+        "https://github.com/acme/repo/pull/12",
+        "https://git.example.com/acme/repo/pulls/3",
+        "https://gitlab.example.com/group/repo/-/merge_requests/4"
+    ]);
+    for _ in 0..2 {
+        f.service
+            .execute(request.clone(), options.clone())
+            .await
+            .unwrap();
+        f.service.sync().await.unwrap();
+        assert_eq!(read_prs(&path), expected);
+    }
+}

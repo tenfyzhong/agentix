@@ -19,6 +19,7 @@ time = { workspace = true, features = ["formatting", "parsing", "serde"] }
 tokio.workspace = true
 tracing.workspace = true
 toml.workspace = true
+url.workspace = true
 uuid = { workspace = true, features = ["v7"] }
 
 [lints]

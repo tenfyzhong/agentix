@@ -15,6 +15,26 @@ lease. Revoked agent tokens cannot overwrite that result. Stale revisions still
 reject the whole operation. Agent completion retains the normal Plan, execution,
 lease and readiness checks; agents must not use the Obsidian actor identity.
 
+## PR property projection
+
+Job frontmatter includes a managed `prs` URL list, empty when no PR is referenced
+in captured assistant replies. Projection recognizes GitHub-style `/pull/N`,
+Gitea-style `/pulls/N`, and GitLab-style `/-/merge_requests/N` HTTP(S) URLs,
+including self-hosted instances. It removes detail paths, queries and fragments
+and deduplicates in conversation order. User-only references and issue URLs are
+excluded. The list reflects current stored replies and is regenerated on sync;
+manual property changes are overwritten. No network calls or schema migration
+are required.
+
+Agents report the full URL after successful PR creation. Normal host conversation
+capture then updates the Job document, including late replies after delivery.
+Tool output alone does not create an association. Links are references, not
+verified PR creation or merge status; a review reply can also reference an
+existing PR. Historical captured replies are projected on their next sync.
+The regression test `job_pr_properties_follow_agent_replies_and_deduplicate_on_sync`
+covers the empty list, multiple hosts, user/issue exclusion, canonicalization,
+capture retries and sync.
+
 ## Validation
 
 `make check` installs locked plugin dependencies, then runs Rust formatting, Clippy, workspace tests, and the Node built-in plugin tests. Install Node.js 24+ and npm. Direct Cargo invocations require `npm ci --ignore-scripts --prefix plugins/taskix-manager` first. Normal tests use temporary databases/directories and local mock services, not live accounts.
