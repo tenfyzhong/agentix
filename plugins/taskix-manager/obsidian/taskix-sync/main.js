@@ -677,7 +677,8 @@ class TaskixSyncPlugin extends Plugin {
             }
             const { result: milestones } = await runCli(settings, ["milestone", "list", "--project", id], this.children);
             if (!Array.isArray(milestones)) throw new Error("Invalid Milestone list.");
-            if (!this.stopped) this.openIssueDialog(project, folderPath, milestones);
+            if (!this.stopped) this.openIssueDialog(project, folderPath,
+                milestones.filter(milestone => milestone.status !== "COMPLETED"));
         } catch (error) {
             if (!this.stopped) new Notice(`Could not create Issue: ${error.message}`, 10000);
         }
