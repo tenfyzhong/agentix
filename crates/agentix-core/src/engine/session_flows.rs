@@ -132,7 +132,7 @@ impl Engine {
                     "Browse Project issues; choose a Project when unattached.",
                 ),
                 (
-                    "/issue <id> | new <description>",
+                    "/issue <id> | new -title \"Title\" [description]",
                     "Create, read, edit, execute or accept an Issue.",
                 ),
                 ("/milestones", "Browse Project milestones and their Issues."),

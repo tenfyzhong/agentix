@@ -302,15 +302,32 @@ async fn issue_round_trip(browser: &Browser, service: &agentix_task::Service) {
     let content =
         "Transport requirement\n\n**Issue detail** and `code`\n\n- [ ] nested acceptance check";
     let after = browser.requests().await.len();
-    browser.command(415, &format!("/issue new {content}")).await;
+    browser.command(415, "/issue new -title '  '").await;
+    wait_for_value(|| async {
+        browser
+            .requests()
+            .await
+            .into_iter()
+            .skip(after)
+            .find(|body| body.contains("Issue title is required"))
+    })
+    .await;
+    assert!(service.store().snapshot().await.unwrap().issues.is_empty());
+    let after = browser.requests().await.len();
+    browser
+        .command(
+            416,
+            &format!("/issue new -title \"Transport requirement\" {content}"),
+        )
+        .await;
     let detail = browser.view(after, "Edit requirement").await;
     browser.assert_markdown(&detail, "Issue detail");
     let list = browser
-        .follow(416, &detail, "Project issues", "Transport requirement")
+        .follow(417, &detail, "Project issues", "Transport requirement")
         .await;
     assert!(markdown_content(&list).unwrap().contains("Todo"));
     let detail = browser
-        .follow(417, &list, "Transport requirement", "Edit requirement")
+        .follow(418, &list, "Transport requirement", "Edit requirement")
         .await;
     browser.assert_markdown(&detail, "Issue detail");
     let state = service.store().snapshot().await.unwrap();

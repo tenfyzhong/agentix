@@ -547,7 +547,7 @@ async fn configured_menus_have_dashboard_and_attached_secondary_commands() {
         "/tasks [job-id]",
         "/task <id>",
         "/issues [STATUS] [--milestone ID]",
-        "/issue <id> | new <description>",
+        "/issue <id> | new -title \"Title\" [description]",
         "/milestones",
     ] {
         assert!(

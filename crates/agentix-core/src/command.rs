@@ -90,7 +90,7 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
             let argument = input[raw_command.len()..].trim();
             if argument == "new" || argument.is_empty() {
                 return Err(InputParseError::MissingArgument(
-                    "/issue <id> or /issue new <description>",
+                    "/issue <id> or /issue new -title \"Title\" [description]",
                 ));
             }
             if let Some(content) = argument
@@ -102,7 +102,7 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
                 AgentCommand::Issue(argument.to_owned())
             } else {
                 return Err(InputParseError::MissingArgument(
-                    "/issue <id> or /issue new <description>",
+                    "/issue <id> or /issue new -title \"Title\" [description]",
                 ));
             }
         }
