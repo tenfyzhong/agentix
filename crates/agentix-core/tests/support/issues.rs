@@ -754,7 +754,9 @@ async fn issue_commands_create_template_requirements_without_an_agent_turn() {
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     let original = "Passkey login\nKeep the original requirement.\n- Mobile support";
     engine
-        .handle_inbound(input(&format!("/issue@agentix_bot new {original}")))
+        .handle_inbound(input(&format!(
+            "/issue@agentix_bot new --title \"Passkey login\" {original}"
+        )))
         .await
         .unwrap();
     let state = service.store().snapshot().await.unwrap();
@@ -1072,7 +1074,7 @@ async fn issue_type_im_creation_and_selection_preserve_requirement() {
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     engine
         .handle_inbound(input(
-            "/issue new --type refactor Login failure\nKeep details",
+            "/issue new --type refactor --title \"Login failure\" Login failure\nKeep details",
         ))
         .await
         .unwrap();
@@ -1118,8 +1120,8 @@ async fn issue_type_im_rejects_invalid_options_without_creating_issues() {
     let (engine, _channel) = engine(service.clone()).await;
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     for command in [
-        "/issue new --type invalid Description",
-        "/issue new --type task Description",
+        "/issue new --type invalid --title Title Description",
+        "/issue new --type task --title Title Description",
         "/issue new --type",
         "/issue new --type bug",
     ] {
@@ -1128,5 +1130,67 @@ async fn issue_type_im_rejects_invalid_options_without_creating_issues() {
             Err(EngineError::InvalidInput(_))
         ));
         assert!(service.store().snapshot().await.unwrap().issues.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn issue_creation_requires_an_explicit_nonblank_title() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, _channel) = engine(service.clone()).await;
+    for command in [
+        "/issue new Description only",
+        "/issue new --type bug Description",
+        "/issue new --title",
+        "/issue new --title \"\" Description",
+        "/issue new --title \"   \" Description",
+        "/issue new --title \"Unclosed",
+        "/issue new --title One --title Two",
+        "/issue new --title --type bug",
+        "/issue new --title \"Title\"suffix",
+        "/issue new --title Title --type bug --type feature",
+    ] {
+        assert!(
+            matches!(
+                engine.handle_inbound(input(command)).await,
+                Err(EngineError::InvalidInput(_))
+            ),
+            "{command}"
+        );
+        assert!(service.store().snapshot().await.unwrap().issues.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn issue_creation_preserves_explicit_title_and_optional_requirement_through_project_picker() {
+    for (command, title, requirement) in [
+        (
+            "/issue new --title '  登录失败  ' --type bug First line\n  Second line",
+            "登录失败",
+            "First line\n  Second line",
+        ),
+        ("/issue new --title Title", "Title", ""),
+        (
+            "/issue new --title \"A title\" Description with 'quotes' and --flags",
+            "A title",
+            "Description with 'quotes' and --flags",
+        ),
+    ] {
+        let (_dir, service, _) = task_fixture().await;
+        let jobs_before = service.store().snapshot().await.unwrap().jobs.len();
+        let (engine, channel) = engine(service.clone()).await;
+        engine.handle_inbound(input(command)).await.unwrap();
+        click(&engine, button(&last(&channel), "demo")).await;
+        let state = service.store().snapshot().await.unwrap();
+        assert_eq!(state.issues.len(), 1);
+        assert_eq!(state.issues[0].title, title);
+        assert_eq!(
+            service
+                .issue_content(&state.issues[0].id)
+                .await
+                .unwrap()
+                .requirement,
+            requirement
+        );
+        assert_eq!(state.jobs.len(), jobs_before);
     }
 }

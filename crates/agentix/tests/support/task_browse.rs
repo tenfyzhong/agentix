@@ -302,7 +302,12 @@ async fn issue_round_trip(browser: &Browser, service: &agentix_task::Service) {
     let content =
         "Transport requirement\n\n**Issue detail** and `code`\n\n- [ ] nested acceptance check";
     let after = browser.requests().await.len();
-    browser.command(415, &format!("/issue new {content}")).await;
+    browser
+        .command(
+            415,
+            &format!("/issue new --title \"Transport requirement\" {content}"),
+        )
+        .await;
     let detail = browser.view(after, "Edit requirement").await;
     browser.assert_markdown(&detail, "Issue detail");
     let list = browser

@@ -193,7 +193,7 @@ Migration also handles renamed Project folders and archive relocation before per
 
 An owned Job's associated Issue takes priority. An explicit Issue/Job selected through IM takes priority over model suggestions. Otherwise Jev can select one same-Project TODO/ACTIVE Issue using bounded summaries. Ambiguity, missing evidence, conflicts or service failure return the decision to the main Agent, which reads full details. No match produces an independent Job. Before linking, the selected document is synchronized, the full requirement/acceptance and Milestone context are read, and revision/hash guards are applied. Neither Jev nor hooks create Jobs or start Tasks on their own.
 
-`/issues [STATUS] [--milestone ID]` defaults to ALL and accepts the five case-insensitive Issue states. `/issue new <description>` uses the first line as the title and retains the full description as the requirement. `/issue ID` displays details, lifecycle controls and paginated related Jobs. `/milestones` shows the current Project's Milestones and progress. Without an attached Project, commands show a Project picker. Browse/edit/acceptance works without an agent session and on read-only attachments.
+`/issues [STATUS] [--milestone ID]` defaults to ALL and accepts the five case-insensitive Issue states. `/issue new --title "Title" [description]` requires an explicit nonblank title and stores the optional description separately as the requirement. Quote titles containing spaces with single or double quotes. Missing, empty, whitespace-only, unclosed quoted, or duplicate title options are rejected before Project selection or creation. `/issue ID` displays details, lifecycle controls and paginated related Jobs. `/milestones` shows the current Project's Milestones and progress. Without an attached Project, commands show a Project picker. Browse/edit/acceptance works without an agent session and on read-only attachments.
 
 Start/Continue/New round requires a writable same-Project session. The workflow can select an existing session, use the adapter's existing new-session capability, or create a workspace through the existing backend/directory picker. Selection is rechecked against fresh session workspace metadata. An owned Task on another Job prevents starting a different round. Continuing prioritizes the owned Job; multiple other active rounds require explicit selection. Attached-session completion resumes only the expected attachment epoch.
 
@@ -227,9 +227,10 @@ property there if desired.
 
 The Obsidian New Issue dialog provides an optional **Type** dropdown. CLI creation
 and updates accept `--type bug`; `issue update ID --clear-type` removes the label.
-IM accepts `/issue new --type bug Login fails`; the remaining first line is the
-title and the remaining complete description is the requirement. The existing
-`/issue new <description>` form remains valid. Issue details display the type and
+IM accepts `/issue new --title "Login fails" --type bug Details`; title and type
+options can appear in either order before the optional description. The title
+is required even when a type is supplied; the old description-only form is rejected.
+Issue details display the type and
 provide a **Type** button with the same choices and **None** to clear it. These
 controls retain the existing owner, conversation and revision guards.
 

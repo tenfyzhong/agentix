@@ -200,7 +200,7 @@ Pi/OMP reports periodic heartbeat failures and retries on later ticks. Interrupt
 
 ### 5.3 Agentix IM integration
 
-Taskix is independent of the IM bridge. With task boards enabled, `/issues`, `/issue ID`, `/issue new <description>` and `/milestones` browse/manage project requirements even without an agent attachment. Execution controls select a writable same-Project session through existing session/workspace flows. Human acceptance is separate from Job delivery. See [Issue IM contract](project-issues.md#routing-and-im).
+Taskix is independent of the IM bridge. With task boards enabled, `/issues`, `/issue ID`, `/issue new --title "Title" [description]` and `/milestones` browse/manage project requirements even without an agent attachment. Execution controls select a writable same-Project session through existing session/workspace flows. Human acceptance is separate from Job delivery. See [Issue IM contract](project-issues.md#routing-and-im).
 
 IM does not create Plans or replace the Skill. Its existing refresh loop also consumes task events and sends waiting-user, blocked, failed, or Job review, rejection, or completion notifications to the corresponding session. This is not a file watcher.
 
