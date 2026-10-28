@@ -43,6 +43,7 @@ uuid.workspace = true
 nix = { version = "0.31", default-features = false, features = ["user", "signal", "process"] }
 
 [dev-dependencies]
+sqlx.workspace = true
 larksuite-oapi-sdk-rs.workspace = true
 prost.workspace = true
 time = { workspace = true, features = ["parsing"] }

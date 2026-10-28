@@ -1436,6 +1436,8 @@ mod tests {
         events: broadcast::Sender<AgentEvent>,
         attached: StdMutex<Vec<String>>,
         turn_blocked: CancellationToken,
+        turn_dropped: CancellationToken,
+        shutdown_on_turn: Option<CancellationToken>,
         blocked_list_calls: std::sync::atomic::AtomicUsize,
         list_release: Option<CancellationToken>,
         turn_release: CancellationToken,
@@ -1456,6 +1458,8 @@ mod tests {
                 events,
                 attached: StdMutex::new(Vec::new()),
                 turn_blocked: CancellationToken::new(),
+                turn_dropped: CancellationToken::new(),
+                shutdown_on_turn: None,
                 blocked_list_calls: std::sync::atomic::AtomicUsize::new(0),
                 list_release: None,
                 turn_release: CancellationToken::new(),
@@ -1540,7 +1544,11 @@ mod tests {
             text: &str,
         ) -> Result<String, AgentError> {
             if text == "blocked-prompt" {
+                let _lifetime = self.turn_dropped.clone().drop_guard();
                 self.turn_blocked.cancel();
+                if let Some(shutdown) = &self.shutdown_on_turn {
+                    shutdown.cancel();
+                }
                 self.turn_release.cancelled().await;
             }
             Ok("turn_test".into())
@@ -1612,6 +1620,7 @@ mod tests {
         blocked_offline_conversation: Option<String>,
         blocked_task_conversation: Option<String>,
         blocked: CancellationToken,
+        prompt_deferred: CancellationToken,
         unblock: CancellationToken,
     }
 
@@ -1629,6 +1638,7 @@ mod tests {
                 blocked_offline_conversation: None,
                 blocked_task_conversation: None,
                 blocked: CancellationToken::new(),
+                prompt_deferred: CancellationToken::new(),
                 unblock: CancellationToken::new(),
             }
         }
@@ -1688,6 +1698,9 @@ mod tests {
             conversation: &ConversationRef,
             view: &OutboundView,
         ) -> Result<MessageRef, ChannelError> {
+            if view.subtitle.as_deref() == Some("Sending…") {
+                self.prompt_deferred.cancel();
+            }
             if self.blocked_task_conversation.as_deref() == Some(&conversation.conversation_id)
                 && view.title == "Task update"
             {
@@ -2639,17 +2652,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn engine_runtime_shutdown_bounds_waits_and_fences_only_started_inputs() {
+    async fn engine_runtime_shutdown_fences_inputs_before_prompt_deferral() {
+        shutdown_fences_only_started_inputs(false).await;
+    }
+
+    #[tokio::test]
+    async fn engine_runtime_shutdown_fences_inputs_after_prompt_deferral() {
+        shutdown_fences_only_started_inputs(true).await;
+    }
+
+    async fn shutdown_fences_only_started_inputs(after_deferral: bool) {
         use agentix_core::{Engine, InboundEnvelope, SqliteState};
         use std::time::Duration;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("state.sqlite3");
         let state = SqliteState::open(&path).await.unwrap();
-        let agent = Arc::new(LifecycleAgent::new());
+        let shutdown = CancellationToken::new();
+        let agent = Arc::new(LifecycleAgent {
+            // Cancel in the host call itself, before the 100 ms feedback
+            // deferral can run, rather than racing the wall clock in the test.
+            shutdown_on_turn: (!after_deferral).then(|| shutdown.clone()),
+            ..LifecycleAgent::new()
+        });
+        let channel = Arc::new(LifecycleChannel::new());
         let engine = Arc::new(Engine::new(
             agent.clone(),
             state.clone(),
-            vec![Arc::new(LifecycleChannel::new())],
+            vec![channel.clone()],
         ));
         let conversation = ConversationRef::new(ChannelKind::Telegram, "slow");
         engine
@@ -2662,7 +2691,6 @@ mod tests {
             .await
             .unwrap();
         let (sender, inbound) = tokio::sync::mpsc::channel(8);
-        let shutdown = CancellationToken::new();
         let mut runtime = tokio::spawn(super::run_engine_loop(
             engine,
             agent.clone(),
@@ -2678,27 +2706,38 @@ mod tests {
             ))
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(2), agent.turn_blocked.cancelled())
+        let pending = InboundEnvelope::text("pending", conversation, "owner", "never started");
+        if !after_deferral {
+            sender.send(pending.clone()).await.unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(10), agent.turn_blocked.cancelled())
             .await
-            .unwrap();
-        sender
-            .send(InboundEnvelope::text(
-                "pending",
-                conversation,
-                "owner",
-                "never started",
-            ))
-            .await
-            .unwrap();
-        shutdown.cancel();
-        let stopped = tokio::time::timeout(Duration::from_secs(2), &mut runtime).await;
+            .expect("host was not called");
+        if after_deferral {
+            tokio::time::timeout(Duration::from_secs(10), channel.prompt_deferred.cancelled())
+                .await
+                .expect("prompt was not deferred");
+        } else {
+            assert!(!channel.prompt_deferred.is_cancelled());
+        }
+        if after_deferral {
+            sender.send(pending).await.unwrap();
+            shutdown.cancel();
+        }
+        // This is a deadlock watchdog, not the host-acknowledgement budget.
+        // The exact worker grace is tested separately with a paused clock;
+        // mandatory file-backed fencing is deliberately outside that budget.
+        let stopped = tokio::time::timeout(Duration::from_secs(30), &mut runtime).await;
         if stopped.is_err() {
             runtime.abort();
             let _ = runtime.await;
         }
+        stopped
+            .expect("shutdown cleanup did not finish")
+            .expect("engine runtime panicked during shutdown");
         assert!(
-            stopped.is_ok(),
-            "shutdown waited indefinitely for a host acknowledgement"
+            agent.turn_dropped.is_cancelled(),
+            "host request survived shutdown"
         );
         assert!(
             !state

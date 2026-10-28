@@ -166,27 +166,62 @@ pub async fn run_engine_loop_with_config(
         }
     }
     let engine = snapshots.borrow().clone();
+    let stage_started = std::time::Instant::now();
     engine.cancel_input_recovery();
     engine.cancel_background_completions();
     if let Err(error) = engine.cancel_pending_prompts().await {
         tracing::error!(%error, "failed to fence pending inputs at shutdown");
     }
+    trace_shutdown_stage("pending input fencing", stage_started);
+    let stage_started = std::time::Instant::now();
     delivery_observer.abort();
     let _ = delivery_observer.await;
     notification_shutdown.cancel();
     let _ = notifications.await;
-    // Stop admission immediately, let acknowledged work settle, then cancel
-    // only the remaining workers. Pending queue entries have no side effects.
-    let _ = tokio::time::timeout(SHUTDOWN_GRACE, async {
-        while let Some(completed) = pool.workers.join_next_with_id().await {
-            pool.retire(&engine, completed).await;
+    trace_shutdown_stage("background task joins", stage_started);
+    // Admission has stopped, so no lane needs to be released until every
+    // worker has settled. Bound only the host wait, not durable retirement:
+    // cancelling retire() can lose a fence after removing its worker metadata.
+    pool.shutdown(&engine, SHUTDOWN_GRACE).await;
+}
+
+fn trace_shutdown_stage(stage: &'static str, started: std::time::Instant) {
+    tracing::debug!(
+        stage,
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "Engine shutdown stage completed"
+    );
+}
+
+/// Join acknowledged work within one grace period, then cancel and join the
+/// remainder. Return every outcome so mandatory retirement cannot be cancelled
+/// by the host acknowledgement deadline. At most CONCURRENCY outcomes are held.
+async fn stop_workers(
+    workers: &mut JoinSet<()>,
+    grace: Duration,
+) -> Vec<Result<(Id, ()), JoinError>> {
+    let stage_started = std::time::Instant::now();
+    let mut completed = Vec::with_capacity(workers.len());
+    let drained = tokio::time::timeout(grace, async {
+        while let Some(result) = workers.join_next_with_id().await {
+            completed.push(result);
         }
     })
     .await;
-    pool.workers.abort_all();
-    while let Some(completed) = pool.workers.join_next_with_id().await {
-        pool.retire(&engine, completed).await;
+    trace_shutdown_stage("worker grace", stage_started);
+    if drained.is_err() {
+        tracing::warn!(
+            remaining = workers.len(),
+            "Engine worker shutdown grace expired"
+        );
     }
+    let stage_started = std::time::Instant::now();
+    workers.abort_all();
+    while let Some(result) = workers.join_next_with_id().await {
+        completed.push(result);
+    }
+    trace_shutdown_stage("cancelled worker joins", stage_started);
+    completed
 }
 
 /// Persist and detach local state before attempting bounded IM shutdown effects.
@@ -259,6 +294,15 @@ impl EngineWorkers {
             inbound_ids: HashSet::new(),
             overloaded: 0,
         }
+    }
+
+    async fn shutdown(&mut self, engine: &Engine, grace: Duration) {
+        let completed = stop_workers(&mut self.workers, grace).await;
+        let stage_started = std::time::Instant::now();
+        for result in completed {
+            self.retire(engine, result).await;
+        }
+        trace_shutdown_stage("worker retirement and fencing", stage_started);
     }
 
     async fn admit_inbound(
@@ -467,6 +511,175 @@ fn is_empty_rollout_metadata_error(error: &EngineError) -> bool {
 #[cfg(test)]
 mod tests {
     use agentix_core::{AgentError, EngineError};
+    struct UnusedAgent;
+
+    #[async_trait::async_trait]
+    impl agentix_core::AgentAdapter for UnusedAgent {
+        fn display_name(&self) -> &'static str {
+            "unused"
+        }
+        async fn list_sessions(
+            &self,
+            _: Option<String>,
+            _: u32,
+        ) -> Result<agentix_core::SessionPage, AgentError> {
+            unreachable!()
+        }
+        async fn read_history(
+            &self,
+            _: &agentix_core::SessionId,
+            _: Option<String>,
+            _: u32,
+        ) -> Result<agentix_core::HistoryPage, AgentError> {
+            unreachable!()
+        }
+        async fn attach(&self, _: &agentix_core::SessionId) -> Result<(), AgentError> {
+            unreachable!()
+        }
+        async fn unsubscribe(&self, _: &agentix_core::SessionId) -> Result<(), AgentError> {
+            unreachable!()
+        }
+        async fn start_turn(
+            &self,
+            _: &agentix_core::SessionId,
+            _: &str,
+        ) -> Result<String, AgentError> {
+            unreachable!()
+        }
+        async fn steer(
+            &self,
+            _: &agentix_core::SessionId,
+            _: &str,
+            _: &str,
+        ) -> Result<String, AgentError> {
+            unreachable!()
+        }
+        async fn interrupt(&self, _: &agentix_core::SessionId, _: &str) -> Result<(), AgentError> {
+            unreachable!()
+        }
+        async fn resolve_interaction(
+            &self,
+            _: agentix_core::InteractionDecision,
+        ) -> Result<(), AgentError> {
+            unreachable!()
+        }
+        fn subscribe(&self) -> tokio::sync::broadcast::Receiver<agentix_core::AgentEvent> {
+            unreachable!()
+        }
+        fn generation(&self) -> u64 {
+            0
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn worker_shutdown_bounds_host_wait_and_retains_all_retirement_outcomes() {
+        use tokio::task::JoinSet;
+        use tokio_util::sync::CancellationToken;
+
+        let mut workers = JoinSet::new();
+        let started = CancellationToken::new();
+        let dropped = CancellationToken::new();
+        let blocked = workers.spawn({
+            let started = started.clone();
+            let dropped = dropped.clone();
+            async move {
+                let _lifetime = dropped.drop_guard();
+                started.cancel();
+                std::future::pending::<()>().await;
+            }
+        });
+        let acknowledged = workers.spawn(async {});
+        started.cancelled().await;
+        let before = tokio::time::Instant::now();
+        let completed = super::stop_workers(&mut workers, super::SHUTDOWN_GRACE).await;
+        assert_eq!(before.elapsed(), super::SHUTDOWN_GRACE);
+        assert!(workers.is_empty());
+        assert!(dropped.is_cancelled(), "host request outlived shutdown");
+        assert_eq!(completed.len(), 2);
+        assert!(
+            completed
+                .iter()
+                .any(|result| matches!(result, Ok((id, ())) if *id == acknowledged.id()))
+        );
+        assert!(completed.iter().any(|result| matches!(result, Err(error) if error.id() == blocked.id() && error.is_cancelled())));
+    }
+
+    #[tokio::test]
+    async fn shutdown_does_not_cancel_durable_retirement_when_host_grace_expires() {
+        use std::{sync::Arc, task::Poll};
+
+        use agentix_core::{
+            ChannelKind, ConversationRef, DispatchScope, Engine, EngineWork, SqliteState,
+        };
+        use sqlx::Connection;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.sqlite3");
+        let state = SqliteState::open(&path).await.unwrap();
+        let engine = Engine::new(Arc::new(UnusedAgent), state.clone(), vec![]);
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "shutdown");
+        assert!(
+            state
+                .claim_event(conversation.channel, "interrupted")
+                .await
+                .unwrap()
+        );
+        let mut lock = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
+        )
+        .await
+        .unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut lock)
+            .await
+            .unwrap();
+
+        let mut pool = super::EngineWorkers::new();
+        pool.queue.try_push(EngineWork::Recover).unwrap();
+        let job = pool.queue.next_ready(|_| DispatchScope::Global).unwrap();
+        let worker = pool.workers.spawn(std::future::pending());
+        pool.active.insert(
+            worker.id(),
+            super::Worker {
+                dispatch: job.id,
+                refresh: None,
+                inbound: Some((conversation.clone(), "interrupted".into())),
+            },
+        );
+        pool.inbound_counts.insert(conversation.clone(), 1);
+        pool.inbound_ids
+            .insert((conversation.channel, "interrupted".into()));
+        worker.abort();
+        while !worker.is_finished() {
+            tokio::task::yield_now().await;
+        }
+
+        // SQLite is deliberately stalled independently of the host deadline.
+        // Poll once before advancing, so retirement has consumed the worker.
+        tokio::time::pause();
+        {
+            let shutdown = pool.shutdown(&engine, super::SHUTDOWN_GRACE);
+            tokio::pin!(shutdown);
+            assert!(matches!(futures_util::poll!(&mut shutdown), Poll::Pending));
+            tokio::time::advance(super::SHUTDOWN_GRACE + std::time::Duration::from_millis(1)).await;
+            assert!(
+                matches!(futures_util::poll!(&mut shutdown), Poll::Pending),
+                "host deadline cancelled mandatory durable retirement"
+            );
+            tokio::time::resume();
+            sqlx::query("ROLLBACK").execute(&mut lock).await.unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(30), &mut shutdown)
+                .await
+                .unwrap();
+        }
+        assert_eq!(state.uncertain_event_count().await.unwrap(), 1);
+        drop(lock);
+        drop(engine);
+        drop(state);
+        let reopened = SqliteState::open(&path).await.unwrap();
+        assert_eq!(reopened.uncertain_event_count().await.unwrap(), 1);
+    }
+
     #[test]
     fn empty_rollout_metadata_errors_are_low_priority() {
         let empty = EngineError::Agent(AgentError::Rejected(
