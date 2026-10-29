@@ -294,17 +294,15 @@ async fn wait_for_pane_command(driver: &TmuxDriver, pane: &str, command: &str) {
 
 #[cfg(unix)]
 async fn wait_for_shell_prompt(driver: &TmuxDriver, pane: &str) {
-    // Input sent before readline starts can be consumed during shell startup.
+    // Startup may consume input; retries must acknowledge the latest probe so
+    // queued older commands cannot make us send Ctrl-D before the queue drains.
     tokio::time::timeout(Duration::from_secs(5), async {
+        let mut sequence = 0_u32;
         loop {
+            sequence += 1;
+            let probe = format!("printf 'agentix-ready-%s>\\n' {sequence}");
             driver
-                .run(&strings(&[
-                    "send-keys",
-                    "-t",
-                    pane,
-                    "printf 'agentix-%s>\\n' ready",
-                    "Enter",
-                ]))
+                .run(&strings(&["send-keys", "-t", pane, &probe, "Enter"]))
                 .await
                 .unwrap();
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -312,7 +310,10 @@ async fn wait_for_shell_prompt(driver: &TmuxDriver, pane: &str) {
                 .run(&strings(&["capture-pane", "-p", "-t", pane]))
                 .await
                 .unwrap();
-            if output.contains("agentix-ready>") {
+            if output
+                .lines()
+                .any(|line| line.trim() == format!("agentix-ready-{sequence}>"))
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
