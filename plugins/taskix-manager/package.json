@@ -1,6 +1,6 @@
 {
   "name": "taskix-manager",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Shared taskix workflow for Codex, Claude, Pi, OMP, and OpenCode",
   "type": "module",
   "license": "MIT",
