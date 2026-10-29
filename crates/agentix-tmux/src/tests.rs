@@ -495,6 +495,8 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
             .unwrap();
         let created = manager.execute(&prepared).await.unwrap();
         let pane = created.location.pane_id;
+        // The pane PID exists before the child finishes chdir and shell startup.
+        wait_for_shell_prompt(&driver, &pane).await;
         assert_eq!(
             driver
                 .inventory(false)
@@ -521,7 +523,6 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
             start_command.contains("-il") && start_command.contains(&shell[0]),
             "new pane must use an interactive login shell: {start_command}"
         );
-        wait_for_shell_prompt(&driver, &pane).await;
         if fish {
             assert_eq!(
                 std::fs::read_to_string(working.join("login-shell-ready")).unwrap(),
