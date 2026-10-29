@@ -1,6 +1,8 @@
 # Taskix workflow
 
-Optional host routing uses `TASKIX_JEV_ENABLED=true`, `TASKIX_JEV_URL` (full evaluation endpoint), and `TASKIX_JEV_API_KEY`. Missing configuration preserves the existing workflow. A confident host `Taskix route` supplies selected Job/single Issue ID; use those in the normal guarded commands below. Uncertain or failed classification returns directly to the current main Agent without a classifier subagent. Read the selected Job and pass its current revision with `--expect-revision` on fallback followup.
+Provider identity (`TASKIX_DECISION_PROVIDER`) is separate from protocol (`TASKIX_DECISION_PROTOCOL=typesafe|openai_decisions`). Built-ins default to their matching protocol; third parties supply protocol, endpoint, key and model. Legacy `TASKIX_JEV_*` configuration remains supported for Typesafe. See the [decision configuration guide](https://github.com/tenfyzhong/agentix/blob/main/docs/decision-providers.md).
+
+Optional host routing uses `TASKIX_DECISION_ENABLED=true`, `TASKIX_DECISION_URL` (full evaluation endpoint), and `TASKIX_DECISION_API_KEY`. Missing configuration preserves the existing workflow. A confident host `Taskix route` supplies selected Job/single Issue ID; use those in the normal guarded commands below. Uncertain or failed classification returns directly to the current main Agent without a classifier subagent. Read the selected Job and pass its current revision with `--expect-revision` on fallback followup.
 
 Issue and Milestone commands:
 
@@ -190,10 +192,10 @@ For `status: selected`, append the returned `args` unchanged to creation/follow-
 
 The legacy array of `{id, role, text}` and legacy `planning` wrapper remain accepted for older producers; those formats still use the latest eligible associated Job when no explicit `--job` is given. Upgrade producers to the turn-aware wrapper for discussion capture. Conversation renders ordered `Turn N` sections with `User input` and `Agent output`; replies within a turn share one quote.
 
-## Jev routing statistics
+## Decision routing statistics
 
-Statistics collection is opt-in via `TASKIX_JEV_METRICS_ENABLED=true` in the host.
-Use `TASKIX_JEV_METRICS_DB` to select the same independent SQLite database for
+Statistics collection is opt-in via `TASKIX_DECISION_METRICS_ENABLED=true` in the host.
+Use `TASKIX_DECISION_METRICS_DB` to select the same independent SQLite database for
 collection and queries. These commands do not open the task database or require
 `taskix init`; reading does not enable collection or create a missing database.
 
@@ -211,8 +213,8 @@ recovery, outcome, review_policy, completion) plus per-question score-pass rates
 Discussion-turn indices are grouped; Issue association uses one choice question. Request acceptance and question
 score passes are different measures; neither establishes correctness.
 Use `--details` for the expanded diagnostics and `--json` for complete data,
-including `by_kind` and `by_question`. New writers migrate v1 to v2 atomically;
-new readers support both without migration. Upgrade the CLI and plugin together.
+including `by_kind` and `by_question`. New writers migrate v1/v2 to v3 atomically;
+new readers support v1/v2/v3 without migration. Provider/protocol identity is retained; historical records are Typesafe. Upgrade the CLI and plugin together.
 Historical unrecorded lifecycle assessments are not backfilled.
 
 Detailed reports include adoption, fallback reasons, per-question issues, reviewed accuracy and
@@ -220,7 +222,7 @@ score gates from 0.50 through 0.95 in 0.05 increments. Gate counts are not predi
 labels establish reviewed accuracy; model agreement is not a correctness label.
 List returns the most recent requests and scores (limit 1–1000, default 50).
 
-`PREP_MS` (JSON `mean_duration_ms`) measures preparation and Jev evaluation only;
+`PREP_MS` (JSON `mean_duration_ms`) measures preparation and decision service evaluation only;
 it excludes metrics persistence and subsequent main-Agent handling. Writes
 are best-effort, so reports describe stored observations, not all host prompts.
 
@@ -243,21 +245,21 @@ node /absolute/plugin/path/lifecycle.mjs HOST_SESSION < assessment.json
 
 Use `kind: "outcome"` and an owned `task_id` for execution result assessment, or `kind: "review_policy"` for changed Job scope. An explicit `task_id` also scopes recovery, including terminal Tasks omitted from the normal candidate list. Without one, recovery selects among the existing unfinished candidates. Pi/OMP/OpenCode accept `args: ["lifecycle", "classify", JSON.stringify(input)]`; the standalone CLI has no `lifecycle classify` subcommand.
 
-On `status: selected`, use `args` without removing revision guards and supply normal ownership credentials plus listed `required_arguments`. A `ready` result requires actual acceptance verification and contains no done command. A `status: agent` result uses the existing main-Agent workflow. The same Jev enablement, endpoint, threshold, context limits and deadline apply. Assessments are separate from prompt-routing metrics.
+On `status: selected`, use `args` without removing revision guards and supply normal ownership credentials plus listed `required_arguments`. A `ready` result requires actual acceptance verification and contains no done command. A `status: agent` result uses the existing main-Agent workflow. The same decision enablement, endpoint, threshold, context limits and deadline apply. Assessments are separate from prompt-routing metrics.
 
 ### Job completion checkpoint
 
 Before the final Task makes an ACTIVE Job ready, call the shared helper with
 `{"kind":"completion","job_id":"JOB_ID","task_id":"TASK_ID","prompt":"verbatim current request","history":[]}`.
 Use the same shell entry point or Pi/OMP/OpenCode `lifecycle classify` operation above.
-Jev returns `pending_review` (`review_policy: required`) or `completed`
+The decision service returns `pending_review` (`review_policy: required`) or `completed`
 (`review_policy: none`) based on the entire Job. Execute the returned `task done TASK_ID --review-policy required|none
 --expect-job-revision JOB_REV --expect-revision TASK_REV` arguments with the normal
 Task lease after acceptance verification. Policy and state commit in one transaction. Reassess on conflict. An entirely non-code Job can replace an earlier
 required default; a Git-only last Task does not erase earlier code changes.
 Disabled/unavailable/uncertain results preserve the existing policy. This is not
 `job approve`, and already pending Jobs are not eligible for completion assessment.
-Direct standalone CLI calls still execute their saved policy; the optional Jev
+Direct standalone CLI calls still execute their saved policy; the optional decision service
 checkpoint belongs to the host workflow.
 
 The completion helper accepts `transition: "cancel"` for the final cancelled Task,

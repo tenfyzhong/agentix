@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, rm, access, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { classifyLifecycle, classifyDiscussionTurns, routePrompt } from "../jev.mjs";
 
@@ -165,7 +165,7 @@ test("native_taskix_report_matches_plugin_database_and_preserves_read_only_data"
 test("metrics_initializes_versioned_database", async t => {
     const f = await fixture(t);
     await routePrompt(f.args);
-    assert.equal((await rows(f.path, "PRAGMA user_version"))[0].user_version, 2);
+    assert.equal((await rows(f.path, "PRAGMA user_version"))[0].user_version, 3);
     assert.equal((await rows(f.path, "PRAGMA application_id"))[0].application_id, 0x544a4556);
 });
 
@@ -285,7 +285,7 @@ test("metrics_migrates_v1_preserving_rows_and_labels", async t => {
     const f = await fixture(t);
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(f.path);
-    const schema = (await readFile(new URL("../metrics-schema.sql", import.meta.url), "utf8"))
+    const schema = (await readFile(new URL("./fixtures/metrics-v2.sql", import.meta.url), "utf8"))
         .replace("PRAGMA user_version=2", "PRAGMA user_version=1")
         .replace(", kind TEXT NOT NULL DEFAULT 'routing'", "");
     db.exec(schema);
@@ -294,7 +294,7 @@ test("metrics_migrates_v1_preserving_rows_and_labels", async t => {
     await routePrompt(f.args);
     const old = (await rows(f.path, "SELECT kind, review FROM requests WHERE id='old'"))[0];
     assert.deepEqual(old, {kind: "routing", review: "correct"});
-    assert.equal((await rows(f.path, "PRAGMA user_version"))[0].user_version, 2);
+    assert.equal((await rows(f.path, "PRAGMA user_version"))[0].user_version, 3);
 });
 
 test("metrics_helper_acceptance_includes_final_guards_and_skips_deterministic_selection", async t => {
@@ -333,7 +333,7 @@ test("metrics_failed_v1_append_rolls_back_migration", async t => {
     const f = await fixture(t);
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(f.path);
-    db.exec((await readFile(new URL("../metrics-schema.sql", import.meta.url), "utf8"))
+    db.exec((await readFile(new URL("./fixtures/metrics-v2.sql", import.meta.url), "utf8"))
         .replace("PRAGMA user_version=2", "PRAGMA user_version=1")
         .replace(", kind TEXT NOT NULL DEFAULT 'routing'", ""));
     db.exec("CREATE TRIGGER reject_request BEFORE INSERT ON requests BEGIN SELECT RAISE(ABORT, 'test failure'); END");
@@ -412,4 +412,38 @@ test("generic_writer_rejects_invalid_kind_before_creating_storage", async t => {
             metric:{id:"invalid",started_at:1,duration_ms:1,called:true,kind,answers:[],outcome:{action:"allow"}}}),false);
         await assert.rejects(access(f.path));
     }
+});
+
+test("neutral_metrics_configuration_records_provider_and_protocol", async t => {
+    const f = await fixture(t, false);
+    Object.assign(f.args.env, { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_PROVIDER: "acme", TASKIX_DECISION_PROTOCOL: "typesafe",
+        TASKIX_DECISION_URL: "https://acme.test", TASKIX_DECISION_API_KEY: "secret", TASKIX_DECISION_MODEL: "custom",
+        TASKIX_DECISION_METRICS_ENABLED: "true", TASKIX_DECISION_METRICS_DB: f.path, TASKIX_JEV_METRICS_DB: f.path + "-unused" });
+    await routePrompt(f.args);
+    assert.deepEqual(await rows(f.path, "SELECT provider,protocol FROM requests"), [{ provider: "acme", protocol: "typesafe" }]);
+    await assert.rejects(access(f.path + "-unused"));
+    const before = await readFile(f.path);
+    Object.assign(f.args.env, { TASKIX_DECISION_METRICS_ENABLED: "false", TASKIX_JEV_METRICS_ENABLED: "true" });
+    await routePrompt(f.args);
+    assert.deepEqual(await readFile(f.path), before);
+});
+
+test("v2_migration_preserves_historical_typesafe_and_human_reviews", async t => {
+    const f = await fixture(t);
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(f.path);
+    db.exec(await readFile(new URL("./fixtures/metrics-v2.sql", import.meta.url), "utf8"));
+    db.exec("INSERT INTO requests(id,started_at,model,threshold,duration_ms,called,accepted,action,review,answer_count) VALUES('old',1,'jev',.9,1,1,1,'new_job','correct',0)");
+    db.close();
+    await routePrompt(f.args);
+    assert.deepEqual(await rows(f.path, "PRAGMA user_version"), [{ user_version: 3 }]);
+    assert.deepEqual(await rows(f.path, "SELECT provider,protocol,review FROM requests WHERE id='old'"), [{ provider: "typesafe", protocol: "typesafe", review: "correct" }]);
+});
+
+test("metrics_default_path_uses_decision_filename", async () => {
+    const { metricsPath } = await import("../jev-metrics.mjs");
+    assert.equal(metricsPath({}), join(homedir(), ".local", "state", "taskix", "decision-metrics.sqlite"));
+    assert.equal(metricsPath({ XDG_STATE_HOME: "/custom-state" }), join("/custom-state", "taskix", "decision-metrics.sqlite"));
+    assert.equal(metricsPath({ TASKIX_JEV_METRICS_DB: "/old/jev-metrics.sqlite" }), "/old/jev-metrics.sqlite");
+    assert.equal(metricsPath({ TASKIX_DECISION_METRICS_DB: "/new/custom.sqlite", TASKIX_JEV_METRICS_DB: "/old/jev-metrics.sqlite" }), "/new/custom.sqlite");
 });

@@ -51,10 +51,9 @@ impl TmuxDriver {
         } else {
             command.args(["-L", "default"]);
         }
-        command
-            .env_remove("TMUX")
-            .env_remove("TMUX_PANE")
-            .env("LC_ALL", "C");
+        // Keep the inherited locale: tmux passes its environment to new panes,
+        // and forcing the C locale can break shell handling of Unicode paths.
+        command.env_remove("TMUX").env_remove("TMUX_PANE");
         // tmux parses trailing semicolons even with structured argv. Protect
         // every value, including cwd, names and input text, at the CLI boundary.
         command

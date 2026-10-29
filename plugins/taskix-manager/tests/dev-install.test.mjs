@@ -56,9 +56,9 @@ exit 0
     }
     return {
         calls: async () => (await readFile(join(directory, "calls"), "utf8")).trim().split("\n"),
-        run: (target, failure = "", host = "codex", extraEnv = {}) => spawnSync("make", [...(Array.isArray(target) ? target : target.split(" ")), "CARGO=cargo"], {
+        run: (target, failure = "", host = "codex", extraEnv = {}) => spawnSync("make", ["CARGO=cargo", "NODE=node", ...(Array.isArray(target) ? target : target.split(" "))], {
             cwd: repository,
-            env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, INSTALL_FIXTURE_DIR: directory, INSTALL_FAIL: failure, INSTALL_FAIL_HOST: host, ...extraEnv },
+            env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, XDG_CACHE_HOME: join(directory, "cache"), OPENCODE_CONFIG_DIR: join(directory, "opencode"), INSTALL_FIXTURE_DIR: directory, INSTALL_FAIL: failure, INSTALL_FAIL_HOST: host, ...extraEnv },
             encoding: "utf8",
         }),
     };
@@ -163,4 +163,11 @@ test("omp_requires_node_before_cleanup", { skip: process.platform === "win32" },
     const f = await fixture(t);
     assert.notEqual(f.run(["plugin", "HOSTS=omp", "NODE=/nonexistent/node"]).status, 0);
     await assert.rejects(f.calls(), { code: "ENOENT" });
+});
+
+test("npm_node_environment_cannot_bypass_installation_fixture", { skip: process.platform === "win32" }, async t => {
+    const f = await fixture(t);
+    const result = f.run("remove-plugin", "", "codex", { NODE: process.execPath });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(await f.calls(), hosts.flatMap(host => removals[host]));
 });

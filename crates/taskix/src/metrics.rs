@@ -66,7 +66,7 @@ pub async fn run(command: &MetricsCommand) -> Result<Value> {
     let path = database_path()?;
     if !path.is_file() {
         bail!(
-            "not_found: Jev metrics database {}. Enable TASKIX_JEV_METRICS_ENABLED and collect routing requests first.",
+            "not_found: decision metrics database {}. Enable TASKIX_DECISION_METRICS_ENABLED and collect routing requests first.",
             path.display()
         );
     }
@@ -77,12 +77,12 @@ pub async fn run(command: &MetricsCommand) -> Result<Value> {
         .busy_timeout(Duration::from_millis(25));
     let mut db = SqliteConnection::connect_with(&options)
         .await
-        .context("Cannot open Jev metrics database")?;
+        .context("Cannot open decision metrics database")?;
     let result = async {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&mut db).await?;
         let application: i64 = sqlx::query_scalar("PRAGMA application_id").fetch_one(&mut db).await?;
-        if !matches!(version, 1 | 2) || application != 0x544A_4556 {
-            bail!("Unsupported Jev metrics schema (application_id={application}, version={version}); expected Taskix Jev metrics v1 or v2. Use a compatible version or a new TASKIX_JEV_METRICS_DB path.");
+        if !matches!(version, 1..=3) || application != 0x544A_4556 {
+            bail!("Unsupported decision metrics schema (application_id={application}, version={version}); expected Taskix decision metrics v1, v2 or v3. Use a compatible version or a new TASKIX_DECISION_METRICS_DB path.");
         }
         query(&mut db, command, &path).await
     }.await;
@@ -117,6 +117,12 @@ async fn query(
             let mut result = Vec::new();
             for row in data {
                 let mut value = row_json(&row)?;
+                if value.get("provider").is_none() {
+                    value["provider"] = json!("typesafe");
+                }
+                if value.get("protocol").is_none() {
+                    value["protocol"] = json!("typesafe");
+                }
                 let answers = sqlx::query("SELECT question, subject_id, choice, confidence, probability, margin, valid, issue FROM answers WHERE request_id=? ORDER BY question")
                     .bind(row.try_get::<String, _>("id")?).fetch_all(&mut *db).await?;
                 value["answers"] = json!(answers.iter().map(row_json).collect::<Result<Vec<_>>>()?);

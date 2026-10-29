@@ -15,7 +15,7 @@ prometheus.scrape "agentix_applications" {
 prometheus.relabel "agentix_applications" {
   rule {
     source_labels = ["__name__"]
-    regex = "(agentix|taskix)_(process_(cpu_seconds_total|resident_memory_bytes|virtual_memory_bytes|start_time_seconds|uptime_seconds)|build_info|backend_connections|operations_total|operation_duration_seconds_(bucket|sum|count)|operations_in_flight|events_total|queue_items|queue_capacity|queue_oldest_age_seconds|tokens_total)|taskix_(entities|oldest_age_seconds|expired_leases|pending_documents|workflow_events_total|memory_(work_items|oldest_pending_age_seconds|retrying_items|failed_items|pending_projection|pending_embeddings|embedding_failures)|memories|jev_(decisions_total|duration_seconds_(bucket|sum|count)|request_confidence_(sum|count)|fallbacks_total|reviewed))"
+    regex = "(agentix|taskix)_(process_(cpu_seconds_total|resident_memory_bytes|virtual_memory_bytes|start_time_seconds|uptime_seconds)|build_info|backend_connections|operations_total|operation_duration_seconds_(bucket|sum|count)|operations_in_flight|events_total|queue_items|queue_capacity|queue_oldest_age_seconds|tokens_total)|taskix_(entities|oldest_age_seconds|expired_leases|pending_documents|workflow_events_total|memory_(work_items|oldest_pending_age_seconds|retrying_items|failed_items|pending_projection|pending_embeddings|embedding_failures)|memories|(jev|decision)_(decisions_total|duration_seconds_(bucket|sum|count)|request_confidence_(sum|count)|fallbacks_total|reviewed))"
     action = "keep"
   }
   forward_to = [prometheus.remote_write.default.receiver]

@@ -82,16 +82,17 @@ const specs = [
     panel('Agent observed tokens in selected range', `sum by (instance,source,kind) (increase(${select('agentix_tokens_total')}[$__range]))`, 'short', 'Partial observed usage, not billing. Codex cached input is a subset of Codex input. Missing usage stays missing. Never sum this with existing OTLP usage.'),
     panel('Memory observed tokens in selected range', `sum by (instance,source,kind) (increase(${select('taskix_tokens_total')}[$__range]))`),
   ]],
-  ['jev', 'Jev decisions', [
-    panel('Decisions / second', rate('taskix_jev_decisions_total', '', 'instance,kind,outcome'), 'ops'),
-    panel('Adoption ratio', `(sum by (instance,kind) (rate(${select('taskix_jev_decisions_total','outcome="accepted"')}[$__rate_interval])) or (0 * sum by (instance,kind) (rate(${select('taskix_jev_decisions_total')}[$__rate_interval])))) / sum by (instance,kind) (rate(${select('taskix_jev_decisions_total')}[$__rate_interval]))`, 'percentunit', 'Adoption is not accuracy. Only requests persisted after the exporter baseline are counted.'),
-    panel('Mean decision latency', `${rate('taskix_jev_duration_seconds_sum','','instance,kind')} / ${rate('taskix_jev_duration_seconds_count','','instance,kind')}`, 's', 'Mean of persisted request durations observed since the exporter baseline.'),
-    ...[0.95, 0.99].map(q => panel('Decision latency p' + Math.round(q * 100), `histogram_quantile(${q}, sum by (instance,kind,le) (rate(${select('taskix_jev_duration_seconds_bucket')}[$__rate_interval])))`, 's', 'Estimated from fixed buckets for requests observed since the exporter baseline. Sparse traffic and wide buckets reduce tail precision.')),
-    panel('Mean request confidence', `${rate('taskix_jev_request_confidence_sum','','instance,kind')} / ${rate('taskix_jev_request_confidence_count','','instance,kind')}`, 'percentunit', 'Mean of available per-request answer confidence, not calibrated accuracy.'),
-    panel('Fallback reasons', rate('taskix_jev_fallbacks_total', '', 'instance,kind,reason'), 'ops'),
-    panel('Human review counts', select('taskix_jev_reviewed'), 'short', 'Recomputed so late human reviews appear. Includes historical reviewed requests.'),
-    panel('Reviewed accuracy', `(sum by (instance,kind) (${select('taskix_jev_reviewed','result="correct"')}) or (0 * sum by (instance,kind) (${select('taskix_jev_reviewed','result=~"correct|incorrect"')}))) / sum by (instance,kind) (${select('taskix_jev_reviewed','result=~"correct|incorrect"')})`, 'percentunit', 'Only the reviewed subset. No reviews means no data.'),
-  ]],
+  ['decision', 'Decisions', [
+    panel('Decisions / second', rate('taskix_decision_decisions_total', '', 'instance,provider,protocol,kind,outcome'), 'ops'),
+    panel('Adoption ratio', `(sum by (instance,provider,protocol,kind) (rate(${select('taskix_decision_decisions_total','outcome="accepted"')}[$__rate_interval])) or (0 * sum by (instance,provider,protocol,kind) (rate(${select('taskix_decision_decisions_total')}[$__rate_interval])))) / sum by (instance,provider,protocol,kind) (rate(${select('taskix_decision_decisions_total')}[$__rate_interval]))`, 'percentunit', 'Adoption is not accuracy. Only requests persisted after the exporter baseline are counted.'),
+    panel('Mean decision latency', `${rate('taskix_decision_duration_seconds_sum','','instance,provider,protocol,kind')} / ${rate('taskix_decision_duration_seconds_count','','instance,provider,protocol,kind')}`, 's', 'Mean of persisted request durations observed since the exporter baseline.'),
+    ...[0.95, 0.99].map(q => panel('Decision latency p' + Math.round(q * 100), `histogram_quantile(${q}, sum by (instance,provider,protocol,kind,le) (rate(${select('taskix_decision_duration_seconds_bucket')}[$__rate_interval])))`, 's', 'Estimated from fixed buckets for requests observed since the exporter baseline. Sparse traffic and wide buckets reduce tail precision.')),
+    panel('Mean request confidence', `${rate('taskix_decision_request_confidence_sum','','instance,provider,protocol,kind')} / ${rate('taskix_decision_request_confidence_count','','instance,provider,protocol,kind')}`, 'percentunit', 'Mean of available per-request answer confidence, not calibrated accuracy.'),
+    panel('Fallback reasons', rate('taskix_decision_fallbacks_total', '', 'instance,provider,protocol,kind,reason'), 'ops'),
+    panel('Human review counts', select('taskix_decision_reviewed'), 'short', 'Recomputed so late human reviews appear. Includes historical reviewed requests.'),
+    panel('Reviewed accuracy', `(sum by (instance,provider,protocol,kind) (${select('taskix_decision_reviewed','result="correct"')}) or (0 * sum by (instance,provider,protocol,kind) (${select('taskix_decision_reviewed','result=~"correct|incorrect"')}))) / sum by (instance,provider,protocol,kind) (${select('taskix_decision_reviewed','result=~"correct|incorrect"')})`, 'percentunit', 'Only the reviewed subset. No reviews means no data.'),
+  ].map(p => ({...p, legend: '{{provider}} / {{protocol}} · {{kind}} · {{instance}}' +
+    (p.title === 'Decisions / second' ? ' · {{outcome}}' : p.title === 'Fallback reasons' ? ' · {{reason}}' : p.title === 'Human review counts' ? ' · {{result}}' : '')}))],
 ];
 let nextId = 1;
 let rowY = 0;
@@ -120,7 +121,7 @@ export const dashboards = [{
   panels: groupedPanels,
 }];
 
-export const allowlist = '(agentix|taskix)_(process_(cpu_seconds_total|resident_memory_bytes|virtual_memory_bytes|start_time_seconds|uptime_seconds)|build_info|backend_connections|operations_total|operation_duration_seconds_(bucket|sum|count)|operations_in_flight|events_total|queue_items|queue_capacity|queue_oldest_age_seconds|tokens_total)|taskix_(entities|oldest_age_seconds|expired_leases|pending_documents|workflow_events_total|memory_(work_items|oldest_pending_age_seconds|retrying_items|failed_items|pending_projection|pending_embeddings|embedding_failures)|memories|jev_(decisions_total|duration_seconds_(bucket|sum|count)|request_confidence_(sum|count)|fallbacks_total|reviewed))';
+export const allowlist = '(agentix|taskix)_(process_(cpu_seconds_total|resident_memory_bytes|virtual_memory_bytes|start_time_seconds|uptime_seconds)|build_info|backend_connections|operations_total|operation_duration_seconds_(bucket|sum|count)|operations_in_flight|events_total|queue_items|queue_capacity|queue_oldest_age_seconds|tokens_total)|taskix_(entities|oldest_age_seconds|expired_leases|pending_documents|workflow_events_total|memory_(work_items|oldest_pending_age_seconds|retrying_items|failed_items|pending_projection|pending_embeddings|embedding_failures)|memories|(jev|decision)_(decisions_total|duration_seconds_(bucket|sum|count)|request_confidence_(sum|count)|fallbacks_total|reviewed))';
 export const alloy = `// Append to the existing Alloy configuration. Keep its OTLP pipeline unchanged.
 // Replace local with a stable application deployment alias on every machine.
 prometheus.scrape "agentix_applications" {

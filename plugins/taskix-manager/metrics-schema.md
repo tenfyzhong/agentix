@@ -1,4 +1,4 @@
-# Jev metrics storage protocol
+# Decision metrics storage protocol
 
 The plugin owns event collection, empty-database initialization and append-only
 request/answer writes. Taskix owns reports, threshold comparisons and manual review
@@ -7,43 +7,41 @@ Neither component uses the task database for these observations.
 
 ## Identity and compatibility
 
-The canonical v2 DDL is [metrics-schema.sql](metrics-schema.sql), packaged with the
-writer. SQLite `application_id` is `0x544A4556` (TJEV); `user_version` is `2`.
-The CLI reads v1 and v2; the writer upgrades a recognized v1 database to v2. The version is a database-wide
-storage contract, distinct from taskix's JSON response `schema_version`.
+The canonical v3 DDL is [metrics-schema.sql](metrics-schema.sql). The historical
+SQLite `application_id` remains `0x544A4556` (TJEV); `user_version` is `3`.
+The CLI reads v1/v2/v3 without migrating on reads. Writers upgrade recognized
+v1/v2 databases to v3 in the same transaction as the first new observation.
 
-The plugin may initialize only an empty database with application_id=0,
-user_version=0, and no user-defined schema objects. Initialization, metadata and
-the first event commit together under BEGIN IMMEDIATE. Existing supported databases
-receive inserts with named columns. The v1-to-v2 migration adds
-`requests.kind TEXT NOT NULL DEFAULT 'routing'` and sets user_version=2 in the
-same transaction as the new event. Old observations are routing-only and retain
-their labels and answers. A failed event rolls back the migration too. Reports
-and labels can use v1 without migrating it; upgrade CLI and plugins together
-because older readers reject v2. Other schemas are never repaired implicitly.
-Unsupported versions, foreign databases, and nonempty unversioned databases remain
-untouched. The plugin warns and skips the sample; taskix returns an explicit error
-before querying or labeling. A failed event rolls back both request and answers.
+Initialization is permitted only for an empty database with application_id=0 and
+user_version=0. Migration from v1 first adds `kind TEXT NOT NULL DEFAULT 'routing'`.
+Both v1 and v2 then gain `provider TEXT NOT NULL DEFAULT 'typesafe'` and
+`protocol TEXT NOT NULL DEFAULT 'typesafe'`. Existing answers and human labels
+are preserved. A failed append rolls back initialization or migration as well as
+all request/answer writes. Labels can be updated on supported older versions
+without migration. Upgrade CLI, service and plugins together: older writers and
+readers reject v3. Unknown versions, foreign databases and nonempty unversioned
+databases remain untouched. Never rewrite version metadata to force compatibility.
 
-Unversioned databases produced by the earlier development implementation are not
-automatically adopted. Preserve them and select a new TASKIX_JEV_METRICS_DB path
-for v2 collection. Do not change PRAGMA metadata manually to disguise another
-schema as a supported version. Future incompatible changes require a version bump, a documented
-migration path and compatibility tests; do not repurpose existing fields.
+`TASKIX_DECISION_METRICS_ENABLED` and `TASKIX_DECISION_METRICS_DB` supersede the
+corresponding `TASKIX_JEV_METRICS_*` names, which remain fallbacks. The default
+physical path is `taskix/decision-metrics.sqlite` under the XDG state directory.
+Existing `jev-metrics.sqlite` files remain accessible through an explicit database
+path override; they are not automatically moved or selected.
+Metrics are independent of task state and are still disabled by default.
 
 ## Records and semantics
 
 `requests.id` is a generated UUID and joins `answers.request_id`. `started_at` is
 Unix epoch milliseconds. `duration_ms` is monotonic preparation elapsed time,
 excluding metrics persistence and subsequent Agent handling. Session/turn and
-Project references are nullable when unavailable. Model and configured threshold
+Project references are nullable when unavailable. Provider, protocol, model and configured threshold
 are captured per request. `called` and `accepted` are integer booleans; accepted
-means the host accepted Jev's decision after applicable guards, not that a human
+means the host accepted the provider decision after applicable guards, not that a human
 confirmed it was correct. `kind` is routing, discussion (turn ownership), recovery,
 outcome, review_policy, completion, or memory_triage (extraction screening). Kinds are open-ended stable identifiers matching `[a-z][a-z0-9_]{0,63}`; invalid identifiers are rejected before storage is opened. New kinds need no whitelist or report registration.
 One event covers one assessment, including preparation/network/revision fallbacks;
 nested helper calls do not create duplicate events. Deterministic discussion
-selection without a Jev evaluation is omitted. Disabled collection performs no I/O.
+selection without a provider evaluation is omitted. Disabled collection performs no I/O.
 `action` is the classifier action, selected for accepted helper results, or agent; `reason` is the fallback code
 or null. `answer_count` counts recorded expected questions, including invalid or
 missing answers. Preparation/network failures can have zero recorded answers.
@@ -72,6 +70,12 @@ built-in kinds/questions; additional kinds add rows. `--details` expands diagnos
 all data. Historical v1 data cannot reconstruct past unrecorded lifecycle calls. No prompt/history bodies, credentials,
 endpoint URLs, raw model responses or task leases belong in this schema.
 
+JSON reports add `by_provider` and `by_provider_kind` while preserving previous
+aggregate fields. `--details` prints these breakdowns; list includes both identities.
+Historical v1/v2 records read as `typesafe` / `typesafe` without modifying the file.
+Provider names are configuration identities matching `[a-z][a-z0-9_-]{0,63}`;
+protocol is `typesafe` or `openai_decisions`. Never infer provider from model.
+
 ## Verification
 
 Rust CLI tests cover report/list/label semantics and incompatible-version refusal.
@@ -92,23 +96,23 @@ its 25 ms per-operation busy timeout. Termination or contention may drop a sampl
 a committed request must always have its complete answer set. These limits do
 not redefine `duration_ms`: the CLI displays it as `PREP_MS`, not end-to-end time.
 
-The memory service writes `memory_triage` using the same v2 schema and environment
+The memory service writes `memory_triage` using the same v3 schema and environment
 variables. `action` is `skip`, `extract`, or `agent` (fallback). The question is
 `memory_triage`; its `subject_id` identifies source receipt and work item. Confident
 skip and extract results have `accepted=1`; uncertain, low-score, malformed and
-service-failure results produce `agent` (fallback). Answers preserve Jev's
+service-failure results produce `agent` (fallback). Answers preserve the provider's
 original choice, scores and validation issue. A temporary positive-gate experiment
 used the same kind but was rolled back; compare historical metrics within their
 policy/time window. These are screening policy
 outcomes, not completed work or model-call savings. Retries/chunks are separate
-evaluations. Disabled Jev does not emit requests. The compact report adds one
+evaluations. Disabled decision evaluation does not emit requests. The compact report adds one
 skip/extract/fallback summary when such records exist. The Rust writer performs
-the same transactional v1 migration; a failed append rolls back migration too.
+the same transactional v1/v2 migration; a failed append rolls back migration too.
 
 
 ## Runtime coverage
 
-| Request kind | Jev decision | Collector |
+| Request kind | Decision | Collector |
 | --- | --- | --- |
 | `routing` | Prompt intent, Job ownership, applicable review policy and Issue association | Shared host runtime and `routePrompt` |
 | `discussion` | Ownership of pending conversation turns | `selectDiscussion` |
@@ -116,20 +120,20 @@ the same transactional v1 migration; a failed append rolls back migration too.
 | `outcome` | Continue, wait, block, fail or ready assessment | `assessLifecycle` |
 | `review_policy` | Scope-based review requirement | `assessLifecycle` |
 | `completion` | Whole-Job completion destination | `assessLifecycle` |
-| `memory_triage` | Skip or retain a chunk for memory extraction | Memory service `JevTriage` |
+| `memory_triage` | Skip or retain a chunk for memory extraction | Memory service `DecisionTriage` |
 
 All four agent hosts use the shared plugin collectors. Issue matching is an
 `issue` question within a routing request, not a separate provider call.
 The report groups recorded kinds dynamically; a missing row means no retained
 sample of that kind, not that the kind is unsupported. Enable both
-`TASKIX_JEV_ENABLED` and `TASKIX_JEV_METRICS_ENABLED` in each calling process,
-and use the same `TASKIX_JEV_METRICS_DB` to combine host and memory-service data.
-Disabled or invalid Jev configuration produces no evaluation record.
+`TASKIX_DECISION_ENABLED` and `TASKIX_DECISION_METRICS_ENABLED` in each calling process,
+and use the same `TASKIX_DECISION_METRICS_DB` to combine host and memory-service data.
+Disabled or invalid decision configuration produces no evaluation record.
 Deterministic discussion selection without a provider call is also omitted.
 
 Offline replay tests and `scripts/taskix-memory-eval.py` keep their own evaluation
 results and do not append experiments to runtime metrics. Memory extraction and
-consolidation use their configured model provider, not Jev, and are outside this
+consolidation use their configured model provider, not the decision service, and are outside this
 report. Runtime provider failures and preflight fallbacks are recorded when
 collection is enabled, subject to the bounded best-effort writer.
 
@@ -139,11 +143,13 @@ including skip, extract, uncertainty, malformed answers, service errors and
 oversized input, with no source text or credentials in the metrics database.
 
 
-## Adding a Jev decision
+<a id="adding-a-jev-decision"></a>
+
+## Adding a decision
 
 Collection, persistence and presentation have separate responsibilities:
 
-- `jev-metrics.mjs` provides `measureDecision` and bounded worker persistence for JavaScript. `withJevMetrics` in `jev.mjs` adapts the configured Jev provider to that collector.
+- `jev-metrics.mjs` provides `measureDecision` and bounded worker persistence for JavaScript. `withJevMetrics` in `jev.mjs` adapts the configured decision provider to that collector.
 - `crates/taskix/src/metrics/collector.rs` provides typed `DecisionMetric` / `AnswerMetric` events and `MetricsCollector` for Rust callers.
 - `metrics.rs` dispatches CLI commands; `metrics/report.rs` aggregates and renders recorded kinds/questions dynamically.
 
@@ -151,7 +157,7 @@ Choose a constant `snake_case` kind and stable question identifiers. Do not put
 user text, provider errors, prompts or credentials in kind/action/reason fields.
 Callers own provider invocation, answer validation and the final guarded decision;
 collectors own storage, atomicity and the 250 ms persistence budget. Both writers
-use the existing v2 schema and support multiple answers per decision.
+use the v3 schema and support multiple answers per decision.
 
 A JavaScript caller can use:
 

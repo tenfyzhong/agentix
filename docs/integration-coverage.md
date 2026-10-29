@@ -550,7 +550,7 @@ runs: confidence and acceptance can vary between identical provider requests.
 
 The actual service's semantic quality requires opt-in historical replay. Deterministic integration coverage does not prove live model accuracy or that a completed task met its acceptance criteria.
 
-Historical replay methods, observed outcomes and local performance measurements are recorded in [Jev lifecycle decisions](jev-lifecycle-decisions.md).
+Historical replay methods, observed outcomes and local performance measurements are recorded in [Decision lifecycle assessments](decision-lifecycle-assessments.md).
 
 Completion checkpoint integration cases verify ACTIVE -> COMPLETED and ACTIVE -> PENDING_REVIEW after the final Task, including replacement of an earlier required default, disabled/uncertain fallback, read-only classification and stale policy writes. Already PENDING_REVIEW Jobs reject completion assessment.
 
@@ -806,3 +806,16 @@ Feishu/Slack closed loops and live IM
 accounts or production providers have not been accepted by these fixtures.
 No fixture proves complete branch coverage, a total memory ceiling or absence
 of all performance regressions.
+
+## Decision provider and protocol compatibility
+
+`decision-provider.test.mjs` covers Typesafe and OpenAI Decisions using the same
+third-party provider identity, including routing, Issues, discussion, lifecycle,
+refusals, malformed distributions, transport failures and payload bounds.
+The shared `decision-config.json` fixture verifies JS/Rust configuration parity.
+Rust triage tests exercise local HTTP requests and conservative extraction fallback.
+Metrics tests cover v1/v2/v3, transactional migration/rollback, provider/protocol
+reports and real Node-to-CLI interoperability. Telemetry tests verify grouped
+histograms, bounded custom identities and Typesafe-only legacy series; monitoring
+artifact tests cover the corresponding dashboard and allowlist. These tests do
+not establish live service quality or remote deployment.

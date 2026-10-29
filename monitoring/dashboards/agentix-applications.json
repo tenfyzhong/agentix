@@ -3704,7 +3704,7 @@
     },
     {
       "id": 77,
-      "title": "Jev decisions",
+      "title": "Decisions",
       "type": "row",
       "collapsed": false,
       "panels": [],
@@ -3733,8 +3733,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (instance,kind,outcome) (rate(taskix_jev_decisions_total{instance=~\"$instance\"}[$__rate_interval]))",
-          "legendFormat": "__auto",
+          "expr": "sum by (instance,provider,protocol,kind,outcome) (rate(taskix_decision_decisions_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{provider}} / {{protocol}} · {{kind}} · {{instance}} · {{outcome}}",
           "range": true,
           "interval": "1m"
         }
@@ -3785,8 +3785,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(sum by (instance,kind) (rate(taskix_jev_decisions_total{instance=~\"$instance\",outcome=\"accepted\"}[$__rate_interval])) or (0 * sum by (instance,kind) (rate(taskix_jev_decisions_total{instance=~\"$instance\"}[$__rate_interval])))) / sum by (instance,kind) (rate(taskix_jev_decisions_total{instance=~\"$instance\"}[$__rate_interval]))",
-          "legendFormat": "__auto",
+          "expr": "(sum by (instance,provider,protocol,kind) (rate(taskix_decision_decisions_total{instance=~\"$instance\",outcome=\"accepted\"}[$__rate_interval])) or (0 * sum by (instance,provider,protocol,kind) (rate(taskix_decision_decisions_total{instance=~\"$instance\"}[$__rate_interval])))) / sum by (instance,provider,protocol,kind) (rate(taskix_decision_decisions_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{provider}} / {{protocol}} · {{kind}} · {{instance}}",
           "range": true,
           "interval": "1m"
         }
@@ -3837,8 +3837,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (instance,kind) (rate(taskix_jev_duration_seconds_sum{instance=~\"$instance\"}[$__rate_interval])) / sum by (instance,kind) (rate(taskix_jev_duration_seconds_count{instance=~\"$instance\"}[$__rate_interval]))",
-          "legendFormat": "__auto",
+          "expr": "sum by (instance,provider,protocol,kind) (rate(taskix_decision_duration_seconds_sum{instance=~\"$instance\"}[$__rate_interval])) / sum by (instance,provider,protocol,kind) (rate(taskix_decision_duration_seconds_count{instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{provider}} / {{protocol}} · {{kind}} · {{instance}}",
           "range": true,
           "interval": "1m"
         }
@@ -3889,8 +3889,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (instance,kind,le) (rate(taskix_jev_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
-          "legendFormat": "__auto",
+          "expr": "histogram_quantile(0.95, sum by (instance,provider,protocol,kind,le) (rate(taskix_decision_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "{{provider}} / {{protocol}} · {{kind}} · {{instance}}",
           "range": true,
           "interval": "1m"
         }
@@ -3941,8 +3941,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.99, sum by (instance,kind,le) (rate(taskix_jev_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
-          "legendFormat": "__auto",
+          "expr": "histogram_quantile(0.99, sum by (instance,provider,protocol,kind,le) (rate(taskix_decision_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "{{provider}} / {{protocol}} · {{kind}} · {{instance}}",
           "range": true,
           "interval": "1m"
         }
@@ -3993,8 +3993,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (instance,kind) (rate(taskix_jev_request_confidence_sum{instance=~\"$instance\"}[$__rate_interval])) / sum by (instance,kind) (rate(taskix_jev_request_confidence_count{instance=~\"$instance\"}[$__rate_interval]))",
-          "legendFormat": "__auto",
+          "expr": "sum by (instance,provider,protocol,kind) (rate(taskix_decision_request_confidence_sum{instance=~\"$instance\"}[$__rate_interval])) / sum by (instance,provider,protocol,kind) (rate(taskix_decision_request_confidence_count{instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{provider}} / {{protocol}} · {{kind}} · {{instance}}",
           "range": true,
           "interval": "1m"
         }
@@ -4045,8 +4045,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (instance,kind,reason) (rate(taskix_jev_fallbacks_total{instance=~\"$instance\"}[$__rate_interval]))",
-          "legendFormat": "__auto",
+          "expr": "sum by (instance,provider,protocol,kind,reason) (rate(taskix_decision_fallbacks_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{provider}} / {{protocol}} · {{kind}} · {{instance}} · {{reason}}",
           "range": true,
           "interval": "1m"
         }
@@ -4097,8 +4097,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "taskix_jev_reviewed{instance=~\"$instance\"}",
-          "legendFormat": "__auto",
+          "expr": "taskix_decision_reviewed{instance=~\"$instance\"}",
+          "legendFormat": "{{provider}} / {{protocol}} · {{kind}} · {{instance}} · {{result}}",
           "range": true,
           "interval": "1m"
         }
@@ -4149,8 +4149,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(sum by (instance,kind) (taskix_jev_reviewed{instance=~\"$instance\",result=\"correct\"}) or (0 * sum by (instance,kind) (taskix_jev_reviewed{instance=~\"$instance\",result=~\"correct|incorrect\"}))) / sum by (instance,kind) (taskix_jev_reviewed{instance=~\"$instance\",result=~\"correct|incorrect\"})",
-          "legendFormat": "__auto",
+          "expr": "(sum by (instance,provider,protocol,kind) (taskix_decision_reviewed{instance=~\"$instance\",result=\"correct\"}) or (0 * sum by (instance,provider,protocol,kind) (taskix_decision_reviewed{instance=~\"$instance\",result=~\"correct|incorrect\"}))) / sum by (instance,provider,protocol,kind) (taskix_decision_reviewed{instance=~\"$instance\",result=~\"correct|incorrect\"})",
+          "legendFormat": "{{provider}} / {{protocol}} · {{kind}} · {{instance}}",
           "range": true,
           "interval": "1m"
         }

@@ -76,6 +76,8 @@ async fn native_workspace_creation_and_launch_preserve_arguments() {
     assert!(driver.probe().await.unwrap());
     assert!(manager.pane_exists(&created.location).await.unwrap());
     let pane = created.location.pane_id;
+    // A newly forked pane can still report tmux before exec starts its shell.
+    wait_for_shell_prompt(&driver, &pane).await;
     let session_id = driver.inventory(false).await.unwrap().unwrap()[0]
         .session_id
         .clone();
@@ -294,17 +296,15 @@ async fn wait_for_pane_command(driver: &TmuxDriver, pane: &str, command: &str) {
 
 #[cfg(unix)]
 async fn wait_for_shell_prompt(driver: &TmuxDriver, pane: &str) {
-    // Input sent before readline starts can be consumed during shell startup.
+    // Startup may consume input; retries must acknowledge the latest probe so
+    // queued older commands cannot make us send Ctrl-D before the queue drains.
     tokio::time::timeout(Duration::from_secs(5), async {
+        let mut sequence = 0_u32;
         loop {
+            sequence += 1;
+            let probe = format!("printf 'agentix-ready-%s>\\n' {sequence}");
             driver
-                .run(&strings(&[
-                    "send-keys",
-                    "-t",
-                    pane,
-                    "printf 'agentix-%s>\\n' ready",
-                    "Enter",
-                ]))
+                .run(&strings(&["send-keys", "-t", pane, &probe, "Enter"]))
                 .await
                 .unwrap();
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -312,7 +312,10 @@ async fn wait_for_shell_prompt(driver: &TmuxDriver, pane: &str) {
                 .run(&strings(&["capture-pane", "-p", "-t", pane]))
                 .await
                 .unwrap();
-            if output.contains("agentix-ready>") {
+            if output
+                .lines()
+                .any(|line| line.trim() == format!("agentix-ready-{sequence}>"))
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -494,6 +497,8 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
             .unwrap();
         let created = manager.execute(&prepared).await.unwrap();
         let pane = created.location.pane_id;
+        // The pane PID exists before the child finishes chdir and shell startup.
+        wait_for_shell_prompt(&driver, &pane).await;
         assert_eq!(
             driver
                 .inventory(false)
@@ -520,7 +525,6 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
             start_command.contains("-il") && start_command.contains(&shell[0]),
             "new pane must use an interactive login shell: {start_command}"
         );
-        wait_for_shell_prompt(&driver, &pane).await;
         if fish {
             assert_eq!(
                 std::fs::read_to_string(working.join("login-shell-ready")).unwrap(),
@@ -542,7 +546,7 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
 
 #[cfg(unix)]
 #[test]
-fn terminal_queries_use_login_path_before_inherited_commands() {
+fn terminal_queries_preserve_locale_and_use_login_path_before_inherited_commands() {
     use std::os::unix::fs::PermissionsExt;
     let directory = tempfile::tempdir().unwrap();
     let login = directory.path().join("login");
@@ -561,7 +565,7 @@ fn terminal_queries_use_login_path_before_inherited_commands() {
     script(&inherited.join("tmux"), "printf wrong-program; exit 0");
     script(
         &login.join("tmux"),
-        "printf '%s\\n' '$1|work|@2|0|code|%4|0|1|fish|/tmp|42|/dev/pts/7'",
+        "test \"$LC_ALL\" = en_US.UTF-8 || exit 11; printf '%s\\n' '$1|work|@2|0|code|%4|0|1|fish|/tmp|42|/dev/pts/7'",
     );
     script(&login.join("ps"), "printf '42 1\\n43 42\\n'");
     let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -573,6 +577,7 @@ fn terminal_queries_use_login_path_before_inherited_commands() {
         ])
         .env_clear()
         .env("PATH", format!("{}:/usr/bin:/bin", inherited.display()))
+        .env("LC_ALL", "en_US.UTF-8")
         .env("LOGIN_BIN", login)
         .env("AGENTIX_LOGIN_SHELL", shell)
         .output()

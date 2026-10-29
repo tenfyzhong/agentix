@@ -1073,7 +1073,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subco
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l issue-revision -d 'Revision read from the selected Issue before association' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l issue-content-hash -d 'Requirement hash read from the selected Issue before association' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l prompt -r
-complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l conversation-turn -d 'Related session turns selected by Jev or the agent; repeat to include several' -r
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l conversation-turn -d 'Related session turns selected by the decision service or the agent; repeat to include several' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l conversation-revision -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l conversation-target -d 'Fingerprint of the target used by the discussion classifier' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l config -r -F
@@ -1087,7 +1087,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subco
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from submit" -l review-policy -d 'Apply a Jev completion decision atomically with this transition' -r -f -a "required\t''
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from submit" -l review-policy -d 'Apply a provider completion decision atomically with this transition' -r -f -a "required\t''
 none\t''"
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from submit" -l expect-job-revision -d 'Reject a decision based on an outdated Job snapshot' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from submit" -l config -r -F
@@ -1142,7 +1142,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subco
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l title -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l goal -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l prompt -d 'Original user prompt, preserved verbatim in the Job document' -r
-complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l conversation-turn -d 'Related session turns selected by Jev or the agent; repeat to include several' -r
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l conversation-turn -d 'Related session turns selected by the decision service or the agent; repeat to include several' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l conversation-revision -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l conversation-target -d 'Fingerprint of the target used by the discussion classifier' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l review-policy -r -f -a "required\t''
@@ -1441,7 +1441,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from fail" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from fail" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from fail" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l review-policy -d 'Apply a Jev completion decision atomically with this transition' -r -f -a "required\t''
+complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l review-policy -d 'Apply a provider completion decision atomically with this transition' -r -f -a "required\t''
 none\t''"
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l expect-job-revision -d 'Reject a decision based on an outdated Job snapshot' -r
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l config -r -F
@@ -1455,7 +1455,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from cancel" -l review-policy -d 'Apply a Jev completion decision atomically with this transition' -r -f -a "required\t''
+complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from cancel" -l review-policy -d 'Apply a provider completion decision atomically with this transition' -r -f -a "required\t''
 none\t''"
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from cancel" -l expect-job-revision -d 'Reject a decision based on an outdated Job snapshot' -r
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from cancel" -l config -r -F
@@ -1589,7 +1589,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_se
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "metrics" -d 'Inspect optional Jev statistics without loading the task database'
+complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "metrics" -d 'Inspect optional decision statistics without loading the task database'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "snapshot" -d 'Refresh leases and Issue edits and return bounded prompt routing context'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "candidates" -d 'Read bounded ACTIVE and `PENDING_REVIEW` Jobs and their Tasks by exact Project ID'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "revision" -d 'Read only identity and lifecycle fields by exact Job ID'
@@ -1642,7 +1642,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_s
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from revision" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from revision" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from revision" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "metrics" -d 'Inspect optional Jev statistics without loading the task database'
+complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "metrics" -d 'Inspect optional decision statistics without loading the task database'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "snapshot" -d 'Refresh leases and Issue edits and return bounded prompt routing context'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "candidates" -d 'Read bounded ACTIVE and `PENDING_REVIEW` Jobs and their Tasks by exact Project ID'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "revision" -d 'Read only identity and lifecycle fields by exact Job ID'
@@ -1913,7 +1913,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "create" -d 'Publish a Plan from --body or --file while holding the Task lease'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "revise" -d 'Replace the Plan body in the same Task note while holding its lease'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "show" -d 'Show the current Plan\'s metadata and absolute file path for a Task'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "metrics" -d 'Inspect optional Jev statistics without loading the task database'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "metrics" -d 'Inspect optional decision statistics without loading the task database'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "snapshot" -d 'Refresh leases and Issue edits and return bounded prompt routing context'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "candidates" -d 'Read bounded ACTIVE and `PENDING_REVIEW` Jobs and their Tasks by exact Project ID'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "revision" -d 'Read only identity and lifecycle fields by exact Job ID'

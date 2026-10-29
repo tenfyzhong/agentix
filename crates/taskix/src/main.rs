@@ -1,3 +1,4 @@
+mod decision;
 use std::{
     io::{IsTerminal, Read, Write},
     path::PathBuf,
@@ -172,7 +173,7 @@ enum ConversationCommand {
 
 #[derive(Subcommand)]
 enum RoutingCommand {
-    /// Inspect optional Jev statistics without loading the task database.
+    /// Inspect optional decision statistics without loading the task database.
     Metrics {
         #[command(subcommand)]
         action: metrics::MetricsCommand,
@@ -284,7 +285,7 @@ enum JobCommand {
         issue_content_hash: Option<String>,
         #[arg(long)]
         prompt: String,
-        /// Related session turns selected by Jev or the agent; repeat to include several.
+        /// Related session turns selected by the decision service or the agent; repeat to include several.
         #[arg(long = "conversation-turn")]
         conversation_turns: Vec<String>,
         #[arg(long)]
@@ -320,7 +321,7 @@ enum JobCommand {
         /// Original user prompt, preserved verbatim in the Job document.
         #[arg(long, default_value = "")]
         prompt: String,
-        /// Related session turns selected by Jev or the agent; repeat to include several.
+        /// Related session turns selected by the decision service or the agent; repeat to include several.
         #[arg(long = "conversation-turn")]
         conversation_turns: Vec<String>,
         #[arg(long)]
@@ -381,7 +382,7 @@ struct TaskId {
 #[derive(Args)]
 struct CompletionId {
     id: String,
-    /// Apply a Jev completion decision atomically with this transition.
+    /// Apply a provider completion decision atomically with this transition.
     #[arg(long, value_parser = ["required", "none"], requires = "expect_job_revision")]
     review_policy: Option<String>,
     /// Reject a decision based on an outdated Job snapshot.

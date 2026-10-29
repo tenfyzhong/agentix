@@ -1,6 +1,6 @@
 {
   "name": "taskix-manager",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Shared taskix workflow for Codex, Claude, Pi, OMP, and OpenCode",
   "type": "module",
   "license": "MIT",
@@ -22,6 +22,7 @@
     "lifecycle.mjs",
     "README.md",
     "jev.mjs",
+    "decision-provider.mjs",
     "jev-io.mjs",
     "routing-state.mjs",
     "jev-metrics.mjs",

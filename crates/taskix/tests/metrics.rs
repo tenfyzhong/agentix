@@ -38,7 +38,7 @@ async fn metrics_report_list_and_label_without_task_database() {
     .await
     .unwrap();
     sqlx::raw_sql(include_str!(
-        "../../../plugins/taskix-manager/metrics-schema.sql"
+        "../../../plugins/taskix-manager/tests/fixtures/metrics-v2.sql"
     ))
     .execute(&mut db)
     .await
@@ -151,7 +151,7 @@ async fn metrics_rejects_unknown_schema_before_reading_or_labeling() {
             body["error"]["message"]
                 .as_str()
                 .unwrap()
-                .contains("Unsupported Jev metrics schema")
+                .contains("Unsupported decision metrics schema")
         );
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
@@ -168,7 +168,7 @@ async fn metrics_groups_decision_kinds_and_questions_without_join_inflation() {
     .await
     .unwrap();
     sqlx::raw_sql(include_str!(
-        "../../../plugins/taskix-manager/metrics-schema.sql"
+        "../../../plugins/taskix-manager/tests/fixtures/metrics-v2.sql"
     ))
     .execute(&mut db)
     .await
@@ -235,7 +235,7 @@ async fn metrics_legacy_read_is_compatible_and_full_summary_fits_a_screen() {
     )
     .await
     .unwrap();
-    let legacy = include_str!("../../../plugins/taskix-manager/metrics-schema.sql")
+    let legacy = include_str!("../../../plugins/taskix-manager/tests/fixtures/metrics-v2.sql")
         .replace("PRAGMA user_version=2", "PRAGMA user_version=1")
         .replace(", kind TEXT NOT NULL DEFAULT 'routing'", "");
     sqlx::raw_sql(&legacy).execute(&mut db).await.unwrap();
@@ -342,7 +342,7 @@ async fn memory_triage_report_distinguishes_skip_extract_and_fallback() {
     .await
     .unwrap();
     sqlx::raw_sql(include_str!(
-        "../../../plugins/taskix-manager/metrics-schema.sql"
+        "../../../plugins/taskix-manager/tests/fixtures/metrics-v2.sql"
     ))
     .execute(&mut db)
     .await
@@ -362,4 +362,64 @@ async fn memory_triage_report_distinguishes_skip_extract_and_fallback() {
         String::from_utf8_lossy(&output.stdout)
             .contains("Memory triage: skipped 1, extract 1, fallback 1")
     );
+}
+
+#[tokio::test]
+async fn neutral_metrics_report_and_list_include_provider_protocol() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("neutral.sqlite");
+    let mut db = sqlx::SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../plugins/taskix-manager/metrics-schema.sql"
+    ))
+    .execute(&mut db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO requests(id,started_at,model,threshold,duration_ms,called,accepted,action,answer_count,provider,protocol) VALUES('o',1,'gpt-6-luna',.65,10,1,1,'new_job',0,'acme','openai_decisions')").execute(&mut db).await.unwrap();
+    db.close().await.unwrap();
+    for action in ["report", "list"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_taskix"))
+            .env("TASKIX_DECISION_METRICS_DB", &path)
+            .env("TASKIX_JEV_METRICS_DB", dir.path().join("absent.sqlite"))
+            .args(["routing", "metrics", action, "--json"])
+            .output()
+            .unwrap();
+        let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(output.status.success(), "{body}");
+        let item = if action == "report" {
+            &body["result"]["by_provider"][0]
+        } else {
+            &body["result"][0]
+        };
+        assert_eq!(item["provider"], "acme");
+        assert_eq!(item["protocol"], "openai_decisions");
+    }
+    assert!(!dir.path().join("absent.sqlite").exists());
+}
+
+#[test]
+fn metrics_default_path_uses_decision_filename() {
+    let dir = TempDir::new().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_taskix"))
+        .env_remove("TASKIX_DECISION_METRICS_DB")
+        .env_remove("TASKIX_JEV_METRICS_DB")
+        .env("XDG_STATE_HOME", dir.path())
+        .args(["routing", "metrics", "report", "--json"])
+        .output()
+        .unwrap();
+    let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("decision-metrics.sqlite"),
+        "{body}"
+    );
+    assert!(!dir.path().join("taskix/decision-metrics.sqlite").exists());
 }

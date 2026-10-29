@@ -41,6 +41,7 @@ jobs:
 
   tmux:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}

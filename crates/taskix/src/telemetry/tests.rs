@@ -468,3 +468,85 @@ async fn entity_groups_merge_unknown_and_null_statuses_without_exposing_them() {
     assert_eq!(groups["other"], (3, 10));
     assert_eq!(groups.len(), STATES.len());
 }
+
+#[tokio::test]
+async fn decisions_group_by_provider_protocol_and_keep_legacy_typesafe_only() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("decisions.db");
+    let mut db = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../../plugins/taskix-manager/metrics-schema.sql"
+    ))
+    .execute(&mut db)
+    .await
+    .unwrap();
+    let metrics = Metrics::new(Service::Taskix, "test");
+    let mut collector = Collector::new(path.clone(), path.clone(), path, metrics.clone());
+    collector.refresh_jev().await.unwrap();
+    for (id, provider, protocol) in [
+        ("a", "typesafe", "typesafe"),
+        ("b", "openai", "openai_decisions"),
+        ("c", "acme", "openai_decisions"),
+    ] {
+        sqlx::query("INSERT INTO requests(id,started_at,model,threshold,duration_ms,called,accepted,action,answer_count,kind,provider,protocol,review) VALUES(?,1,'model',.65,25,1,1,'new_job',0,'routing',?,?,'correct')").bind(id).bind(provider).bind(protocol).execute(&mut db).await.unwrap();
+    }
+    collector.refresh_jev().await.unwrap();
+    collector.refresh_jev().await.unwrap();
+    let text = metrics.encode().unwrap();
+    for (provider, protocol) in [
+        ("typesafe", "typesafe"),
+        ("openai", "openai_decisions"),
+        ("acme", "openai_decisions"),
+    ] {
+        assert!(text.contains(&format!("taskix_decision_decisions_total{{provider=\"{provider}\",protocol=\"{protocol}\",kind=\"routing\",outcome=\"accepted\"}} 1")), "{text}");
+        assert!(text.contains(&format!("taskix_decision_duration_seconds_bucket{{provider=\"{provider}\",protocol=\"{protocol}\",kind=\"routing\",le=\"0.025\"}} 1")), "{text}");
+        assert!(text.contains(&format!("taskix_decision_reviewed{{provider=\"{provider}\",protocol=\"{protocol}\",kind=\"routing\",result=\"correct\"}} 1")), "{text}");
+    }
+    assert!(
+        text.contains("taskix_jev_decisions_total{kind=\"routing\",outcome=\"accepted\"} 1"),
+        "{text}"
+    );
+    assert_eq!(
+        text.matches("# TYPE taskix_decision_decisions_total counter")
+            .count(),
+        1
+    );
+    assert!(!text.contains("model="));
+}
+
+#[test]
+fn decision_metric_groups_are_bounded_without_losing_builtin_identities() {
+    let mut groups = BTreeSet::new();
+    for i in 0..MAX_DECISION_GROUPS {
+        assert_eq!(
+            decision_group(&format!("custom_{i}"), "typesafe", &mut groups).0,
+            format!("custom_{i}")
+        );
+    }
+    assert_eq!(
+        decision_group("overflow", "openai_decisions", &mut groups),
+        ("other".into(), "other".into())
+    );
+    assert_eq!(
+        decision_group("typesafe", "typesafe", &mut groups),
+        ("typesafe".into(), "typesafe".into())
+    );
+    assert_eq!(
+        decision_group("openai", "openai_decisions", &mut groups),
+        ("openai".into(), "openai_decisions".into())
+    );
+    assert_eq!(
+        decision_group("bad\"label", "typesafe", &mut groups),
+        ("other".into(), "other".into())
+    );
+    assert_eq!(
+        decision_group("acme", "unknown", &mut groups),
+        ("other".into(), "other".into())
+    );
+}

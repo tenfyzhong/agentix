@@ -12,11 +12,16 @@
 
 Codex and Claude share the common lifecycle hooks. Codex explicitly loads the shared file and a separate Interrupt hook; its manifest replaces default discovery, so each hook loads once. Claude merges default discovery of the shared file with its manifest-selected `hooks/claude.json`, which only adds PostToolUseFailure. Do not repeat the shared file in Claude’s manifest. Pi and OMP each select exactly one extension, so neither loads the other host's entrypoint. Pi declares the shared `skills/` directory in its manifest. OMP installs the marketplace plugin and discovers its shared `skills/` directory. The npm `files` list includes host manifests, hooks, extensions, OpenCode entrypoints, runtime, skills, Taskix Sync and its board styles, and this technical reference.
 
+## Decision configuration
+
+Typesafe (Jev), OpenAI Decisions and third-party services share the same decision pipeline. `TASKIX_DECISION_PROVIDER` identifies the service; `TASKIX_DECISION_PROTOCOL` selects `typesafe` or `openai_decisions`. See [configuration and compatibility](https://github.com/tenfyzhong/agentix/blob/main/docs/decision-providers.md) and the [Wiki](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#optional-decision-routing). Metrics v3 preserves historical Typesafe data; upgrade the CLI, service and plugin together.
+
 ## Runtime boundaries
 
 | Module | Responsibility |
 | --- | --- |
-| `jev.mjs` | Provider requests, confidence checks and semantic routing advice |
+| `decision-provider.mjs` | Provider identity, protocol selection, configuration and wire adapters |
+| `jev.mjs` | Shared confidence checks and semantic routing advice; legacy module name |
 | `routing-context.mjs` | Pure, bounded rendering of fallback hints; no I/O or task writes |
 | `runtime.mjs` | Shared Codex/Claude/Pi/OMP/OpenCode orchestration, deadlines, receipts and heartbeats |
 | `taskix-cli.mjs` | Shell-free CLI execution, host identity arguments and error handling |
@@ -31,7 +36,7 @@ policy. Identity hints have priority over body excerpts. The renderer considers 
 most 32 Job and 32 Issue candidates, serializes each fragment once, and accounts for
 JSON escaping and separators before appending it. Counts and `candidates_complete`
 make omitted evidence explicit. A discussion-only prompt needs no lifecycle write;
-Jev confidence thresholds and task ownership rules are unchanged.
+Decision confidence thresholds and task ownership rules are unchanged.
 
 ## Validation
 
@@ -51,9 +56,9 @@ environment activation, load both command helpers, and register Pi/OMP adapters.
 
 ## Optional lifecycle assessment
 
-With the existing `TASKIX_JEV_ENABLED` configuration, prompt routing also classifies review policy and explicit user acceptance, rejection, Job cancellation and Task-operation intent. A proposal accepted for implementation remains work; delivery acceptance is distinct. Existing required review is preserved locally; code supplements upgrade a none policy. Disabling Jev retains the original main-Agent workflow.
+With `TASKIX_DECISION_ENABLED` configuration (legacy Typesafe variables remain supported), prompt routing also classifies review policy and explicit user acceptance, rejection, Job cancellation and Task-operation intent. A proposal accepted for implementation remains work; delivery acceptance is distinct. Existing required review is preserved locally; code supplements upgrade a none policy. Disabling decision evaluation retains the original main-Agent workflow.
 
-`lifecycle.mjs` supplies a shared read-only checkpoint for Codex/Claude shell calls and Pi/OMP's `taskix` structured tool. Recovery can select a Task from the existing Job candidates, assess whether waiting reasons have been resolved, or classify explicit retry, reopen, cancellation and handoff. Outcome assessment distinguishes continuing work, waiting for the user, external blockage, final failure and readiness for independent acceptance verification. Reassessment of review policy uses the same pipeline when scope changes. Before the final Task finishes an ACTIVE Job, the `completion` checkpoint asks Jev to select `pending_review` or `completed` from the entire delivered scope. Execute its guarded atomic completion command after verification, using the final Task ID and current lease. Policy and status are committed together. Upgrade the CLI and plugin together. This can replace an earlier required default for a wholly non-code Job; it cannot serve as approval of already pending work. Disabled or uncertain results retain the saved policy.
+`lifecycle.mjs` supplies a shared read-only checkpoint for Codex/Claude shell calls and Pi/OMP's `taskix` structured tool. Recovery can select a Task from the existing Job candidates, assess whether waiting reasons have been resolved, or classify explicit retry, reopen, cancellation and handoff. Outcome assessment distinguishes continuing work, waiting for the user, external blockage, final failure and readiness for independent acceptance verification. Reassessment of review policy uses the same pipeline when scope changes. Before the final Task finishes an ACTIVE Job, the `completion` checkpoint asks the decision service to select `pending_review` or `completed` from the entire delivered scope. Execute its guarded atomic completion command after verification, using the final Task ID and current lease. Policy and status are committed together. Upgrade the CLI and plugin together. This can replace an earlier required default for a wholly non-code Job; it cannot serve as approval of already pending work. Disabled or uncertain results retain the saved policy.
 
 All assessments reuse the existing filtered Job/Task facts and visible conversation excerpts, 30,000-byte request ceiling, eight-second deadline, score gates and current-Job revision check. No raw tool results, source files, lease credentials or reasoning are collected. Explicit terminal Task recovery reads only that named Task and projects the same title/status/reason fields within existing bounds; normal prompt candidate discovery is unchanged. Shared instructions are sent once rather than repeated for every Job. Each assessment makes one provider request; disabled configuration makes no CLI or HTTP calls.
 

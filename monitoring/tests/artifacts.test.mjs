@@ -46,7 +46,7 @@ test('alerts retain volume guards and do not impose agent or human wait deadline
   }
 });
 
-test('every p95 has a matching p99 and Jev uses allowed histogram buckets', () => {
+test('every p95 has a matching p99 and Decisions uses allowed histogram buckets', () => {
   const panels = dashboards[0].panels;
   let row = [];
   const check = () => {
@@ -63,7 +63,7 @@ test('every p95 has a matching p99 and Jev uses allowed histogram buckets', () =
   for (const q of ['95', '99']) {
     const p = panels.find(p => p.title === 'Decision latency p' + q);
     assert.ok(p);
-    assert.match(p.targets[0].expr, /taskix_jev_duration_seconds_bucket/);
+    assert.match(p.targets[0].expr, /taskix_decision_duration_seconds_bucket/);
   }
   assert.ok(new RegExp('^(?:' + allowlist + ')$').test('taskix_jev_duration_seconds_bucket'));
 });
@@ -78,4 +78,20 @@ test('observed usage groups all agents in the existing three labeled panels', ()
     assert.equal(p.targets[0].legendFormat, '{{source}} · {{instance}}');
   }
   assert.ok(!dashboards[0].panels.some(p => /^(Codex|Pi|OMP|Claude|OpenCode) .*tokens \/ second$/.test(p.title)));
+});
+
+test('decision panels distinguish provider and protocol using neutral metrics', () => {
+  assert.ok(dashboards[0].panels.some(p => p.type === 'row' && p.title === 'Decisions'));
+  const names = ['Decisions / second', 'Adoption ratio', 'Mean decision latency', 'Decision latency p95', 'Decision latency p99', 'Mean request confidence', 'Fallback reasons', 'Human review counts', 'Reviewed accuracy'];
+  const keep = new RegExp(`^(?:${allowlist})$`);
+  for (const name of names) {
+    const p = dashboards[0].panels.find(p => p.title === name);
+    assert.match(p.targets[0].expr, /taskix_decision_/);
+    assert.doesNotMatch(p.targets[0].expr, /taskix_jev_/);
+    if (name !== 'Human review counts') assert.match(p.targets[0].expr, /sum by \(instance,provider,protocol,kind/);
+    assert.match(p.targets[0].legendFormat, /provider/);
+    assert.match(p.targets[0].legendFormat, /protocol/);
+  }
+  assert.ok(keep.test('taskix_decision_duration_seconds_bucket'));
+  assert.ok(keep.test('taskix_jev_duration_seconds_bucket'));
 });

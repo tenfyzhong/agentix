@@ -118,7 +118,7 @@ impl Runtime {
                 ));
                 let worker =
                     MemoryWorker::new(store.clone(), model, config.agent.clone(), repositories);
-                let worker = if let Some(gate) = super::triage::JevTriage::from_env() {
+                let worker = if let Some(gate) = super::triage::DecisionTriage::from_env() {
                     worker.with_extraction_gate(gate)
                 } else {
                     worker

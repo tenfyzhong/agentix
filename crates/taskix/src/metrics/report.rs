@@ -9,6 +9,19 @@ pub(super) async fn report(db: &mut SqliteConnection, path: &std::path::Path) ->
         .fetch_one(&mut *db)
         .await?;
     let kind = if version == 1 { "'routing'" } else { "kind" };
+    let provider = if version < 3 {
+        "'typesafe'"
+    } else {
+        "provider"
+    };
+    let protocol = if version < 3 {
+        "'typesafe'"
+    } else {
+        "protocol"
+    };
+    let aggregate = "COUNT(*) AS requests, SUM(called) AS called, SUM(accepted) AS accepted, AVG(accepted) AS adoption_rate, AVG(duration_ms) AS mean_duration_ms, SUM(CASE WHEN accepted=1 AND review IS NOT NULL THEN 1 ELSE 0 END) AS reviewed_accepted, AVG(CASE WHEN accepted=1 AND review IS NOT NULL THEN review='correct' END) AS reviewed_accuracy";
+    let by_provider = rows(db, &format!("SELECT {provider} AS provider,{protocol} AS protocol,{aggregate} FROM requests GROUP BY 1,2 ORDER BY 1,2")).await?;
+    let by_provider_kind = rows(db, &format!("SELECT {provider} AS provider,{protocol} AS protocol,{kind} AS kind,{aggregate} FROM requests GROUP BY 1,2,3 ORDER BY 1,2,3")).await?;
     let by_kind = rows(db, &format!("SELECT {kind} AS kind, COUNT(*) AS requests,
         SUM(called) AS called, SUM(accepted) AS accepted, AVG(accepted) AS adoption_rate,
         AVG(duration_ms) AS mean_duration_ms,
@@ -67,8 +80,8 @@ pub(super) async fn report(db: &mut SqliteConnection, path: &std::path::Path) ->
             AND EXISTS (SELECT 1 FROM answers a WHERE a.request_id=r.id AND issue='low_confidence') THEN 1 ELSE 0 END) AS responses_with_low_confidence
         FROM requests r GROUP BY model").await?;
     Ok(
-        json!({"path":path,"memory_triage":memory_triage,"totals":totals,"by_kind":by_kind,"by_question":by_question,"reasons":reasons,"issues":issues,"response_quality":response_quality,"score_gates":score_gates,
-        "note":"Score gates are not predicted adoption: assignment/revision checks may still reject. Accuracy includes only manually reviewed accepted requests. mean_duration_ms measures preparation and Jev; it excludes metrics writing and subsequent Agent handling. Metrics writes are best-effort. Memory triage counts classification decisions, not committed work outcomes or saved model calls."}),
+        json!({"path":path,"by_provider":by_provider,"by_provider_kind":by_provider_kind,"memory_triage":memory_triage,"totals":totals,"by_kind":by_kind,"by_question":by_question,"reasons":reasons,"issues":issues,"response_quality":response_quality,"score_gates":score_gates,
+        "note":"Score gates are not predicted adoption: assignment/revision checks may still reject. Accuracy includes only manually reviewed accepted requests. mean_duration_ms measures preparation and decision evaluation; it excludes metrics writing and subsequent Agent handling. Metrics writes are best-effort. Memory triage counts classification decisions, not committed work outcomes or saved model calls."}),
     )
 }
 
@@ -83,10 +96,7 @@ pub fn print_report(value: &Value, details: bool) {
     if !details {
         return;
     }
-    println!(
-        "Jev routing metrics: {}",
-        value["path"].as_str().unwrap_or("")
-    );
+    println!("Decision metrics: {}", value["path"].as_str().unwrap_or(""));
     println!("MODEL  THRESHOLD  REQUESTS  ACCEPTED  ADOPTION  REVIEWED  ACCURACY  PREP_MS");
     for row in value["totals"].as_array().into_iter().flatten() {
         println!(
@@ -102,6 +112,29 @@ pub fn print_report(value: &Value, details: bool) {
         );
     }
     for (key, heading, columns) in [
+        (
+            "by_provider",
+            "Providers",
+            &[
+                "provider",
+                "protocol",
+                "requests",
+                "accepted",
+                "mean_duration_ms",
+            ][..],
+        ),
+        (
+            "by_provider_kind",
+            "Provider decision kinds",
+            &[
+                "provider",
+                "protocol",
+                "kind",
+                "requests",
+                "accepted",
+                "mean_duration_ms",
+            ][..],
+        ),
         ("reasons", "Fallback reasons", &["reason", "requests"][..]),
         (
             "issues",
@@ -137,7 +170,7 @@ pub fn print_report(value: &Value, details: bool) {
 }
 
 fn print_summary(value: &Value) {
-    println!("Jev metrics");
+    println!("Decision metrics");
     println!(
         "{:<13} {:>8} {:>7} {:>8} {:>7} {:>8}",
         "KIND", "REQUESTS", "CALLED", "ACCEPTED", "RATE", "PREP_MS"
