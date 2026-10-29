@@ -76,6 +76,8 @@ async fn native_workspace_creation_and_launch_preserve_arguments() {
     assert!(driver.probe().await.unwrap());
     assert!(manager.pane_exists(&created.location).await.unwrap());
     let pane = created.location.pane_id;
+    // A newly forked pane can still report tmux before exec starts its shell.
+    wait_for_shell_prompt(&driver, &pane).await;
     let session_id = driver.inventory(false).await.unwrap().unwrap()[0]
         .session_id
         .clone();
