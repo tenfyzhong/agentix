@@ -542,7 +542,7 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
 
 #[cfg(unix)]
 #[test]
-fn terminal_queries_use_login_path_before_inherited_commands() {
+fn terminal_queries_preserve_locale_and_use_login_path_before_inherited_commands() {
     use std::os::unix::fs::PermissionsExt;
     let directory = tempfile::tempdir().unwrap();
     let login = directory.path().join("login");
@@ -561,7 +561,7 @@ fn terminal_queries_use_login_path_before_inherited_commands() {
     script(&inherited.join("tmux"), "printf wrong-program; exit 0");
     script(
         &login.join("tmux"),
-        "printf '%s\\n' '$1|work|@2|0|code|%4|0|1|fish|/tmp|42|/dev/pts/7'",
+        "test \"$LC_ALL\" = en_US.UTF-8 || exit 11; printf '%s\\n' '$1|work|@2|0|code|%4|0|1|fish|/tmp|42|/dev/pts/7'",
     );
     script(&login.join("ps"), "printf '42 1\\n43 42\\n'");
     let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -573,6 +573,7 @@ fn terminal_queries_use_login_path_before_inherited_commands() {
         ])
         .env_clear()
         .env("PATH", format!("{}:/usr/bin:/bin", inherited.display()))
+        .env("LC_ALL", "en_US.UTF-8")
         .env("LOGIN_BIN", login)
         .env("AGENTIX_LOGIN_SHELL", shell)
         .output()
