@@ -1727,7 +1727,7 @@ _arguments "${_arguments_options[@]}" : \
 '--issue-revision=[Revision read from the selected Issue before association]:ISSUE_REVISION:_default' \
 '--issue-content-hash=[Requirement hash read from the selected Issue before association]:ISSUE_CONTENT_HASH:_default' \
 '--prompt=[]:PROMPT:_default' \
-'*--conversation-turn=[Related session turns selected by Jev or the agent; repeat to include several]:CONVERSATION_TURNS:_default' \
+'*--conversation-turn=[Related session turns selected by the decision service or the agent; repeat to include several]:CONVERSATION_TURNS:_default' \
 '--conversation-revision=[]:CONVERSATION_REVISION:_default' \
 '--conversation-target=[Fingerprint of the target used by the discussion classifier]:CONVERSATION_TARGET:_default' \
 '--config=[]:CONFIG:_files' \
@@ -1747,7 +1747,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (submit)
 _arguments "${_arguments_options[@]}" : \
-'--review-policy=[Apply a Jev completion decision atomically with this transition]:REVIEW_POLICY:(required none)' \
+'--review-policy=[Apply a provider completion decision atomically with this transition]:REVIEW_POLICY:(required none)' \
 '--expect-job-revision=[Reject a decision based on an outdated Job snapshot]:EXPECT_JOB_REVISION:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -1825,7 +1825,7 @@ _arguments "${_arguments_options[@]}" : \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
 '--prompt=[Original user prompt, preserved verbatim in the Job document]:PROMPT:_default' \
-'*--conversation-turn=[Related session turns selected by Jev or the agent; repeat to include several]:CONVERSATION_TURNS:_default' \
+'*--conversation-turn=[Related session turns selected by the decision service or the agent; repeat to include several]:CONVERSATION_TURNS:_default' \
 '--conversation-revision=[]:CONVERSATION_REVISION:_default' \
 '--conversation-target=[Fingerprint of the target used by the discussion classifier]:CONVERSATION_TARGET:_default' \
 '--review-policy=[]:REVIEW_POLICY:(required none)' \
@@ -2294,7 +2294,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (done)
 _arguments "${_arguments_options[@]}" : \
-'--review-policy=[Apply a Jev completion decision atomically with this transition]:REVIEW_POLICY:(required none)' \
+'--review-policy=[Apply a provider completion decision atomically with this transition]:REVIEW_POLICY:(required none)' \
 '--expect-job-revision=[Reject a decision based on an outdated Job snapshot]:EXPECT_JOB_REVISION:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -2313,7 +2313,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (cancel)
 _arguments "${_arguments_options[@]}" : \
-'--review-policy=[Apply a Jev completion decision atomically with this transition]:REVIEW_POLICY:(required none)' \
+'--review-policy=[Apply a provider completion decision atomically with this transition]:REVIEW_POLICY:(required none)' \
 '--expect-job-revision=[Reject a decision based on an outdated Job snapshot]:EXPECT_JOB_REVISION:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -4566,7 +4566,7 @@ _taskix__subcmd__help__subcmd__reload_commands() {
 (( $+functions[_taskix__subcmd__help__subcmd__routing_commands] )) ||
 _taskix__subcmd__help__subcmd__routing_commands() {
     local commands; commands=(
-'metrics:Inspect optional Jev statistics without loading the task database' \
+'metrics:Inspect optional decision statistics without loading the task database' \
 'snapshot:Refresh leases and Issue edits and return bounded prompt routing context' \
 'candidates:Read bounded ACTIVE and \`PENDING_REVIEW\` Jobs and their Tasks by exact Project ID' \
 'revision:Read only identity and lifecycle fields by exact Job ID' \
@@ -5800,7 +5800,7 @@ _taskix__subcmd__reload_commands() {
 (( $+functions[_taskix__subcmd__routing_commands] )) ||
 _taskix__subcmd__routing_commands() {
     local commands; commands=(
-'metrics:Inspect optional Jev statistics without loading the task database' \
+'metrics:Inspect optional decision statistics without loading the task database' \
 'snapshot:Refresh leases and Issue edits and return bounded prompt routing context' \
 'candidates:Read bounded ACTIVE and \`PENDING_REVIEW\` Jobs and their Tasks by exact Project ID' \
 'revision:Read only identity and lifecycle fields by exact Job ID' \
@@ -5816,7 +5816,7 @@ _taskix__subcmd__routing__subcmd__candidates_commands() {
 (( $+functions[_taskix__subcmd__routing__subcmd__help_commands] )) ||
 _taskix__subcmd__routing__subcmd__help_commands() {
     local commands; commands=(
-'metrics:Inspect optional Jev statistics without loading the task database' \
+'metrics:Inspect optional decision statistics without loading the task database' \
 'snapshot:Refresh leases and Issue edits and return bounded prompt routing context' \
 'candidates:Read bounded ACTIVE and \`PENDING_REVIEW\` Jobs and their Tasks by exact Project ID' \
 'revision:Read only identity and lifecycle fields by exact Job ID' \

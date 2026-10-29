@@ -44,3 +44,12 @@ Raw samples and measured scope are recorded in [performance results](performance
 The 14 alerts use Prometheus rule YAML (serialized as the JSON subset of YAML).
 Import into the Cloud Metrics ruler, not Grafana's Grafana-managed provisioning
 API. Customize expected instance selectors and notification routing before use.
+
+## Decision providers
+
+The Decisions row uses `taskix_decision_*` grouped by provider/protocol/kind.
+Deploy the matching Taskix exporter, generated Alloy allowlist and dashboard
+together. Legacy `taskix_jev_*` remains Typesafe/Typesafe-only; do not sum both
+families. The exporter bounds custom provider/protocol pairs at 32 and aggregates
+overflow into `other`; SQLite and CLI reports preserve full identity.
+See [configuration and migration](../docs/decision-providers.md).

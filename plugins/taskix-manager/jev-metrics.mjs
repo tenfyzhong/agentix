@@ -1,3 +1,4 @@
+import { metricsEnabled, metricsDatabase, validProvider, validProtocol } from "./decision-provider.mjs";
 import { Worker } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile } from "node:fs/promises";
@@ -5,7 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 export function metricsPath(env = process.env) {
-    return env.TASKIX_JEV_METRICS_DB?.trim() || join(env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "taskix", "jev-metrics.sqlite");
+    return metricsDatabase(env) || join(env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "taskix", "decision-metrics.sqlite");
 }
 
 export function answerScore(question, answer, criteria, threshold) {
@@ -25,7 +26,7 @@ export function answerScore(question, answer, criteria, threshold) {
 // One assessment owns one event; nested helpers reuse its telemetry.
 export async function measureDecision({ env = process.env, options, config, kind = "routing", telemetry }, callback) {
     if (telemetry) return callback(telemetry);
-    if (!config || !/^(true|1)$/i.test(env.TASKIX_JEV_METRICS_ENABLED?.trim() || "")) return callback(undefined);
+    if (!config || !metricsEnabled(env)) return callback(undefined);
     const metric = { kind, id: randomUUID(), started_at: Date.now(), called: false, answers: [], outcome: { action: "agent", reason: "preparation_unavailable" } };
     const start = performance.now();
     try { return await callback(metric); }
@@ -36,13 +37,15 @@ export async function measureDecision({ env = process.env, options, config, kind
         const event = structuredClone(metric);
         if (!event.skip) await writeMetricBounded({ path: metricsPath(env),
             options: { session: options?.session, turn_id: options?.turn_id },
-            config: { model: config.model, threshold: config.threshold }, metric: event });
+            config: { provider: config.provider, protocol: config.protocol, model: config.model, threshold: config.threshold }, metric: event });
     }
 }
 
 export async function writeMetric({ path, options, config, metric }) {
     const kind = metric.kind ?? "routing";
     if (typeof kind !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(kind)) return false;
+    const provider = config.provider ?? "typesafe", protocol = config.protocol ?? "typesafe";
+    if (!validProvider(provider) || !validProtocol(protocol)) return false;
     let db;
     try {
         await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -56,18 +59,21 @@ export async function writeMetric({ path, options, config, metric }) {
             db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").get().count === 0;
         if (empty) {
             db.exec(await readFile(new URL("./metrics-schema.sql", import.meta.url), "utf8"));
-        } else if (![1, 2].includes(version) || application !== 0x544a4556) {
+        } else if (![1, 2, 3].includes(version) || application !== 0x544a4556) {
             db.exec("ROLLBACK");
             return "unsupported_schema";
         }
         if (version === 1) {
             db.exec("ALTER TABLE requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'routing'; PRAGMA user_version=2");
         }
-        db.prepare("INSERT INTO requests (id, started_at, session_id, turn_id, project_id, model, threshold, duration_ms, called, accepted, action, reason, review, answer_count, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)").run(
+        if (version === 1 || version === 2) {
+            db.exec("ALTER TABLE requests ADD COLUMN provider TEXT NOT NULL DEFAULT 'typesafe'; ALTER TABLE requests ADD COLUMN protocol TEXT NOT NULL DEFAULT 'typesafe'; PRAGMA user_version=3");
+        }
+        db.prepare("INSERT INTO requests (id, started_at, session_id, turn_id, project_id, model, threshold, duration_ms, called, accepted, action, reason, review, answer_count, kind, provider, protocol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)").run(
             metric.id, metric.started_at, options?.session ?? null, options?.turn_id ?? null, metric.project_id ?? null,
             config.model, config.threshold, metric.duration_ms, Number(metric.called),
             Number(metric.called && metric.outcome.action !== "agent"), metric.outcome.action,
-            metric.outcome.reason ?? null, metric.answers.length, kind);
+            metric.outcome.reason ?? null, metric.answers.length, kind, provider, protocol);
         const insert = db.prepare("INSERT INTO answers (request_id, question, subject_id, choice, confidence, probability, margin, valid, issue) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
         for (const answer of metric.answers) insert.run(metric.id, answer.question, answer.subject_id ?? null, answer.choice, answer.confidence, answer.probability, answer.margin, answer.valid, answer.issue);
         db.exec("COMMIT");
@@ -89,8 +95,8 @@ export function writeMetricBounded(payload, { createWorker = data => new Worker(
             settled = true;
             clearTimeout(timer);
             if (value !== true) process.stderr.write(value === "unsupported_schema"
-                ? "Taskix: Unsupported Jev metrics schema; write skipped. Use a compatible version or a new TASKIX_JEV_METRICS_DB path.\n"
-                : "Taskix: Jev metrics write skipped.\n");
+                ? "Taskix: Unsupported decision metrics schema; write skipped. Use a compatible version or a new TASKIX_DECISION_METRICS_DB path.\n"
+                : "Taskix: Decision metrics write skipped.\n");
             worker?.unref();
             // Do not await a worker blocked in an OS operation.
             void worker?.terminate().catch(() => {});

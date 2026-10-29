@@ -1,5 +1,6 @@
 //! Typed, extensible decision events and bounded best-effort persistence.
 //! No routing, memory, lifecycle, or report logic belongs in this module.
+use crate::decision::{enabled, nonblank, valid_provider};
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
@@ -29,6 +30,10 @@ pub(crate) struct AnswerMetric {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct DecisionMetric {
+    #[serde(default = "typesafe")]
+    pub provider: String,
+    #[serde(default = "typesafe")]
+    pub protocol: String,
     pub kind: String,
     pub started_at: i64,
     pub session_id: Option<String>,
@@ -43,9 +48,15 @@ pub(crate) struct DecisionMetric {
     pub answers: Vec<AnswerMetric>,
 }
 
+fn typesafe() -> String {
+    "typesafe".into()
+}
+
 impl DecisionMetric {
     pub fn new(kind: &str, model: &str, threshold: f64) -> Self {
         Self {
+            provider: typesafe(),
+            protocol: typesafe(),
             kind: kind.into(),
             started_at: i64::try_from(
                 time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000,
@@ -72,12 +83,14 @@ pub(crate) struct MetricsCollector {
 
 impl MetricsCollector {
     pub fn from_env() -> Option<Self> {
-        std::env::var("TASKIX_JEV_METRICS_ENABLED")
-            .ok()
-            .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "1"))
-            .then(database_path)
-            .and_then(Result::ok)
-            .map(Self::new)
+        enabled(
+            std::env::var("TASKIX_DECISION_METRICS_ENABLED")
+                .ok()
+                .or_else(|| std::env::var("TASKIX_JEV_METRICS_ENABLED").ok()),
+        )
+        .then(database_path)
+        .and_then(Result::ok)
+        .map(Self::new)
     }
 
     pub fn new(path: PathBuf) -> Self {
@@ -94,10 +107,10 @@ impl MetricsCollector {
 }
 
 pub(crate) fn database_path() -> Result<PathBuf> {
-    if let Ok(path) = std::env::var("TASKIX_JEV_METRICS_DB")
-        && !path.trim().is_empty()
+    if let Some(path) = nonblank(std::env::var("TASKIX_DECISION_METRICS_DB").ok())
+        .or_else(|| nonblank(std::env::var("TASKIX_JEV_METRICS_DB").ok()))
     {
-        return Ok(PathBuf::from(path.trim()));
+        return Ok(PathBuf::from(path));
     }
     let root = std::env::var_os("XDG_STATE_HOME")
         .filter(|value| !value.is_empty())
@@ -106,12 +119,17 @@ pub(crate) fn database_path() -> Result<PathBuf> {
             || dirs::home_dir().map(|home| home.join(".local/state")),
             Some,
         )
-        .context("Cannot resolve Jev metrics directory")?;
-    Ok(root.join("taskix/jev-metrics.sqlite"))
+        .context("Cannot resolve decision metrics directory")?;
+    Ok(root.join("taskix/decision-metrics.sqlite"))
 }
 
-// Share the plugin's v2 protocol and atomic v1 migration. No source text is stored.
+// Share the plugin's v3 protocol and atomic v1/v2 migration. No source text is stored.
 async fn append_metric(path: &std::path::Path, event: &DecisionMetric) -> Result<()> {
+    ensure!(
+        valid_provider(&event.provider)
+            && matches!(event.protocol.as_str(), "typesafe" | "openai_decisions"),
+        "invalid decision provider or protocol"
+    );
     ensure!(valid_kind(&event.kind), "invalid metrics decision kind");
     let parent = path
         .parent()
@@ -151,8 +169,8 @@ async fn append_metric(path: &std::path::Path, event: &DecisionMetric) -> Result
         {
             sqlx::query(statement).execute(&mut *tx).await?;
         }
-    } else if !matches!(version, 1 | 2) || application != 0x544A_4556 {
-        bail!("unsupported Jev metrics schema");
+    } else if !matches!(version, 1..=3) || application != 0x544A_4556 {
+        bail!("unsupported decision metrics schema");
     }
     if version == 1 {
         sqlx::query("ALTER TABLE requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'routing'")
@@ -162,16 +180,25 @@ async fn append_metric(path: &std::path::Path, event: &DecisionMetric) -> Result
             .execute(&mut *tx)
             .await?;
     }
+    if matches!(version, 1 | 2) {
+        for statement in [
+            "ALTER TABLE requests ADD COLUMN provider TEXT NOT NULL DEFAULT 'typesafe'",
+            "ALTER TABLE requests ADD COLUMN protocol TEXT NOT NULL DEFAULT 'typesafe'",
+            "PRAGMA user_version=3",
+        ] {
+            sqlx::query(statement).execute(&mut *tx).await?;
+        }
+    }
     let id: String = sqlx::query_scalar("SELECT lower(hex(randomblob(16)))")
         .fetch_one(&mut *tx)
         .await?;
-    sqlx::query("INSERT INTO requests (id,started_at,session_id,turn_id,project_id,model,threshold,duration_ms,called,accepted,action,reason,answer_count,kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    sqlx::query("INSERT INTO requests (id,started_at,session_id,turn_id,project_id,model,threshold,duration_ms,called,accepted,action,reason,answer_count,kind,provider,protocol) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
         .bind(&id).bind(event.started_at)
         .bind(&event.session_id).bind(&event.turn_id).bind(&event.project_id)
         .bind(&event.model).bind(event.threshold).bind(event.duration_ms)
         .bind(event.called).bind(event.called && event.action != "agent")
         .bind(&event.action).bind(&event.reason).bind(i64::try_from(event.answers.len())?)
-        .bind(&event.kind).execute(&mut *tx).await?;
+        .bind(&event.kind).bind(&event.provider).bind(&event.protocol).execute(&mut *tx).await?;
     for answer in &event.answers {
         sqlx::query("INSERT INTO answers VALUES (?,?,?,?,?,?,?,?,?)")
             .bind(&id)
@@ -196,6 +223,30 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sqlx::Row;
+    #[tokio::test]
+    async fn collector_v3_preserves_provider_protocol() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metrics.db");
+        let event: DecisionMetric = serde_json::from_value(json!({"provider":"acme","protocol":"openai_decisions","kind":"memory_triage","started_at":1,"model":"acme-model","threshold":0.75,"duration_ms":1,"called":true,"action":"skip","answers":[]})).unwrap();
+        append_metric(&path, &event).await.unwrap();
+        let mut db = SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+        let row = sqlx::query("SELECT provider,protocol FROM requests")
+            .fetch_one(&mut db)
+            .await
+            .unwrap();
+        assert_eq!(row.get::<String, _>("provider"), "acme");
+        assert_eq!(row.get::<String, _>("protocol"), "openai_decisions");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("PRAGMA user_version")
+                .fetch_one(&mut db)
+                .await
+                .unwrap(),
+            3
+        );
+    }
+
     #[tokio::test]
     async fn collector_rejects_invalid_kind_without_creating_storage() {
         let dir = tempfile::tempdir().unwrap();
@@ -306,9 +357,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let schema = include_str!("../../../../plugins/taskix-manager/metrics-schema.sql")
-            .replace("user_version=2", "user_version=1")
-            .replace(", kind TEXT NOT NULL DEFAULT 'routing'", "");
+        let schema =
+            include_str!("../../../../plugins/taskix-manager/tests/fixtures/metrics-v2.sql")
+                .replace("user_version=2", "user_version=1")
+                .replace(", kind TEXT NOT NULL DEFAULT 'routing'", "");
         sqlx::raw_sql(&schema).execute(&mut db).await.unwrap();
         db.close().await.unwrap();
         let event = json!({"started_at":1,"model":"jev-test","threshold":0.65,"duration_ms":1,"called":true,"action":"skip","reason":null,"kind":"memory_triage","answers":[]});
@@ -323,7 +375,7 @@ mod tests {
                 .fetch_one(&mut db)
                 .await
                 .unwrap(),
-            2
+            3
         );
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT kind FROM requests")
@@ -354,9 +406,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let schema = include_str!("../../../../plugins/taskix-manager/metrics-schema.sql")
-            .replace("user_version=2", "user_version=1")
-            .replace(", kind TEXT NOT NULL DEFAULT 'routing'", "");
+        let schema =
+            include_str!("../../../../plugins/taskix-manager/tests/fixtures/metrics-v2.sql")
+                .replace("user_version=2", "user_version=1")
+                .replace(", kind TEXT NOT NULL DEFAULT 'routing'", "");
         sqlx::raw_sql(&schema).execute(&mut db).await.unwrap();
         sqlx::query("CREATE TRIGGER reject_append BEFORE INSERT ON requests BEGIN SELECT RAISE(FAIL,'fixture'); END").execute(&mut db).await.unwrap();
         assert!(

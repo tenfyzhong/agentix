@@ -1,0 +1,213 @@
+[
+  {
+    "name": "legacy_typesafe",
+    "env": {
+      "TASKIX_JEV_ENABLED": "true",
+      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
+      "TASKIX_JEV_API_KEY": "legacy-key"
+    },
+    "expected": {
+      "provider": "typesafe",
+      "protocol": "typesafe",
+      "model": "jev-latest",
+      "url": "https://typesafe.test/evaluate",
+      "key": "legacy-key"
+    }
+  },
+  {
+    "name": "openai_defaults",
+    "env": {
+      "TASKIX_JEV_ENABLED": "true",
+      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
+      "TASKIX_JEV_API_KEY": "legacy-key",
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "openai",
+      "OPENAI_API_KEY": "openai-key"
+    },
+    "expected": {
+      "provider": "openai",
+      "protocol": "openai_decisions",
+      "model": "gpt-6-luna",
+      "url": "https://api.openai.com/v1/decisions",
+      "key": "openai-key"
+    }
+  },
+  {
+    "name": "custom_typesafe",
+    "env": {
+      "TASKIX_JEV_ENABLED": "true",
+      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
+      "TASKIX_JEV_API_KEY": "legacy-key",
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "acme",
+      "TASKIX_DECISION_PROTOCOL": "typesafe",
+      "TASKIX_DECISION_URL": "https://acme.test/evaluate",
+      "TASKIX_DECISION_API_KEY": "acme-key",
+      "TASKIX_DECISION_MODEL": "acme-model"
+    },
+    "expected": {
+      "provider": "acme",
+      "protocol": "typesafe",
+      "model": "acme-model",
+      "url": "https://acme.test/evaluate",
+      "key": "acme-key"
+    }
+  },
+  {
+    "name": "custom_openai_decisions",
+    "env": {
+      "TASKIX_JEV_ENABLED": "true",
+      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
+      "TASKIX_JEV_API_KEY": "legacy-key",
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "acme",
+      "TASKIX_DECISION_PROTOCOL": "openai_decisions",
+      "TASKIX_DECISION_URL": "https://acme.test/evaluate",
+      "TASKIX_DECISION_API_KEY": "acme-key",
+      "TASKIX_DECISION_MODEL": "acme-model"
+    },
+    "expected": {
+      "provider": "acme",
+      "protocol": "openai_decisions",
+      "model": "acme-model",
+      "url": "https://acme.test/evaluate",
+      "key": "acme-key"
+    }
+  },
+  {
+    "name": "custom_missing_protocol",
+    "env": {
+      "TASKIX_JEV_ENABLED": "true",
+      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
+      "TASKIX_JEV_API_KEY": "legacy-key",
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "acme",
+      "TASKIX_DECISION_URL": "https://acme.test/evaluate",
+      "TASKIX_DECISION_API_KEY": "acme-key",
+      "TASKIX_DECISION_MODEL": "acme-model",
+      "OPENAI_API_KEY": "not-for-custom"
+    },
+    "expected": null
+  },
+  {
+    "name": "custom_missing_url",
+    "env": {
+      "TASKIX_JEV_ENABLED": "true",
+      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
+      "TASKIX_JEV_API_KEY": "legacy-key",
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "acme",
+      "TASKIX_DECISION_PROTOCOL": "typesafe",
+      "TASKIX_DECISION_API_KEY": "acme-key",
+      "TASKIX_DECISION_MODEL": "acme-model",
+      "OPENAI_API_KEY": "not-for-custom"
+    },
+    "expected": null
+  },
+  {
+    "name": "custom_missing_api_key",
+    "env": {
+      "TASKIX_JEV_ENABLED": "true",
+      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
+      "TASKIX_JEV_API_KEY": "legacy-key",
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "acme",
+      "TASKIX_DECISION_PROTOCOL": "typesafe",
+      "TASKIX_DECISION_URL": "https://acme.test/evaluate",
+      "TASKIX_DECISION_MODEL": "acme-model",
+      "OPENAI_API_KEY": "not-for-custom"
+    },
+    "expected": null
+  },
+  {
+    "name": "custom_missing_model",
+    "env": {
+      "TASKIX_JEV_ENABLED": "true",
+      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
+      "TASKIX_JEV_API_KEY": "legacy-key",
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "acme",
+      "TASKIX_DECISION_PROTOCOL": "typesafe",
+      "TASKIX_DECISION_URL": "https://acme.test/evaluate",
+      "TASKIX_DECISION_API_KEY": "acme-key",
+      "OPENAI_API_KEY": "not-for-custom"
+    },
+    "expected": null
+  },
+  {
+    "name": "new_disable_overrides_legacy",
+    "env": {
+      "TASKIX_JEV_ENABLED": "true",
+      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
+      "TASKIX_JEV_API_KEY": "legacy-key",
+      "TASKIX_DECISION_ENABLED": "false"
+    },
+    "expected": null
+  },
+  {
+    "name": "invalid_protocol",
+    "env": {
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "acme",
+      "TASKIX_DECISION_PROTOCOL": "responses",
+      "TASKIX_DECISION_URL": "https://acme.test/evaluate",
+      "TASKIX_DECISION_API_KEY": "acme-key",
+      "TASKIX_DECISION_MODEL": "acme-model"
+    },
+    "expected": null
+  },
+  {
+    "name": "credentials_in_url",
+    "env": {
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "acme",
+      "TASKIX_DECISION_PROTOCOL": "typesafe",
+      "TASKIX_DECISION_URL": "https://user:secret@acme.test",
+      "TASKIX_DECISION_API_KEY": "acme-key",
+      "TASKIX_DECISION_MODEL": "acme-model"
+    },
+    "expected": null
+  },
+  {
+    "name": "invalid_header",
+    "env": {
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "acme",
+      "TASKIX_DECISION_PROTOCOL": "typesafe",
+      "TASKIX_DECISION_URL": "https://acme.test/evaluate",
+      "TASKIX_DECISION_API_KEY": "bad\nkey",
+      "TASKIX_DECISION_MODEL": "acme-model"
+    },
+    "expected": null
+  },
+  {
+    "name": "provider_is_not_url",
+    "env": {
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "https://acme.test",
+      "TASKIX_DECISION_PROTOCOL": "typesafe",
+      "TASKIX_DECISION_URL": "https://acme.test/evaluate",
+      "TASKIX_DECISION_API_KEY": "acme-key",
+      "TASKIX_DECISION_MODEL": "acme-model"
+    },
+    "expected": null
+  },
+  {
+    "name": "legacy_key_not_openai",
+    "env": {
+      "TASKIX_JEV_ENABLED": "true",
+      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
+      "TASKIX_JEV_API_KEY": "legacy-key",
+      "TASKIX_DECISION_ENABLED": "true",
+      "TASKIX_DECISION_PROVIDER": "openai"
+    },
+    "expected": null
+  },
+  {
+    "name": "key_does_not_enable",
+    "env": {
+      "OPENAI_API_KEY": "key"
+    },
+    "expected": null
+  }
+]

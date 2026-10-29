@@ -1,10 +1,11 @@
+import { decisionConfig } from "./decision-provider.mjs";
 import { memoryContext } from "./memory.mjs";
 import { withDeadline } from "./jev-io.mjs";
 import { assessLifecycle, lifecycleNotice } from "./lifecycle.mjs";
 import { randomUUID } from "node:crypto";
 import { stageTranscript, discussionNotice, selectDiscussion } from "./discussion.mjs";
 import { visibleMessage, transcriptConversation, recordMessages } from "./conversation.mjs";
-import { jevConfig, routePrompt, withJevMetrics } from "./jev.mjs";
+import { routePrompt, withJevMetrics } from "./jev.mjs";
 import { routingReceipt } from "./routing-state.mjs";
 import { runTaskix } from "./taskix-cli.mjs";
 import { agentFallback } from "./routing-context.mjs";
@@ -112,7 +113,7 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
                 ? "interrupt"
                 : "heartbeat";
     const options = { cwd: event.cwd, session: event.session_id };
-    const enabled = !!jevConfig(routing.env);
+    const enabled = !!decisionConfig(routing.env);
     if (event.hook_event_name === "UserPromptSubmit") {
         const memory = memoryContext(event.prompt, event.turn_id, options, runner, { ...routing, requireEnabled: true });
         if (!enabled) {
@@ -369,7 +370,7 @@ export function registerExtension(
         const options = optionsFor(ctx);
         const memory = memoryContext(event.prompt, state?.turn || event.turnId || event.turn_id, options, runner, { ...routing, requireEnabled: true });
         let content;
-        if (jevConfig(routing.env)) {
+        if (decisionConfig(routing.env)) {
             const prepared = await preparePrompt(event.prompt, options, runner, routing, state?.history);
             const notice = cancellationContext(prepared.context);
             content = `${notice ? notice + "\n" : ""}${prepared.content}`;

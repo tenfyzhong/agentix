@@ -806,3 +806,16 @@ Feishu/Slack closed loops and live IM
 accounts or production providers have not been accepted by these fixtures.
 No fixture proves complete branch coverage, a total memory ceiling or absence
 of all performance regressions.
+
+## Decision provider and protocol compatibility
+
+`decision-provider.test.mjs` covers Typesafe and OpenAI Decisions using the same
+third-party provider identity, including routing, Issues, discussion, lifecycle,
+refusals, malformed distributions, transport failures and payload bounds.
+The shared `decision-config.json` fixture verifies JS/Rust configuration parity.
+Rust triage tests exercise local HTTP requests and conservative extraction fallback.
+Metrics tests cover v1/v2/v3, transactional migration/rollback, provider/protocol
+reports and real Node-to-CLI interoperability. Telemetry tests verify grouped
+histograms, bounded custom identities and Typesafe-only legacy series; monitoring
+artifact tests cover the corresponding dashboard and allowlist. These tests do
+not establish live service quality or remote deployment.

@@ -363,7 +363,7 @@ for (const host of ["codex", "claude", "pi", "omp"]) {
                     cwd: "/work", sessionManager: { getSessionId: () => "session" },
                 })).message.content;
             }
-            assert.match(content, /Jev deferred to the current Agent/);
+            assert.match(content, /Decision service deferred to the current Agent/);
             assert.match(content, /taskix context/);
             assert.match(content, /--expect-revision/);
             assert.match(content, /job_a/);

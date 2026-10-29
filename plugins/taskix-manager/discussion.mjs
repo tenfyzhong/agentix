@@ -1,14 +1,15 @@
+import { decisionConfig } from "./decision-provider.mjs";
 import { withDeadline } from "./jev-io.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, rename, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { classifyDiscussionTurns, jevConfig, withDecisionMetrics } from "./jev.mjs";
+import { classifyDiscussionTurns, withDecisionMetrics } from "./jev.mjs";
 import { transcriptConversation, recordMessages } from "./conversation.mjs";
 
 export function discussionNotice(turn) {
-    return `Current discussion turn: ${JSON.stringify(turn)}. Before creating, following up, or continuing a Job, select its related pending turns using the taskix-manager discussion workflow. Jev first: node ${JSON.stringify(fileURLToPath(import.meta.url))} SESSION_ID, with JSON {"current_turn":TURN_ID,"target":{"title":"delivery title","goal":"acceptance goal","prompt":"current verbatim prompt","job_id":"existing Job only"}} on stdin. This helper only classifies; use its guarded arguments for the actual write. If it returns status=agent, read pending turns and decide their ownership. Always include the current turn.`;
+    return `Current discussion turn: ${JSON.stringify(turn)}. Before creating, following up, or continuing a Job, select its related pending turns using the taskix-manager discussion workflow. Decision service first: node ${JSON.stringify(fileURLToPath(import.meta.url))} SESSION_ID, with JSON {"current_turn":TURN_ID,"target":{"title":"delivery title","goal":"acceptance goal","prompt":"current verbatim prompt","job_id":"existing Job only"}} on stdin. This helper only classifies; use its guarded arguments for the actual write. If it returns status=agent, read pending turns and decide their ownership. Always include the current turn.`;
 }
 
 // Cache only a turn identity after successful staging, never message contents.
@@ -62,7 +63,7 @@ async function selectDiscussionMeasured({target,current_turn:currentTurn}, optio
                 result = {status:"agent",reason:"incomplete_context"};
             } else if (pending.turns.length === 1) {
                 result = {status:"selected",turn_ids:[currentTurn],revision:pending.revision};
-            } else if (!jevConfig(settings.env)) {
+            } else if (!decisionConfig(settings.env)) {
                 result = {status:"agent",reason:"disabled"};
             } else if (pending.turns.reduce((sum,turn)=>sum+(turn.bytes || 0),0)>24000) {
                 result = {status:"agent",reason:"context_too_large"};

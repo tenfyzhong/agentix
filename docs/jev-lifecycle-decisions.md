@@ -1,10 +1,10 @@
-# Jev lifecycle decisions
+# Decision lifecycle assessments
 
-Jev classifies semantic intent. Taskix remains the authority for state transitions,
-leases, Plans, dependencies, revisions and persistence. Enabling
-`TASKIX_JEV_ENABLED=true` with valid URL/key configuration selects Jev first;
-disabled, unavailable, uncertain or stale results use the existing main-agent
-workflow. There is no additional classifier agent or automatic lifecycle writer.
+The configured decision service classifies semantic intent. Taskix remains the
+authority for state transitions, leases, Plans, dependencies and revisions.
+[Typesafe and OpenAI protocols](decision-providers.md) share this pipeline;
+legacy Jev variables still select Typesafe. Errors and uncertainty preserve the
+main-Agent workflow. Historical replay measurements below used Jev on Typesafe.
 
 ## Shared architecture
 
@@ -16,7 +16,7 @@ arguments. Codex/Claude use its executable entry point; Pi/OMP call the same
 function through their structured tool. Host adapters do not implement separate
 classifiers. The packaged Skill defines when to call the helper.
 
-| Decision | Jev responsibility | Deterministic responsibility |
+| Decision | Decision service responsibility | Deterministic responsibility |
 | --- | --- | --- |
 | New work / supplement | Ownership and scope; required/none review policy | Preserve existing required review; guard updates by Job revision |
 | ACTIVE Job completion | Choose pending_review/completed from the whole delivered scope, replacing an earlier default if appropriate | Persist policy and final transition atomically with Job and Task revision guards |

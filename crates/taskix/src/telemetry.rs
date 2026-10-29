@@ -3,7 +3,7 @@ use agentix_metrics::{Metrics, Snapshot};
 use anyhow::{Result, ensure};
 use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::{Path, PathBuf},
     time::Duration,
@@ -110,7 +110,8 @@ pub(super) struct Collector {
     task_identity: Option<String>,
     task_events: BTreeMap<&'static str, u64>,
     jev_cursor: Option<(i64, String)>,
-    jev_totals: JevTotals,
+    decision_totals: BTreeMap<(String, String), JevTotals>,
+    decision_groups: BTreeSet<(String, String)>,
 }
 impl Collector {
     pub(super) fn new(tasks: PathBuf, memory: PathBuf, jev: PathBuf, metrics: Metrics) -> Self {
@@ -123,7 +124,8 @@ impl Collector {
             task_identity: None,
             task_events: BTreeMap::new(),
             jev_cursor: None,
-            jev_totals: JevTotals::default(),
+            decision_totals: BTreeMap::new(),
+            decision_groups: BTreeSet::new(),
         }
     }
     pub(super) async fn run(mut self, memory_enabled: bool) {
@@ -405,7 +407,7 @@ impl Collector {
             .fetch_one(&mut db)
             .await?;
         ensure!(
-            matches!(version, 1 | 2) && app == 0x544A_4556,
+            matches!(version, 1..=3) && app == 0x544A_4556,
             "unsupported Jev metrics schema"
         );
         let max: Option<(i64, String)> =
@@ -423,16 +425,34 @@ impl Collector {
                 .await?;
             if id.as_deref() != Some(cursor.1.as_str()) {
                 self.jev_cursor = max;
-                self.jev_totals = JevTotals::default();
+                self.decision_totals.clear();
+                self.decision_groups.clear();
                 self.metrics.clear(Snapshot::Jev);
                 anyhow::bail!("Jev metrics database changed; rebaselined without replay");
             }
         }
         let kind = if version == 1 { "'routing'" } else { "r.kind" };
-        let rows=sqlx::query(&format!("SELECT r.rowid,r.id,{kind} AS kind,r.accepted,r.reason,r.duration_ms,(SELECT avg(confidence) FROM answers a WHERE a.request_id=r.id) AS confidence FROM requests r WHERE r.rowid>? ORDER BY r.rowid LIMIT ?")).bind(cursor.0).bind(BATCH).fetch_all(&mut db).await?;
-        let mut totals = self.jev_totals.clone();
+        let provider = if version < 3 {
+            "'typesafe'"
+        } else {
+            "r.provider"
+        };
+        let protocol = if version < 3 {
+            "'typesafe'"
+        } else {
+            "r.protocol"
+        };
+        let rows=sqlx::query(&format!("SELECT r.rowid,r.id,{kind} AS kind,{provider} AS provider,{protocol} AS protocol,r.accepted,r.reason,r.duration_ms,(SELECT avg(confidence) FROM answers a WHERE a.request_id=r.id) AS confidence FROM requests r WHERE r.rowid>? ORDER BY r.rowid LIMIT ?")).bind(cursor.0).bind(BATCH).fetch_all(&mut db).await?;
+        let mut all_totals = self.decision_totals.clone();
+        let mut groups = self.decision_groups.clone();
         for row in rows {
             cursor = (row.try_get("rowid")?, row.try_get("id")?);
+            let group = decision_group(
+                row.try_get("provider")?,
+                row.try_get("protocol")?,
+                &mut groups,
+            );
+            let totals = all_totals.entry(group).or_default();
             let raw: String = row.try_get("kind")?;
             let kind = normalized(&raw, KINDS);
             let accepted: i64 = row.try_get("accepted")?;
@@ -487,95 +507,176 @@ impl Collector {
             }
         }
         let mut text = String::new();
-        if !totals.decisions.is_empty() {
-            counter(
+        let mut declarations = BTreeSet::new();
+        for ((provider, protocol), totals) in &all_totals {
+            let labels = format!("provider=\"{provider}\",protocol=\"{protocol}\",");
+            render_decision_totals(
                 &mut text,
-                "taskix_jev_decisions_total",
-                "Persisted Jev decisions observed since exporter baseline; adoption is not accuracy",
-            );
-            for ((kind, outcome), count) in &totals.decisions {
-                writeln!(
-                    text,
-                    "taskix_jev_decisions_total{{kind=\"{kind}\",outcome=\"{outcome}\"}} {count}"
-                )?;
-            }
-        }
-        for (name, groups) in [
-            ("taskix_jev_duration_seconds", &totals.duration),
-            ("taskix_jev_request_confidence", &totals.confidence),
-        ] {
-            if groups.is_empty() {
-                continue;
-            }
-            let metric_type = if name == "taskix_jev_duration_seconds" {
-                "histogram"
-            } else {
-                "summary"
-            };
-            writeln!(
-                text,
-                "# HELP {name} Observed Jev values\n# TYPE {name} {metric_type}"
+                totals,
+                "taskix_decision",
+                &labels,
+                &mut declarations,
             )?;
-            for (kind, (count, sum)) in groups {
-                if metric_type == "histogram" {
-                    for (bound, value) in JEV_DURATION_BUCKETS
-                        .iter()
-                        .zip(&totals.duration_buckets[kind])
-                    {
-                        writeln!(
-                            text,
-                            "{name}_bucket{{kind=\"{kind}\",le=\"{bound}\"}} {value}"
-                        )?;
-                    }
-                    writeln!(text, "{name}_bucket{{kind=\"{kind}\",le=\"+Inf\"}} {count}")?;
-                }
-                writeln!(
-                    text,
-                    "{name}_sum{{kind=\"{kind}\"}} {sum}\n{name}_count{{kind=\"{kind}\"}} {count}"
-                )?;
+            if provider == "typesafe" && protocol == "typesafe" {
+                render_decision_totals(&mut text, totals, "taskix_jev", "", &mut declarations)?;
             }
         }
-        if !totals.reasons.is_empty() {
-            counter(
-                &mut text,
-                "taskix_jev_fallbacks_total",
-                "Jev fallback reasons mapped to bounded categories",
-            );
-            for ((kind, reason), count) in &totals.reasons {
-                writeln!(
-                    text,
-                    "taskix_jev_fallbacks_total{{kind=\"{kind}\",reason=\"{reason}\"}} {count}"
-                )?;
-            }
-        }
-        gauge(
-            &mut text,
-            "taskix_jev_reviewed",
-            "Current human-reviewed records; not model confidence",
-        );
-        let rows=sqlx::query(&format!("SELECT {kind} AS kind,review,count(*) AS count FROM requests r WHERE review IS NOT NULL GROUP BY 1,2")).fetch_all(&mut db).await?;
-        let mut reviews: BTreeMap<(&str, &str), i64> = BTreeMap::new();
+        let rows=sqlx::query(&format!("SELECT {provider} AS provider,{protocol} AS protocol,{kind} AS kind,review,count(*) AS count FROM requests r WHERE review IS NOT NULL GROUP BY 1,2,3,4")).fetch_all(&mut db).await?;
+        let mut reviews = BTreeMap::new();
         for row in rows {
+            let (provider, protocol) = decision_group(
+                row.try_get("provider")?,
+                row.try_get("protocol")?,
+                &mut groups,
+            );
             let raw: String = row.try_get("kind")?;
             let review: String = row.try_get("review")?;
             *reviews
                 .entry((
+                    provider,
+                    protocol,
                     normalized(&raw, KINDS),
                     normalized(&review, &["correct", "incorrect", "other"]),
                 ))
-                .or_default() += row.try_get::<i64, _>("count")?;
+                .or_insert(0i64) += row.try_get::<i64, _>("count")?;
         }
-        for ((kind, result), count) in reviews {
+        for ((provider, protocol, kind, result), count) in reviews {
+            declare_decision(
+                &mut text,
+                &mut declarations,
+                "taskix_decision_reviewed",
+                "gauge",
+            )?;
             writeln!(
                 text,
-                "taskix_jev_reviewed{{kind=\"{kind}\",result=\"{result}\"}} {count}"
+                "taskix_decision_reviewed{{provider=\"{provider}\",protocol=\"{protocol}\",kind=\"{kind}\",result=\"{result}\"}} {count}"
             )?;
+            if provider == "typesafe" && protocol == "typesafe" {
+                declare_decision(&mut text, &mut declarations, "taskix_jev_reviewed", "gauge")?;
+                writeln!(
+                    text,
+                    "taskix_jev_reviewed{{kind=\"{kind}\",result=\"{result}\"}} {count}"
+                )?;
+            }
         }
         self.jev_cursor = Some(cursor);
-        self.jev_totals = totals;
+        self.decision_totals = all_totals;
+        self.decision_groups = groups;
         self.metrics.publish(Snapshot::Jev, text);
         Ok(())
     }
+}
+// Provider identities come from configuration, never request content. Bound retained
+// identities even if a shared historical database contains many configurations.
+const MAX_DECISION_GROUPS: usize = 32;
+fn decision_group(
+    provider: &str,
+    protocol: &str,
+    groups: &mut BTreeSet<(String, String)>,
+) -> (String, String) {
+    if !crate::decision::valid_provider(provider)
+        || !matches!(protocol, "typesafe" | "openai_decisions")
+    {
+        return ("other".into(), "other".into());
+    }
+    let group = (provider.to_owned(), protocol.to_owned());
+    if matches!(provider, "typesafe" | "openai") {
+        return group;
+    }
+    if groups.contains(&group) || groups.len() < MAX_DECISION_GROUPS {
+        groups.insert(group.clone());
+        group
+    } else {
+        ("other".into(), "other".into())
+    }
+}
+fn declare_decision(
+    text: &mut String,
+    declarations: &mut BTreeSet<String>,
+    name: &str,
+    kind: &str,
+) -> Result<()> {
+    if declarations.insert(name.to_owned()) {
+        writeln!(
+            text,
+            "# HELP {name} Persisted decision observations; adoption is not accuracy\n# TYPE {name} {kind}"
+        )?;
+    }
+    Ok(())
+}
+fn render_decision_totals(
+    text: &mut String,
+    totals: &JevTotals,
+    prefix: &str,
+    labels: &str,
+    declarations: &mut BTreeSet<String>,
+) -> Result<()> {
+    if !totals.decisions.is_empty() {
+        declare_decision(
+            text,
+            declarations,
+            &format!("{prefix}_decisions_total"),
+            "counter",
+        )?;
+        for ((kind, outcome), count) in &totals.decisions {
+            writeln!(
+                text,
+                "{prefix}_decisions_total{{{labels}kind=\"{kind}\",outcome=\"{outcome}\"}} {count}"
+            )?;
+        }
+    }
+    for (suffix, groups) in [
+        ("duration_seconds", &totals.duration),
+        ("request_confidence", &totals.confidence),
+    ] {
+        if groups.is_empty() {
+            continue;
+        }
+        let name = format!("{prefix}_{suffix}");
+        let histogram = suffix == "duration_seconds";
+        declare_decision(
+            text,
+            declarations,
+            &name,
+            if histogram { "histogram" } else { "summary" },
+        )?;
+        for (kind, (count, sum)) in groups {
+            if histogram {
+                for (bound, value) in JEV_DURATION_BUCKETS
+                    .iter()
+                    .zip(&totals.duration_buckets[kind])
+                {
+                    writeln!(
+                        text,
+                        "{name}_bucket{{{labels}kind=\"{kind}\",le=\"{bound}\"}} {value}"
+                    )?;
+                }
+                writeln!(
+                    text,
+                    "{name}_bucket{{{labels}kind=\"{kind}\",le=\"+Inf\"}} {count}"
+                )?;
+            }
+            writeln!(
+                text,
+                "{name}_sum{{{labels}kind=\"{kind}\"}} {sum}\n{name}_count{{{labels}kind=\"{kind}\"}} {count}"
+            )?;
+        }
+    }
+    if !totals.reasons.is_empty() {
+        declare_decision(
+            text,
+            declarations,
+            &format!("{prefix}_fallbacks_total"),
+            "counter",
+        )?;
+        for ((kind, reason), count) in &totals.reasons {
+            writeln!(
+                text,
+                "{prefix}_fallbacks_total{{{labels}kind=\"{kind}\",reason=\"{reason}\"}} {count}"
+            )?;
+        }
+    }
+    Ok(())
 }
 #[cfg(test)]
 mod tests;

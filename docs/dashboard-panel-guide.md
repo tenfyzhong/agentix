@@ -3,7 +3,7 @@
 > Unreleased: this guide describes the dashboard and collector in the application-metrics feature build.
 
 This guide covers all **78 panels in eight rows** of **Agentix · Applications**,
-including the matching P99 panels and Jev P95/P99. Titles below exactly match the
+including the matching P99 panels and Decision P95/P99. Titles below exactly match the
 dashboard. It explains the configured queries; it is not a live health assessment.
 
 ## How to read the dashboard
@@ -309,11 +309,16 @@ increase(agentix_tokens_total[$__range]), grouped by source and token kind. The 
 
 increase(taskix_tokens_total[$__range]), grouped by source and token kind. Read the rightmost point for the selected-range increment. Earlier points are rolling windows, not independent subtotals, and must not be summed. Only reported usage is included.
 
-## Jev decisions
+## Decisions
+
+Panels use `taskix_decision_*` and distinguish configured provider and protocol.
+The old `taskix_jev_*` series are Typesafe-only compatibility output and are not
+summed with the new family. Deploy the matching Alloy allowlist and exporter.
+
 
 ### Decisions / second
 
-New persisted Jev requests observed after the collector baseline per second, grouped by decision kind and accepted/fallback outcome. Historical requests are not replayed on startup. Disabled or unused decision paths may have no new data.
+New persisted decision requests observed after the collector baseline per second, grouped by decision kind and accepted/fallback outcome. Historical requests are not replayed on startup. Disabled or unused decision paths may have no new data.
 
 ### Adoption ratio
 
@@ -321,19 +326,19 @@ Accepted decision rate divided by all observed decision rates for each kind. It 
 
 ### Mean decision latency
 
-Observed duration sum divided by duration count for each Jev kind, using rates over the query window. This is an arithmetic mean of persisted request durations, not a percentile. Only requests observed after the baseline contribute.
+Observed duration sum divided by duration count for each provider/protocol/kind, using rates over the query window. This is an arithmetic mean of persisted request durations, not a percentile. Only requests observed after the baseline contribute.
 
 ### Decision latency p95
 
-Estimated P95 of persisted Jev request durations observed since the baseline, grouped by kind. Uses rates of cumulative duration buckets, not quantiles of averages. Needs the updated Taskix collector and Alloy bucket allowlist. Sparse traffic and wide tail buckets reduce precision; values above 3600 seconds cannot be resolved by the finite buckets. Compare with decision volume and the mean.
+Estimated P95 of persisted decision request durations observed since the baseline, grouped by kind. Uses rates of cumulative duration buckets, not quantiles of averages. Needs the updated Taskix collector and Alloy bucket allowlist. Sparse traffic and wide tail buckets reduce precision; values above 3600 seconds cannot be resolved by the finite buckets. Compare with decision volume and the mean.
 
 ### Decision latency p99
 
-Estimated P99 of persisted Jev request durations observed since the baseline, grouped by kind. Uses rates of cumulative duration buckets, not quantiles of averages. Needs the updated Taskix collector and Alloy bucket allowlist. Sparse traffic and wide tail buckets reduce precision; values above 3600 seconds cannot be resolved by the finite buckets. Compare with decision volume and the mean.
+Estimated P99 of persisted decision request durations observed since the baseline, grouped by kind. Uses rates of cumulative duration buckets, not quantiles of averages. Needs the updated Taskix collector and Alloy bucket allowlist. Sparse traffic and wide tail buckets reduce precision; values above 3600 seconds cannot be resolved by the finite buckets. Compare with decision volume and the mean.
 
 ### Mean request confidence
 
-Mean of the available per-request confidence values, grouped by Jev kind. Each request contributes its available average answer confidence. This is reported confidence, not calibrated accuracy; requests without confidence are excluded.
+Mean of the available per-request confidence values, grouped by provider/protocol/kind. Each request contributes its available average answer confidence. This is reported confidence, not calibrated accuracy; requests without confidence are excluded.
 
 ### Fallback reasons
 
