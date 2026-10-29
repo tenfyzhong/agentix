@@ -15,7 +15,7 @@ Installation, configuration, commands, and other user guides live in the [GitHub
 - [Task state machines](task-state-machines.md)
 - [Task workflow mechanisms](task-workflow-mechanisms.md)
 - [Taskix memory design](taskix-memory-design.md)
-- [Jev lifecycle decisions](jev-lifecycle-decisions.md)
+- [Decision lifecycle assessments](decision-lifecycle-assessments.md)
 - [Claude bridge protocol and verification](host-protocol.md#protocol-and-lifecycle)
 
 ## Testing and measurements

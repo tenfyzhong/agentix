@@ -550,7 +550,7 @@ runs: confidence and acceptance can vary between identical provider requests.
 
 The actual service's semantic quality requires opt-in historical replay. Deterministic integration coverage does not prove live model accuracy or that a completed task met its acceptance criteria.
 
-Historical replay methods, observed outcomes and local performance measurements are recorded in [Jev lifecycle decisions](jev-lifecycle-decisions.md).
+Historical replay methods, observed outcomes and local performance measurements are recorded in [Decision lifecycle assessments](decision-lifecycle-assessments.md).
 
 Completion checkpoint integration cases verify ACTIVE -> COMPLETED and ACTIVE -> PENDING_REVIEW after the final Task, including replacement of an earlier required default, disabled/uncertain fallback, read-only classification and stale policy writes. Already PENDING_REVIEW Jobs reject completion assessment.
 
