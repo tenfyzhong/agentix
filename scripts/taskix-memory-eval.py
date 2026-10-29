@@ -115,10 +115,12 @@ def prepare(args):
 def questions():
     source = (ROOT / 'crates/taskix/src/memory/triage.rs').read_text()
     # Fail if the production request shape changes rather than silently drift.
-    match = re.search(r'"questions":(\{"memory_triage":.*?\})\}\)\.to_string\(\)', source)
+    match = re.search(r'"questions"\s*:\s*(\{"memory_triage":)', source)
     if not match:
-        raise ValueError('Cannot locate production Jev question')
-    return json.loads(match[1])
+        raise ValueError('Cannot locate production decision question')
+    # Decode the literal object independently of the Rust transport wrapper.
+    question, _ = json.JSONDecoder().raw_decode(source[match.start(1):])
+    return question
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
