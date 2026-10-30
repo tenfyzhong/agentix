@@ -7,7 +7,7 @@ Agentix connects local Codex, Pi, Oh My Pi, Claude Code, and OpenCode sessions t
 - Browse local agent sessions, attach from chat, and follow streamed replies and history.
 - Control Codex models, reasoning, plans, and reviews; answer Codex and OpenCode approvals and questions in IM.
 - Restore session bindings after restarts and receive background completion notifications.
-- Create Codex, Pi, OMP, Claude Code, and OpenCode sessions from chat with optional rmux or tmux integration.
+- Create Codex, Pi, OMP, Claude Code, and OpenCode sessions from chat with optional rmux, tmux, or Rex integration.
 - Coordinate work with standalone Taskix and browse project, Job, and Task boards in IM or Obsidian.
 - Retain evidenced project decisions with optional Taskix memory.
 - Verify Jobs before completion and synchronize Obsidian status edits with automatic rollback on failure.
@@ -33,7 +33,7 @@ curl -fsSL https://chatgpt.com/codex/install.sh | sh
 
 #### Windows (x86_64)
 
-Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add its directory to `PATH`. Pi/OMP live bridges can use a configured loopback TCP endpoint on Windows; Codex Unix sockets and rmux/tmux terminal delivery require macOS/Linux. See [installation options](https://github.com/tenfyzhong/agentix/wiki/Installation) for checksums and source builds.
+Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add its directory to `PATH`. Pi/OMP live bridges can use a configured loopback TCP endpoint on Windows; Codex Unix sockets and rmux/tmux/Rex terminal delivery require macOS/Linux. See [installation options](https://github.com/tenfyzhong/agentix/wiki/Installation) for checksums and source builds.
 
 ### Configure
 
@@ -92,7 +92,7 @@ For Pi, OMP, Claude Code, or OpenCode, start the configured host with its bridge
 
 1. Send `/sessions` to the bot and choose **Attach** for your session.
 2. Send an ordinary message to prompt the agent and follow its replies in chat.
-3. Use `/last` for the latest turn, `/history` for earlier turns, and `/detach` to disconnect. Use `/exit` to request agent exit where supported (Codex requires its original CLI in the configured rmux or tmux).
+3. Use `/last` for the latest turn, `/history` for earlier turns, and `/detach` to disconnect. Use `/exit` to request agent exit where supported (Codex requires its original CLI in the configured rmux, tmux, or Rex).
 4. Send `/help` for the commands supported by the current session.
 
 Mention the bot in group chats. If another Codex process owns the session's writer, the attachment is read-only; send prompts through the original process.
@@ -113,3 +113,5 @@ Obsidian task boards require **Obsidian 1.14 or newer** with the built-in Bases 
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, tests, and releases. Architecture, protocols, benchmarks, and implementation reviews are indexed in [Technical documentation](docs/README.md).
+
+For local Rex terminal integration, configure `[multiplexer] kind = "rex"` and start Rex before Agentix. See [Rex multiplexer](docs/rex-multiplexer.md) for executable discovery, supported operations, and validation coverage.

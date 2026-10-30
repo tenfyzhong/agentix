@@ -70,31 +70,6 @@ pub(super) fn multiplexer_root_body(
     (body, window_count, pane_count)
 }
 
-pub(super) fn multiplexer_session_body(
-    session: &MultiplexerSession,
-    current: Option<&SessionId>,
-) -> String {
-    session
-        .windows
-        .iter()
-        .map(|window| {
-            markdown_quote(&format!(
-                "**{} · {}**{}\n{} {}",
-                window.index,
-                window.name,
-                if multiplexer_window_contains(window, current) {
-                    " · 📎 **Attached**"
-                } else {
-                    ""
-                },
-                window.panes.len(),
-                plural(window.panes.len(), "pane", "panes")
-            ))
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 pub(super) fn multiplexer_window_body(
     window: &MultiplexerWindow,
     current: Option<&SessionId>,

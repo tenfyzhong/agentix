@@ -1,0 +1,38 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, copyFileSync, mkdirSync, symlinkSync, realpathSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { TerminalDelivery } from '../claude/delivery.mjs';
+import { rexCandidates } from '../claude/rex.mjs';
+import { waitFor } from './support.mjs';
+
+test('native Rex confirms a multiline draft and submits only the IM text', { skip: !process.env.AGENTIX_TEST_REX || process.platform === 'win32', timeout: 30000 }, async t => {
+    const command = rexCandidates(process.env).find(existsSync);
+    assert.ok(command, 'Rex CLI must be installed');
+    const run = args => execFileSync(command, ['--autostart=false', '--timeout', '4s', ...args], { encoding: 'utf8' });
+    const identity = JSON.parse(run(['whoami', '--json']));
+    const root = mkdtempSync(join(tmpdir(), 'ax-rex-')), output = join(root, 'input');
+    let session;
+    t.after(() => { if (session) run(['-S', identity.endpoint, 'kill', session]); rmSync(root, { recursive: true, force: true }); });
+    mkdirSync(join(root, 'bin')); copyFileSync(process.execPath, join(root, 'bin/claude'));
+    const libraries = join(dirname(realpathSync(process.execPath)), '../lib');
+    if (existsSync(libraries)) symlinkSync(libraries, join(root, 'lib'), 'dir');
+    const created = JSON.parse(run(['-S', identity.endpoint, 'new', `agentix-test-${process.pid}`, '-c', root, '--json', '--shell=none', '--', join(root, 'bin/claude'), new URL('./claude-rmux-host.mjs', import.meta.url).pathname, output, 'local draft\nsecond line']));
+    session = created.session_id;
+    const block = created.initial_windows[0].block_ids[0];
+    const call = method => JSON.parse(run(['-S', identity.endpoint, 'block', 'call', '-s', session, '-b', block, method]));
+    await waitFor(() => call('process').foreground?.name === 'claude', 5000);
+    await waitFor(() => call('format').content.includes('❯'), 5000);
+    const pid = call('process').foreground.pid;
+    const delivery = new TerminalDelivery({ mode: 'multiplexer', env: { ...process.env, REX_SERVER: identity.endpoint, REX_SESSION: session, REX_BLOCK: block }, pid });
+    delivery.configure({ multiplexer: { kind: 'rex' } });
+    await assert.rejects(delivery.send({ text: 'hello' }), /confirm/i);
+    assert.equal(await delivery.draft(), 'local draft\nsecond line');
+    assert.equal(await delivery.draft('local draft\nsecond line'), null);
+    const text = 'hello\n世界 $(literal) `also literal`';
+    await delivery.send({ text });
+    await waitFor(() => existsSync(output), 5000);
+    assert.equal(readFileSync(output, 'utf8'), text);
+});

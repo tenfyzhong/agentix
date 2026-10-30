@@ -797,6 +797,7 @@ fn build_multiplexer(
             Arc::new(agentix_rmux::RmuxDriver) as Arc<dyn agentix_multiplexer::MultiplexerDriver>
         }
         agentix_core::MultiplexerKind::Tmux => Arc::new(agentix_tmux::TmuxDriver::default()),
+        agentix_core::MultiplexerKind::Rex => Arc::new(agentix_rex::RexDriver::default()),
     })
 }
 

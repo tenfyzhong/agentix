@@ -436,7 +436,7 @@ Channel mode does not advertise this terminal control.
 flowchart TD
     IM["IM prompt"] --> RECEIPT["Create pending delivery receipt"]
     RECEIPT --> MODE{"Delivery mode"}
-    MODE -->|Terminal| TYPE["Submit literal prompt to original rmux/tmux pane"]
+    MODE -->|Terminal| TYPE["Submit literal prompt to original rmux/tmux/Rex pane"]
     TYPE --> HOOK["Matching UserPromptSubmit acknowledges receipt"]
     MODE -->|Channel| CHANNEL["Send MCP Channel notification"]
     CHANNEL --> ACK["Claude calls agentix_acknowledge"]

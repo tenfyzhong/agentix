@@ -6,11 +6,11 @@ for (const kind of ['omp', 'claude']) {
     test(`${kind}: native new validates pane, stops and submits only its fixed command`, async () => {
         const calls = []; let busy = true;
         const terminal = { pane: '%1', inspect: async () => ['1', kind, '0', '0', '0', '0'], foreground: async () => {},
-            call: async args => calls.push(args) };
+            sendKey: async key => calls.push(["key", key]), sendText: async text => calls.push(["text", text]) };
         const control = new NativeSessionControl(kind, { resolve: async () => terminal, ready: async () => assert.equal(busy, false),
             stop: async () => { calls.push(['stop']); busy = false; } });
         await control.newSession(() => busy);
-        assert.deepEqual(calls, [['stop'], ['send-keys', '-t', '%1', '-l', kind === 'claude' ? '/clear' : '/new'], ['send-keys', '-t', '%1', 'Enter']]);
+        assert.deepEqual(calls, [['stop'], ['text', kind === 'claude' ? '/clear' : '/new'], ['key', 'Enter']]);
         terminal.inspect = async () => ['1', 'zsh', '0', '0', '0', '0'];
         await assert.rejects(control.newSession(() => false), /active/);
         assert.equal(calls.length, 3);
@@ -25,7 +25,7 @@ for (const kind of ['omp', 'claude']) {
                 pane: '%1',
                 inspect: async () => ['1', kind, '0', '0', scenario === 'copy mode' ? '1' : '0', scenario === 'dead pane' ? '1' : '0'],
                 foreground: async () => { if (scenario === 'foreground changed') throw new Error('foreground changed'); },
-                call: async args => calls.push(args),
+                sendKey: async key => calls.push(["key", key]), sendText: async text => calls.push(["text", text]),
             };
             const control = new NativeSessionControl(kind, {
                 resolve: async () => terminal,
@@ -40,10 +40,10 @@ for (const kind of ['omp', 'claude']) {
         const terminal = {
             pane: '%1', inspect: async () => ['1', kind, '0', '0', '0', '0'],
             foreground: async () => { if (++foregroundChecks === 3) throw new Error('agent exited'); },
-            call: async args => calls.push(args),
+            sendKey: async key => calls.push(["key", key]), sendText: async text => calls.push(["text", text]),
         };
         const control = new NativeSessionControl(kind, { resolve: async () => terminal, ready: async () => {} });
         await assert.rejects(control.newSession(() => false), /agent exited/);
-        assert.deepEqual(calls, [['send-keys', '-t', '%1', '-l', kind === 'claude' ? '/clear' : '/new']]);
+        assert.deepEqual(calls, [['text', kind === 'claude' ? '/clear' : '/new']]);
     });
 }

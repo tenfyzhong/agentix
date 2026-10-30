@@ -819,3 +819,7 @@ reports and real Node-to-CLI interoperability. Telemetry tests verify grouped
 histograms, bounded custom identities and Typesafe-only legacy series; monitoring
 artifact tests cover the corresponding dashboard and allowlist. These tests do
 not establish live service quality or remote deployment.
+
+## Rex multiplexer coverage
+
+The Rex adapter and Node bridge share the existing native control parsers through semantic terminal operations. Regression tests and opt-in local Rex fixtures are documented in [Rex multiplexer](rex-multiplexer.md#verification). These fixtures cover local session creation, splitting, Unicode snapshots, Codex draft protection and checkout selection, and Claude native paste. They do not establish live IM or real-agent acceptance on Rex.

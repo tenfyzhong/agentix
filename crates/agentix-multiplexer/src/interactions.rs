@@ -1,5 +1,5 @@
 //! Conservative recognition of common terminal UI shapes, not command names.
-use crate::native_control::{run, styled_lines};
+use crate::native_control::styled_lines;
 use crate::{MultiplexerDriver, MultiplexerError};
 use agentix_domain::{
     AgentError, AgentKind, TerminalInteraction, TerminalInteractionKind as Kind,
@@ -220,20 +220,22 @@ fn failure(message: impl std::fmt::Display) -> MultiplexerError {
     MultiplexerError::Backend(message.to_string())
 }
 
-async fn screen(
-    command: &Path,
-    prefix: &[String],
-    pane: &str,
+fn agent_process_names(agent: AgentKind) -> &'static [&'static str] {
+    match agent {
+        AgentKind::Codex => &["codex"],
+        AgentKind::Pi => &["pi", "node", "bun"],
+        AgentKind::Omp => &["omp", "node", "bun"],
+        AgentKind::Claude => &["claude", "node"],
+        AgentKind::OpenCode => &["opencode", "bun"],
+    }
+}
+
+async fn screen_with(
+    terminal: &dyn crate::TerminalControl,
     pid: u32,
     agent: AgentKind,
 ) -> Result<(String, usize), MultiplexerError> {
-    let process = run(
-        Path::new("ps"),
-        &[],
-        &["-p", &pid.to_string(), "-o", "pgid=,tpgid=,comm="],
-    )
-    .await?;
-    let parts = process.split_whitespace().collect::<Vec<_>>();
+    let snapshot = terminal.snapshot(pid).await?;
     let names: &[&str] = match agent {
         AgentKind::Codex => &["codex"],
         AgentKind::Pi => &["pi", "node", "bun"],
@@ -241,58 +243,29 @@ async fn screen(
         AgentKind::Claude => &["claude", "node"],
         AgentKind::OpenCode => &["opencode", "bun"],
     };
-    if parts.len() < 3
-        || parts[0] != parts[1]
-        || ["0", "-1"].contains(&parts[0])
-        || !Path::new(parts[2])
-            .file_name()
-            .and_then(|v| v.to_str())
-            .is_some_and(|name| names.contains(&name))
-    {
-        return Err(failure(
-            "Original agent process is no longer in the foreground",
-        ));
-    }
-    let state = run(
-        command,
-        prefix,
-        &[
-            "display-message",
-            "-p",
-            "-t",
-            pane,
-            "#{pane_current_command}|#{cursor_y}|#{pane_in_mode}|#{pane_dead}",
-        ],
-    )
-    .await?;
-    let parts = state.trim().split('|').collect::<Vec<_>>();
-    if parts.len() != 4 || !names.contains(&parts[0]) || parts[2] != "0" || parts[3] != "0" {
+    if !names.contains(&snapshot.command.as_str()) || snapshot.in_mode || snapshot.dead {
         return Err(failure(
             "Original agent pane is unavailable or in copy mode",
         ));
     }
-    let cursor = parts[1].parse().map_err(failure)?;
-    let screen = run(command, prefix, &["capture-pane", "-p", "-e", "-t", pane]).await?;
-    Ok((screen, cursor))
+    Ok((snapshot.screen, snapshot.cursor_y))
 }
 
-pub async fn inspect_terminal_interaction(
-    command: &Path,
-    prefix: &[String],
+pub async fn inspect_terminal_interaction_with(
+    terminal: &dyn crate::TerminalControl,
     pane: &str,
     pid: u32,
     agent: AgentKind,
 ) -> Result<Option<TerminalInteraction>, MultiplexerError> {
-    let (text, cursor) = screen(command, prefix, pane, pid, agent).await?;
+    let (text, cursor) = screen_with(terminal, pid, agent).await?;
     Ok(parse_terminal_interaction(&text, cursor).map(|mut prompt| {
         prompt.pane_id = pane.into();
         prompt
     }))
 }
 
-pub async fn respond_terminal_interaction(
-    command: &Path,
-    prefix: &[String],
+pub async fn respond_terminal_interaction_with(
+    terminal: &dyn crate::TerminalControl,
     pane: &str,
     pid: u32,
     agent: AgentKind,
@@ -311,7 +284,7 @@ pub async fn respond_terminal_interaction(
     }
     let mut ready = false;
     for _ in 0..40 {
-        let current = inspect_terminal_interaction(command, prefix, pane, pid, agent)
+        let current = inspect_terminal_interaction_with(terminal, pane, pid, agent)
             .await?
             .ok_or_else(|| failure("Terminal interaction expired; no input was sent"))?;
         if current.fingerprint != expected.fingerprint || current.pane_id != expected.pane_id {
@@ -341,7 +314,7 @@ pub async fn respond_terminal_interaction(
             }
             _ => return Err(failure("Unsupported terminal interaction")),
         };
-        run(command, prefix, &["send-keys", "-t", pane, key]).await?;
+        terminal.send_key(pid, key).await?;
         if !["Up", "Down"].contains(&key) {
             return Ok(());
         }
@@ -385,4 +358,49 @@ impl TerminalInteractionPort for TerminalInteractions {
             .await
             .map_err(|e| AgentError::Rejected(e.to_string()))
     }
+}
+
+pub async fn inspect_terminal_interaction(
+    command: &Path,
+    prefix: &[String],
+    pane: &str,
+    pid: u32,
+    agent: AgentKind,
+) -> Result<Option<TerminalInteraction>, MultiplexerError> {
+    inspect_terminal_interaction_with(
+        &crate::terminal::TmuxTerminal {
+            command,
+            prefix,
+            pane,
+            allowed_processes: agent_process_names(agent),
+        },
+        pane,
+        pid,
+        agent,
+    )
+    .await
+}
+pub async fn respond_terminal_interaction(
+    command: &Path,
+    prefix: &[String],
+    pane: &str,
+    pid: u32,
+    agent: AgentKind,
+    expected: &TerminalInteraction,
+    response: Response,
+) -> Result<(), MultiplexerError> {
+    respond_terminal_interaction_with(
+        &crate::terminal::TmuxTerminal {
+            command,
+            prefix,
+            pane,
+            allowed_processes: agent_process_names(agent),
+        },
+        pane,
+        pid,
+        agent,
+        expected,
+        response,
+    )
+    .await
 }

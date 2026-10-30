@@ -1,7 +1,7 @@
 # Terminal interaction recognition and lifecycle
 
 Agentix observes attached Codex, Pi, OMP, and Claude Code sessions through the
-configured tmux or rmux driver. Recognition depends on dialog structure rather
+configured tmux, rmux, or Rex driver. Recognition depends on dialog structure rather
 than slash commands, prompt titles, or option names. A future command that uses a
 supported dialog shape follows the same IM response flow.
 
@@ -24,7 +24,7 @@ create interaction requests.
 
 A dialog with recognizable selection/cancellation hints but an unsupported
 shape is shown as **Terminal needs attention**, with the captured terminal text
-and original pane ID. Use `/rmux` or `/tmux` to locate that pane, handle the dialog
+and original pane ID. Use `/rmux`, `/tmux`, or `/rex` to locate that pane, handle the dialog
 there, and dismiss the IM notice with **Handled in terminal**. That button never
 sends terminal input. Arbitrary custom UI without recognizable dialog markers
 cannot be detected reliably; the original terminal remains its fallback.

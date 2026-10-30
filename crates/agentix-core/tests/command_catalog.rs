@@ -72,3 +72,11 @@ fn command_menus_sort_each_level_alphabetically() {
         }
     }
 }
+
+#[test]
+fn rex_command_keeps_the_optional_agent_backend() {
+    let parsed = agentix_core::parse_input("/rex codex").unwrap();
+    assert!(
+        matches!(parsed, agentix_core::ParsedInput::Command(agentix_core::AgentCommand::Multiplexer {kind:agentix_core::MultiplexerKind::Rex,backend:Some(ref backend)}) if backend=="codex")
+    );
+}

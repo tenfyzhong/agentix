@@ -12,6 +12,7 @@ agentix-metrics = { path = "../agentix-metrics" }
 agentix-multiplexer = { path = "../agentix-multiplexer" }
 agentix-rmux = { path = "../agentix-rmux" }
 agentix-tmux = { path = "../agentix-tmux" }
+agentix-rex = { path = "../agentix-rex" }
 agentix-slack = { path = "../agentix-slack" }
 agentix-task = { path = "../agentix-task" }
 agentix-codex = { path = "../agentix-codex" }

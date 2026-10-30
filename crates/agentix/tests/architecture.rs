@@ -40,7 +40,7 @@ fn dependencies(name: &str) -> toml::Table {
 fn agent_adapters_do_not_depend_on_concrete_multiplexers() {
     for layer in ["agentix-core", "agentix-codex", "agentix-bridge"] {
         let deps = dependencies(layer);
-        for forbidden in ["agentix-rmux", "agentix-tmux", "rmux-sdk"] {
+        for forbidden in ["agentix-rmux", "agentix-tmux", "agentix-rex", "rmux-sdk"] {
             assert!(
                 !deps.contains_key(forbidden),
                 "{layer} must not depend on {forbidden}"
@@ -87,6 +87,7 @@ fn adapters_depend_on_contracts_without_importing_the_application() {
         "agentix-codex",
         "agentix-bridge",
         "agentix-rmux",
+        "agentix-rex",
         "agentix-telegram",
         "agentix-feishu",
     ] {

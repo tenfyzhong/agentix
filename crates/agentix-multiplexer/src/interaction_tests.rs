@@ -28,7 +28,7 @@ stage=$(cat "$FIXTURE_ROOT/stage" 2>/dev/null || printf dialog)
 selected=$(cat "$FIXTURE_ROOT/selected" 2>/dev/null || printf 1)
 case "$1" in
 display-message)
-  if [ "$stage" = copy ]; then printf 'codex|0|1|0\n'; else printf 'codex|0|0|0\n'; fi ;;
+  if [ "$stage" = copy ]; then printf 'codex|2|0|1|0\n'; else printf 'codex|2|0|0|0\n'; fi ;;
 capture-pane)
   if [ "$stage" = closed ]; then printf '› draft\n';
   elif [ "$CASE" = yes ] || [ "$CASE" = no ]; then printf 'Continue the operation? [y/N]\n';

@@ -10,6 +10,7 @@ pub enum MultiplexerMode {
     Auto,
     Rmux,
     Tmux,
+    Rex,
 }
 
 impl MultiplexerMode {
@@ -18,29 +19,38 @@ impl MultiplexerMode {
         self,
         rmux: impl Future<Output = bool>,
         tmux: impl Future<Output = bool>,
+        rex: impl Future<Output = bool>,
     ) -> Option<MultiplexerKind> {
         match self {
             Self::Auto => {
                 if rmux.await {
                     Some(MultiplexerKind::Rmux)
+                } else if tmux.await {
+                    Some(MultiplexerKind::Tmux)
                 } else {
-                    tmux.await.then_some(MultiplexerKind::Tmux)
+                    rex.await.then_some(MultiplexerKind::Rex)
                 }
             }
             Self::Rmux => rmux.await.then_some(MultiplexerKind::Rmux),
             Self::Tmux => tmux.await.then_some(MultiplexerKind::Tmux),
+            Self::Rex => rex.await.then_some(MultiplexerKind::Rex),
         }
     }
 }
 
 impl super::MultiplexerConfig {
-    /// Discover existing servers without starting either daemon.
+    /// Discover existing servers without starting a daemon.
     pub async fn detect(&mut self) {
         self.resolved_kind = self
             .kind
             .resolve_with(
-                async { available("rmux", agentix_rmux::RmuxDriver::probe().await) },
-                async { available("tmux", agentix_tmux::TmuxDriver::default().probe().await) },
+                Box::pin(async { available("rmux", agentix_rmux::RmuxDriver::probe().await) }),
+                Box::pin(async {
+                    available("tmux", agentix_tmux::TmuxDriver::default().probe().await)
+                }),
+                Box::pin(async {
+                    available("rex", agentix_rex::RexDriver::default().probe().await)
+                }),
             )
             .await;
         tracing::info!(configured = ?self.kind, resolved = ?self.resolved_kind, "terminal multiplexer detection completed");

@@ -2401,8 +2401,422 @@ async fn session_picker_disables_the_current_session_button_without_a_title_mark
 }
 
 #[tokio::test]
+async fn multiplexer_picker_cleanup_failure_does_not_block_navigation_or_other_cards() {
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/rmux"))
+        .await
+        .unwrap();
+    let token = channel.sent()[0].1.actions[0].token.clone();
+    let footer = channel.sent()[1].1.actions[0].token.clone();
+    *channel.next_update_failures.lock().unwrap() = 1;
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "choose-session",
+            conversation.clone(),
+            "owner",
+            token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(channel.updated().len(), 1);
+    assert_eq!(channel.updated()[0].0.message_id, "m2");
+    assert!(channel.updated()[0].1.actions.is_empty());
+    assert_eq!(channel.sent().last().unwrap().1.title, "rmux · agentix");
+    assert!(
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "stale-footer",
+                conversation,
+                "owner",
+                footer
+            ))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn multiplexer_pickers_show_details_and_remove_only_consumed_list_controls() {
+    for kind in [
+        ChannelKind::Telegram,
+        ChannelKind::Feishu,
+        ChannelKind::Slack,
+    ] {
+        let agent = Arc::new(FakeAgent::new());
+        {
+            let mut snapshot = agent.snapshot.lock().unwrap();
+            let mut other = snapshot.sessions[0].clone();
+            other.id = "$2".into();
+            other.name = "other".into();
+            snapshot.sessions.push(other);
+        }
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            ..FakeChannel::default()
+        });
+        let engine = Engine::new(
+            agent,
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        let conversation = ConversationRef::new(kind, "chat-a");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "root",
+                conversation.clone(),
+                "owner",
+                "/rmux",
+            ))
+            .await
+            .unwrap();
+        let root_end = channel.sent().len();
+        let root = channel.sent();
+        let first = root
+            .iter()
+            .flat_map(|(_, v)| &v.actions)
+            .find(|a| a.label == "Select")
+            .expect("Session detail must have a Select button")
+            .token
+            .clone();
+        let sibling = root
+            .iter()
+            .flat_map(|(_, v)| &v.actions)
+            .filter(|a| a.label == "Select")
+            .nth(1)
+            .unwrap()
+            .token
+            .clone();
+        if kind == ChannelKind::Telegram {
+            assert_eq!(root.len(), 3);
+            assert_eq!(root[0].1.title, "agentix");
+            assert!(root[0].1.body.contains("window"));
+            assert_eq!(root[0].1.actions.len(), 1);
+        } else {
+            assert_eq!(root[0].1.sections.len(), 2);
+            assert_eq!(root[0].1.sections[0].action_tokens, vec![first.clone()]);
+        }
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "independent",
+                conversation.clone(),
+                "owner",
+                "/rmux",
+            ))
+            .await
+            .unwrap();
+        let independent_end = channel.sent().len();
+        assert!(
+            engine
+                .handle_inbound(InboundEnvelope::action(
+                    "wrong-owner",
+                    conversation.clone(),
+                    "stranger",
+                    first.clone()
+                ))
+                .await
+                .is_err()
+        );
+        assert!(
+            engine
+                .handle_inbound(InboundEnvelope::action(
+                    "wrong-chat",
+                    ConversationRef::new(kind, "chat-b"),
+                    "owner",
+                    first.clone()
+                ))
+                .await
+                .is_err()
+        );
+        assert!(channel.updated().is_empty());
+        engine
+            .handle_inbound(InboundEnvelope::action_from_message(
+                "choose-session",
+                conversation.clone(),
+                "owner",
+                first,
+                MessageRef::new(conversation.clone(), "m1"),
+            ))
+            .await
+            .unwrap();
+        let updates = channel.updated();
+        assert_eq!(updates.len(), root_end);
+        assert!(
+            updates.iter().all(
+                |(m, v)| m.message_id[1..].parse::<usize>().unwrap() <= root_end
+                    && v.actions.is_empty()
+                    && v.sections.iter().all(|s| s.action_tokens.is_empty())
+            )
+        );
+        assert!(
+            engine
+                .handle_inbound(InboundEnvelope::action(
+                    "stale-root",
+                    conversation.clone(),
+                    "owner",
+                    sibling
+                ))
+                .await
+                .is_err()
+        );
+        let windows = channel.sent();
+        let window_token = windows[independent_end..]
+            .iter()
+            .flat_map(|(_, v)| &v.actions)
+            .find(|a| a.label == "Select")
+            .unwrap()
+            .token
+            .clone();
+        let window_end = windows.len();
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "choose-window",
+                conversation.clone(),
+                "owner",
+                window_token.clone(),
+            ))
+            .await
+            .unwrap();
+        let updated_ids = channel
+            .updated()
+            .iter()
+            .map(|(m, _)| m.message_id.clone())
+            .collect::<Vec<_>>();
+        for id in independent_end + root_end + 1..=window_end {
+            assert!(updated_ids.contains(&format!("m{id}")));
+        }
+        for id in root_end + 1..=independent_end {
+            assert!(!updated_ids.contains(&format!("m{id}")));
+        }
+        assert!(
+            engine
+                .handle_inbound(InboundEnvelope::action(
+                    "stale-window",
+                    conversation.clone(),
+                    "owner",
+                    window_token
+                ))
+                .await
+                .is_err()
+        );
+        let pane_views = channel.sent();
+        let window_cards = window_end - independent_end - root_end;
+        let panes = &pane_views[window_end + window_cards..];
+        let attach = panes
+            .iter()
+            .flat_map(|(_, v)| &v.actions)
+            .find(|a| a.label == "Attach")
+            .unwrap()
+            .token
+            .clone();
+        let run = panes
+            .iter()
+            .flat_map(|(_, v)| &v.actions)
+            .find(|a| a.label == "Run agent")
+            .unwrap()
+            .token
+            .clone();
+        if kind == ChannelKind::Telegram {
+            assert_eq!(panes.len(), 4);
+            assert!(panes[0].1.body.contains("/work/parser"));
+            assert_eq!(panes[0].1.actions[0].label, "Attach");
+            assert_eq!(panes[1].1.actions[0].label, "Run agent");
+            assert!(panes[2].1.body.contains("Busy"));
+            assert!(panes[2].1.actions.is_empty());
+        } else {
+            let view = &panes[0].1;
+            assert_eq!(view.sections.len(), 3);
+            assert_eq!(view.sections[0].action_tokens, vec![attach.clone()]);
+            assert_eq!(view.sections[1].action_tokens, vec![run.clone()]);
+            assert!(view.sections[2].action_tokens.is_empty());
+        }
+        let cleanup_before = channel.updated().len();
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "choose-pane",
+                conversation.clone(),
+                "owner",
+                run,
+            ))
+            .await
+            .unwrap();
+        let updates = channel.updated();
+        assert!(
+            updates[cleanup_before..]
+                .iter()
+                .all(|(_, v)| v.actions.is_empty()
+                    && v.sections.iter().all(|s| s.action_tokens.is_empty()))
+        );
+        assert_eq!(
+            updates.len() - cleanup_before,
+            if kind == ChannelKind::Telegram { 3 } else { 1 }
+        );
+        assert!(
+            engine
+                .handle_inbound(InboundEnvelope::action(
+                    "stale-pane",
+                    conversation,
+                    "owner",
+                    attach
+                ))
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // Compare transport layouts and callback targets in the same scenario.
+async fn multiplexer_window_picker_pairs_details_with_each_select_button() {
+    for kind in [
+        ChannelKind::Telegram,
+        ChannelKind::Feishu,
+        ChannelKind::Slack,
+    ] {
+        let agent = Arc::new(FakeAgent::new());
+        agent.snapshot.lock().unwrap().sessions[0]
+            .windows
+            .push(MultiplexerWindow {
+                id: "@2".into(),
+                index: "1".into(),
+                name: "logs".into(),
+                panes: vec![MultiplexerPane {
+                    id: "%4".into(),
+                    index: "0".into(),
+                    active: true,
+                    current_command: "fish".into(),
+                    cwd: "/work/logs".into(),
+                    agent_session: None,
+                }],
+            });
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            ..FakeChannel::default()
+        });
+        let engine = Engine::new(
+            agent,
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        let conversation = ConversationRef::new(kind, "chat-a");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                conversation.clone(),
+                "owner",
+                "/attach thr_a",
+            ))
+            .await
+            .unwrap();
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "root",
+                conversation.clone(),
+                "owner",
+                "/rmux",
+            ))
+            .await
+            .unwrap();
+        let token = channel
+            .sent()
+            .iter()
+            .rev()
+            .flat_map(|(_, view)| &view.actions)
+            .find(|a| a.label == "Select")
+            .unwrap()
+            .token
+            .clone();
+        let before = channel.sent().len();
+        let updates_before = channel.updated().len();
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "windows",
+                conversation.clone(),
+                "owner",
+                token,
+            ))
+            .await
+            .unwrap();
+        let sent = channel.sent();
+        let views = &sent[before + channel.updated().len() - updates_before..];
+        let second_token = if kind == ChannelKind::Telegram {
+            assert_eq!(
+                views.len(),
+                3,
+                "Each window has its own card, followed by management controls"
+            );
+            for (view, name) in views[..2].iter().zip(["codex:agentix", "logs"]) {
+                assert_eq!(view.1.title, name);
+                assert_eq!(view.1.actions.len(), 1);
+                assert_eq!(view.1.actions[0].label, "Select");
+            }
+            assert!(views[0].1.body.contains("3 panes"));
+            assert!(views[0].1.body.contains("/work/parser"));
+            assert!(views[0].1.body.contains("Attached"));
+            assert!(views[0].1.body.contains("Idle shell"));
+            assert!(views[1].1.body.contains("1 pane"));
+            assert_eq!(
+                views[2]
+                    .1
+                    .actions
+                    .iter()
+                    .map(|a| a.label.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["+ Window", "← Back"]
+            );
+            views[1].1.actions[0].token.clone()
+        } else {
+            assert_eq!(views.len(), 1);
+            let view = &views[0].1;
+            assert_eq!(view.sections.len(), 2);
+            for (index, name) in ["codex:agentix", "logs"].iter().enumerate() {
+                assert_eq!(&view.sections[index].title, name);
+                assert_eq!(
+                    view.sections[index].action_tokens,
+                    vec![view.actions[index].token.clone()]
+                );
+                assert_eq!(view.actions[index].label, "Select");
+            }
+            assert!(view.sections[0].body.contains("/work/parser"));
+            assert!(view.sections[0].body.contains("Attached"));
+            assert!(view.sections[1].body.contains("1 pane"));
+            view.actions[1].token.clone()
+        };
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "select-second",
+                conversation,
+                "owner",
+                second_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            channel.sent().last().unwrap().1.title,
+            "rmux · agentix · logs"
+        );
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // Keep navigation and callback ownership assertions together.
 async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
     let agent = Arc::new(FakeAgent::new());
+    agent.snapshot.lock().unwrap().sessions[0]
+        .windows
+        .push(MultiplexerWindow {
+            id: "@2".into(),
+            index: "1".into(),
+            name: "logs".into(),
+            panes: Vec::new(),
+        });
     let channel = Arc::new(FakeChannel::default());
     let state = SqliteState::in_memory().await.unwrap();
     let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
@@ -2417,10 +2831,11 @@ async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
     assert!(!root.body.contains("tmux"));
     assert!(agent.calls().contains(&"mux-snapshot:auto".into()));
 
-    let session_token = root
-        .actions
+    let session_token = channel
+        .sent()
         .iter()
-        .find(|action| action.label == "agentix")
+        .flat_map(|(_, view)| &view.actions)
+        .find(|action| action.label == "Select")
         .unwrap()
         .token
         .clone();
@@ -2433,17 +2848,15 @@ async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
         ))
         .await
         .unwrap();
-    let session = channel.sent().last().unwrap().1.clone();
-    assert_eq!(session.title, "rmux · agentix");
-    assert!(session.body.contains("**0 · codex:agentix**"));
-
-    let window_token = session
-        .actions
-        .iter()
-        .find(|action| action.label == "0 · codex:agentix")
-        .unwrap()
-        .token
-        .clone();
+    let sent = channel.sent();
+    let session = &sent[sent.len() - 3].1;
+    assert_eq!(session.title, "codex:agentix");
+    assert!(session.body.contains("3 panes"));
+    assert!(session.body.contains("/work/parser"));
+    assert_eq!(session.actions.len(), 1);
+    assert_eq!(session.actions[0].label, "Select");
+    assert_eq!(sent[sent.len() - 2].1.title, "logs");
+    let window_token = session.actions[0].token.clone();
     engine
         .handle_inbound(InboundEnvelope::action(
             "open-mux-window",
@@ -2454,17 +2867,24 @@ async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
         .await
         .unwrap();
     let window = channel.sent().last().unwrap().1.clone();
-    assert_eq!(window.title, "rmux · agentix · 0 (codex:agentix)");
-    assert!(window.body.contains("**0 · codex** · Codex"));
-    assert!(window.body.contains("**1 · fish** · Active · Idle shell"));
-    assert!(window.body.contains("**2 · cargo** · Busy"));
-    let labels = window
-        .actions
+    assert_eq!(window.title, "rmux · agentix · codex:agentix");
+    let sent = channel.sent();
+    let panes = &sent[sent.len() - 4..];
+    assert!(panes[0].1.body.contains("**0 · codex** · Codex"));
+    assert!(
+        panes[1]
+            .1
+            .body
+            .contains("**1 · fish** · Active · Idle shell")
+    );
+    assert!(panes[2].1.body.contains("**2 · cargo** · Busy"));
+    let labels = panes
         .iter()
+        .flat_map(|(_, view)| &view.actions)
         .map(|action| action.label.as_str())
         .collect::<Vec<_>>();
-    assert!(labels.contains(&"0 · Attach"));
-    assert!(labels.contains(&"1 · Run agent"));
+    assert!(labels.contains(&"Attach"));
+    assert!(labels.contains(&"Run agent"));
     assert!(!labels.iter().any(|label| label.starts_with("2 ·")));
     assert!(labels.contains(&"Split ↔"));
     assert!(labels.contains(&"Split ↕"));
@@ -2569,12 +2989,10 @@ async fn multiplexer_window_creation_uses_defaults_and_waits_for_agent() {
         .unwrap();
     let session_token = channel
         .sent()
-        .last()
-        .unwrap()
-        .1
-        .actions
         .iter()
-        .find(|action| action.label == "agentix")
+        .rev()
+        .flat_map(|(_, view)| &view.actions)
+        .find(|action| action.label == "Select")
         .unwrap()
         .token
         .clone();
@@ -7219,13 +7637,10 @@ async fn multiplexer_creates_shell_then_selects_agent_for_exact_pane() {
     for mux in [MultiplexerKind::Rmux, MultiplexerKind::Tmux] {
         for (navigation, target) in [
             (vec!["+ Session"], "NewSession"),
-            (vec!["agentix", "+ Window"], "NewWindow"),
-            (vec!["agentix", "0 · codex:agentix", "Split ↔"], "SplitPane"),
-            (vec!["agentix", "0 · codex:agentix", "Split ↕"], "SplitPane"),
-            (
-                vec!["agentix", "0 · codex:agentix", "1 · Run agent"],
-                "ExistingPane",
-            ),
+            (vec!["Select", "+ Window"], "NewWindow"),
+            (vec!["Select", "Select", "Split ↔"], "SplitPane"),
+            (vec!["Select", "Select", "Split ↕"], "SplitPane"),
+            (vec!["Select", "Select", "Run agent"], "ExistingPane"),
         ] {
             for selected in [
                 AgentKind::Codex,
@@ -7273,12 +7688,13 @@ async fn check_pane_agent_choice(
         .await
         .unwrap();
     for (i, label) in navigation.iter().enumerate() {
-        let view = channel.sent().last().unwrap().1.clone();
-        let token = view
-            .actions
+        let token = channel
+            .sent()
             .iter()
+            .rev()
+            .flat_map(|(_, view)| &view.actions)
             .find(|a| a.label == *label)
-            .unwrap_or_else(|| panic!("missing {label}: {view:?}"))
+            .unwrap_or_else(|| panic!("missing {label}"))
             .token
             .clone();
         engine

@@ -189,7 +189,7 @@ impl TerminalObserver {
         let detail = if prompt.kind == TerminalInteractionKind::Unknown {
             decisions.push("Handled in terminal".into());
             format!(
-                "This dialog cannot be answered reliably from IM. Handle it in the original terminal (pane {}). Use /rmux or /tmux to find the pane.\n\n{}",
+                "This dialog cannot be answered reliably from IM. Handle it in the original terminal (pane {}). Use /rmux, /tmux, or /rex to find the pane.\n\n{}",
                 prompt.pane_id, prompt.detail
             )
         } else {

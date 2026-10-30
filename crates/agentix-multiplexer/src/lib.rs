@@ -1,4 +1,10 @@
-//! Backend-independent terminal inventory, validation and workspace management.
+mod terminal;
+pub use native_control::{
+    codex_terminal_input_with, select_codex_checkout_with, send_codex_exit_with,
+    send_codex_new_with,
+};
+pub use terminal::{TerminalControl, TerminalSnapshot, verify_foreground};
+// Backend-independent terminal inventory, validation and workspace management.
 mod directories;
 mod launch;
 pub use launch::{interactive_login_shell_argv, persistent_launch_argv};
@@ -9,8 +15,8 @@ mod native_control;
 #[cfg(all(test, unix))]
 mod native_exit_tests;
 pub use interactions::{
-    TerminalInteractions, inspect_terminal_interaction, parse_terminal_interaction,
-    respond_terminal_interaction,
+    TerminalInteractions, inspect_terminal_interaction, inspect_terminal_interaction_with,
+    parse_terminal_interaction, respond_terminal_interaction, respond_terminal_interaction_with,
 };
 /// Internal PID marker set only when the service re-execs with its login environment.
 #[doc(hidden)]
@@ -113,7 +119,7 @@ pub trait MultiplexerDriver: std::fmt::Debug + Send + Sync {
     }
     async fn exit_codex_session(&self, _pid: u32) -> Result<(), MultiplexerError> {
         Err(MultiplexerError::Backend(
-            "Native agent exit is unavailable; start Codex inside the configured rmux or tmux"
+            "Native agent exit is unavailable; start Codex inside the configured rmux, tmux, or Rex"
                 .into(),
         ))
     }

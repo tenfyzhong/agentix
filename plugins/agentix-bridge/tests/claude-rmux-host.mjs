@@ -17,7 +17,7 @@ function render() {
     const rows = input.split('\n');
     if (codex) {
         if (checkoutPicker) {
-            process.stdout.write('\x1b[2J\x1b[HWhere should the new conversation run?\n\n' + (newWorktree ? '  ' : '› ') + '1. Current checkout  Keep using the current working directory\n' + (newWorktree ? '› ' : '  ') + '2. New worktree  Create an isolated managed checkout\n');
+            process.stdout.write('\x1b[2J\x1b[HWhere should the new conversation run?\n\n' + (newWorktree ? '  ' : '› ') + '1. Current checkout  Keep using the current working directory\n' + (newWorktree ? '› ' : '  ') + '2. New worktree  Create an isolated managed checkout\n' + `\x1b[${newWorktree ? 4 : 3};1H`);
             return;
         }
         process.stdout.write('\x1b[2J\x1b[H' + (process.argv[5] === 'plain' ? '' : '\x1b[48;5;235m') + ' '.repeat(80) + '\n› ' + (input || '\x1b[2mAsk Codex to do anything\x1b[22m').split('\n').join('\n  ') + '\n' + ' '.repeat(80) + '\x1b[0m\n  gpt-6-astra · Context 0% used    Vim: Insert' + `\x1b[${rows.length + 1};${rows.at(-1).length + 3}H\x1b[?2004h`);

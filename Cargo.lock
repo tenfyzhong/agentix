@@ -35,6 +35,7 @@ dependencies = [
  "agentix-feishu",
  "agentix-metrics",
  "agentix-multiplexer",
+ "agentix-rex",
  "agentix-rmux",
  "agentix-slack",
  "agentix-task",
@@ -224,6 +225,23 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "agentix-rex"
+version = "0.0.0-dev"
+dependencies = [
+ "agentix-domain",
+ "agentix-multiplexer",
+ "async-trait",
+ "dirs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "unicode-segmentation",
+ "unicode-width",
+ "url",
 ]
 
 [[package]]
@@ -4620,6 +4638,18 @@ name = "unicode-properties"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
+
+[[package]]
+name = "unicode-width"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
 
 [[package]]
 name = "unicode-xid"

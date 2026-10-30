@@ -116,9 +116,11 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
         "/sessions" => parts.next().map_or(AgentCommand::Sessions, |kind| {
             AgentCommand::SessionsBackend(kind.into())
         }),
-        "/rmux" | "/tmux" => AgentCommand::Multiplexer {
+        "/rmux" | "/tmux" | "/rex" => AgentCommand::Multiplexer {
             kind: if command == "/rmux" {
                 crate::MultiplexerKind::Rmux
+            } else if command == "/rex" {
+                crate::MultiplexerKind::Rex
             } else {
                 crate::MultiplexerKind::Tmux
             },

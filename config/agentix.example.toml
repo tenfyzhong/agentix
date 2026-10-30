@@ -30,7 +30,7 @@ max_files = 7
 # Changing the multiplexer requires restarting Agentix.
 # New terminals infer cwd from the attached agent or target pane, falling back to HOME.
 [multiplexer]
-kind = "auto" # auto (default), rmux or tmux; only live services enable a terminal menu
+kind = "auto" # auto (default), rmux, tmux, or rex; only live services enable a terminal menu
 
 [agent.codex]
 # Agentix requires Codex CLI 0.153.0+ from the official standalone installer.
@@ -67,8 +67,8 @@ endpoint = "unix://~/.codex/app-server-control/app-server-control-upstream.sock"
 # [agent.claude]
 # command = "claude"
 # session_dir = "~/.claude/projects"
-# Install agentix-bridge@agentix. Default IM input requires rmux on PATH
-# and Claude running inside rmux. Channel delivery is an explicit alternative.
+# Install agentix-bridge@agentix. Default IM input requires Claude inside
+# rmux, tmux, or local Rex. Channel delivery is an explicit alternative.
 
 # Enable OpenCode 2.0.32+ (see https://github.com/tenfyzhong/agentix/wiki/OpenCode):
 # [agent.opencode]

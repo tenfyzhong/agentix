@@ -38,14 +38,14 @@ mod terminal_input;
 mod turn_flows;
 mod workspace_directories;
 mod workspace_flows;
+mod workspace_picker;
 use workspace_directories::{DirectoryAction, DirectoryDraft};
 
 use presentation::{
     background_completion_body, completed_input_body, decision_label, display_workspace,
     history_views, input_progress_body, input_questions, input_response, is_shell_command,
-    live_turn_view, markdown_quote, multiplexer_root_body, multiplexer_session_body,
-    multiplexer_window_body, plural, session_display_label, session_status_label, short_identifier,
-    turn_status_label,
+    live_turn_view, markdown_quote, multiplexer_root_body, multiplexer_window_body, plural,
+    session_display_label, session_status_label, short_identifier, turn_status_label,
 };
 use session_service::{RestoredBindingStatus, SessionService};
 
@@ -152,6 +152,10 @@ impl TurnBuffer {
 
 #[derive(Debug, Clone)]
 enum UiAction {
+    WorkspacePicker {
+        action: Box<UiAction>,
+        picker: workspace_picker::Picker,
+    },
     TerminalInput {
         session_id: SessionId,
         client_id: String,
@@ -197,6 +201,7 @@ enum UiAction {
 impl UiAction {
     fn targets_session(&self, session_id: &SessionId) -> bool {
         match self {
+            Self::WorkspacePicker { action, .. } => action.targets_session(session_id),
             Self::TerminalInput {
                 session_id: target, ..
             }

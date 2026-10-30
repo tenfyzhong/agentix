@@ -1,5 +1,6 @@
-//! The two terminal drivers share a restricted tmux-compatible command surface.
-use super::MultiplexerError;
+//! Shared native Codex control through guarded terminal operations.
+use super::{MultiplexerError, TerminalControl};
+use crate::terminal::TmuxTerminal;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
@@ -246,53 +247,6 @@ fn codex_uncolored_draft(
     Ok(draft)
 }
 
-async fn read_draft(
-    command: &Path,
-    prefix: &[String],
-    pane: &str,
-    pid: u32,
-) -> Result<Option<String>, MultiplexerError> {
-    verify_process(pid).await?;
-    let state = run(
-        command,
-        prefix,
-        &[
-            "display-message",
-            "-p",
-            "-t",
-            pane,
-            "#{pane_current_command}|#{cursor_x}|#{cursor_y}|#{pane_in_mode}|#{pane_dead}",
-        ],
-    )
-    .await?;
-    let screen = run(command, prefix, &["capture-pane", "-p", "-e", "-t", pane]).await?;
-    codex_ansi_draft(&state, &screen)
-}
-
-/// Read the whole visible input, or clear only the exact confirmed draft.
-pub async fn codex_terminal_input(
-    command: &Path,
-    prefix: &[String],
-    pane: &str,
-    pid: u32,
-    expected: Option<&str>,
-) -> Result<Option<String>, MultiplexerError> {
-    let current = read_draft(command, prefix, pane, pid).await?;
-    if expected.is_none() || current.as_deref() != expected {
-        return Ok(current);
-    }
-    verify_process(pid).await?;
-    run(command, prefix, &["send-keys", "-t", pane, "C-c"]).await?;
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    let remaining = read_draft(command, prefix, pane, pid).await?;
-    if remaining.is_some() {
-        return Err(error(
-            "Codex input was not cleared; the new request was not sent",
-        ));
-    }
-    Ok(None)
-}
-
 pub(crate) async fn run(
     command: &Path,
     prefix: &[String],
@@ -312,31 +266,39 @@ pub(crate) async fn run(
     String::from_utf8(output.stdout).map_err(error)
 }
 
-async fn verify_process(pid: u32) -> Result<(), MultiplexerError> {
-    let output = run(
-        Path::new("ps"),
-        &[],
-        &["-p", &pid.to_string(), "-o", "pgid=,tpgid=,comm="],
-    )
-    .await?;
-    let parts: Vec<_> = output.split_whitespace().collect();
-    if parts.len() < 3
-        || parts[0] != parts[1]
-        || parts[0] == "0"
-        || parts[0] == "-1"
-        || Path::new(parts[2]).file_name().and_then(|v| v.to_str()) != Some("codex")
-    {
+async fn read_draft(
+    terminal: &dyn TerminalControl,
+    pid: u32,
+) -> Result<Option<String>, MultiplexerError> {
+    let snapshot = terminal.snapshot(pid).await?;
+    let state = snapshot.codex_state();
+    let screen = snapshot.screen;
+    codex_ansi_draft(&state, &screen)
+}
+
+/// Read the whole visible input, or clear only the exact confirmed draft.
+pub async fn codex_terminal_input_with(
+    terminal: &dyn TerminalControl,
+    pid: u32,
+    expected: Option<&str>,
+) -> Result<Option<String>, MultiplexerError> {
+    let current = read_draft(terminal, pid).await?;
+    if expected.is_none() || current.as_deref() != expected {
+        return Ok(current);
+    }
+    terminal.send_key(pid, "C-c").await?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let remaining = read_draft(terminal, pid).await?;
+    if remaining.is_some() {
         return Err(error(
-            "Original Codex process is no longer in the foreground",
+            "Codex input was not cleared; the new request was not sent",
         ));
     }
-    Ok(())
+    Ok(None)
 }
 
 async fn wait_for_codex_command(
-    command: &Path,
-    prefix: &[String],
-    pane: &str,
+    terminal: &dyn TerminalControl,
     pid: u32,
     text: &str,
 ) -> Result<(), MultiplexerError> {
@@ -345,20 +307,9 @@ async fn wait_for_codex_command(
     let mut ready = false;
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(150)).await;
-        verify_process(pid).await?;
-        let state = run(
-            command,
-            prefix,
-            &[
-                "display-message",
-                "-p",
-                "-t",
-                pane,
-                "#{pane_current_command}|#{cursor_x}|#{cursor_y}|#{pane_in_mode}|#{pane_dead}",
-            ],
-        )
-        .await?;
-        let screen = run(command, prefix, &["capture-pane", "-p", "-t", pane]).await?;
+        let snapshot = terminal.snapshot(pid).await?;
+        let state = snapshot.codex_state();
+        let screen = snapshot.plain_screen;
         let parts: Vec<_> = state.trim().split('|').collect();
         let matches = parts.len() == 5
             && parts[0] == "codex"
@@ -425,25 +376,12 @@ fn checkout_selection(screen: &str) -> Result<Option<CodexCheckoutChoice>, Multi
 }
 
 async fn codex_new_screen(
-    command: &Path,
-    prefix: &[String],
-    pane: &str,
+    terminal: &dyn TerminalControl,
     pid: u32,
 ) -> Result<(String, String), MultiplexerError> {
-    verify_process(pid).await?;
-    let state = run(
-        command,
-        prefix,
-        &[
-            "display-message",
-            "-p",
-            "-t",
-            pane,
-            "#{pane_current_command}|#{cursor_x}|#{cursor_y}|#{pane_in_mode}|#{pane_dead}",
-        ],
-    )
-    .await?;
-    let screen = run(command, prefix, &["capture-pane", "-p", "-e", "-t", pane]).await?;
+    let snapshot = terminal.snapshot(pid).await?;
+    let state = snapshot.codex_state();
+    let screen = snapshot.screen;
     let parts: Vec<_> = state.trim().split('|').collect();
     if parts.len() != 5 || parts[0] != "codex" || parts[3] != "0" || parts[4] != "0" {
         return Err(error("Original Codex input is not ready after /new"));
@@ -452,15 +390,13 @@ async fn codex_new_screen(
 }
 
 async fn finish_codex_new(
-    command: &Path,
-    prefix: &[String],
-    pane: &str,
+    terminal: &dyn TerminalControl,
     pid: u32,
 ) -> Result<CodexNewSessionOutcome, MultiplexerError> {
     let mut previous = None;
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(150)).await;
-        let (state, screen) = codex_new_screen(command, prefix, pane, pid).await?;
+        let (state, screen) = codex_new_screen(terminal, pid).await?;
         if codex_ansi_draft(&state, &screen).is_ok_and(|draft| draft.is_none()) {
             return Ok(CodexNewSessionOutcome::Started);
         }
@@ -483,23 +419,21 @@ async fn finish_codex_new(
 }
 
 /// Submit only the checkout choice explicitly selected by the IM user.
-pub async fn select_codex_checkout(
-    command: &Path,
-    prefix: &[String],
-    pane: &str,
+pub async fn select_codex_checkout_with(
+    terminal: &dyn TerminalControl,
     pid: u32,
     choice: CodexCheckoutChoice,
 ) -> Result<(), MultiplexerError> {
     let mut ready = false;
     for _ in 0..20 {
-        let (state, screen) = codex_new_screen(command, prefix, pane, pid).await?;
+        let (state, screen) = codex_new_screen(terminal, pid).await?;
         if codex_ansi_draft(&state, &screen).is_ok() {
             return Err(error("Codex checkout choice expired; no input was sent"));
         }
         let selected = checkout_selection(&screen)?
             .ok_or_else(|| error("Codex checkout choice expired; no input was sent"))?;
         if choice == CodexCheckoutChoice::Cancel {
-            run(command, prefix, &["send-keys", "-t", pane, "Escape"]).await?;
+            terminal.send_key(pid, "Escape").await?;
             return Ok(());
         }
         if selected != choice {
@@ -508,10 +442,10 @@ pub async fn select_codex_checkout(
             } else {
                 "Down"
             };
-            run(command, prefix, &["send-keys", "-t", pane, key]).await?;
+            terminal.send_key(pid, key).await?;
             ready = false;
         } else if ready {
-            run(command, prefix, &["send-keys", "-t", pane, "Enter"]).await?;
+            terminal.send_key(pid, "Enter").await?;
             return Ok(());
         } else {
             ready = true;
@@ -524,60 +458,128 @@ pub async fn select_codex_checkout(
 }
 
 /// Submit Codex's native /new, reporting any checkout picker without choosing an item.
+pub async fn send_codex_new_with(
+    terminal: &dyn TerminalControl,
+    pid: u32,
+) -> Result<CodexNewSessionOutcome, MultiplexerError> {
+    submit_codex_command(terminal, pid, "/new").await?;
+    finish_codex_new(terminal, pid).await
+}
+
+/// Submit Codex's native /exit to the verified original CLI.
+pub async fn send_codex_exit_with(
+    terminal: &dyn TerminalControl,
+    pid: u32,
+) -> Result<(), MultiplexerError> {
+    submit_codex_command(terminal, pid, "/exit").await
+}
+
+async fn submit_codex_command(
+    terminal: &dyn TerminalControl,
+    pid: u32,
+    text: &str,
+) -> Result<(), MultiplexerError> {
+    let snapshot = terminal.snapshot(pid).await?;
+    let state = snapshot.codex_state();
+    let screen = snapshot.plain_screen;
+    validate_codex_prompt(&state, &screen)?;
+    if read_draft(terminal, pid).await?.is_some() {
+        return Err(error(
+            "Terminal draft changed; confirm it in IM before sending",
+        ));
+    }
+    terminal.send_text(pid, text).await?;
+    wait_for_codex_command(terminal, pid, text).await?;
+    terminal.send_key(pid, "Enter").await?;
+    Ok(())
+}
+
+pub async fn codex_terminal_input(
+    command: &Path,
+    prefix: &[String],
+    pane: &str,
+    pid: u32,
+    expected: Option<&str>,
+) -> Result<Option<String>, MultiplexerError> {
+    if !pane.starts_with('%') || pane.len() < 2 || !pane[1..].chars().all(|c| c.is_ascii_digit()) {
+        return Err(error("Invalid pane"));
+    }
+    codex_terminal_input_with(
+        &TmuxTerminal {
+            command,
+            prefix,
+            pane,
+            allowed_processes: &["codex"],
+        },
+        pid,
+        expected,
+    )
+    .await
+}
+
+pub async fn select_codex_checkout(
+    command: &Path,
+    prefix: &[String],
+    pane: &str,
+    pid: u32,
+    choice: CodexCheckoutChoice,
+) -> Result<(), MultiplexerError> {
+    if !pane.starts_with('%') || pane.len() < 2 || !pane[1..].chars().all(|c| c.is_ascii_digit()) {
+        return Err(error("Invalid pane"));
+    }
+    select_codex_checkout_with(
+        &TmuxTerminal {
+            command,
+            prefix,
+            pane,
+            allowed_processes: &["codex"],
+        },
+        pid,
+        choice,
+    )
+    .await
+}
+
 pub async fn send_codex_new(
     command: &Path,
     prefix: &[String],
     pane: &str,
     pid: u32,
 ) -> Result<CodexNewSessionOutcome, MultiplexerError> {
-    submit_codex_command(command, prefix, pane, pid, "/new").await?;
-    finish_codex_new(command, prefix, pane, pid).await
+    if !pane.starts_with('%') || pane.len() < 2 || !pane[1..].chars().all(|c| c.is_ascii_digit()) {
+        return Err(error("Invalid pane"));
+    }
+    send_codex_new_with(
+        &TmuxTerminal {
+            command,
+            prefix,
+            pane,
+            allowed_processes: &["codex"],
+        },
+        pid,
+    )
+    .await
 }
 
-/// Submit Codex's native /exit to the verified original CLI.
 pub async fn send_codex_exit(
     command: &Path,
     prefix: &[String],
     pane: &str,
     pid: u32,
 ) -> Result<(), MultiplexerError> {
-    submit_codex_command(command, prefix, pane, pid, "/exit").await
-}
-
-async fn submit_codex_command(
-    command: &Path,
-    prefix: &[String],
-    pane: &str,
-    pid: u32,
-    text: &str,
-) -> Result<(), MultiplexerError> {
-    if !pane.starts_with('%') || !pane[1..].chars().all(|c| c.is_ascii_digit()) {
+    if !pane.starts_with('%') || pane.len() < 2 || !pane[1..].chars().all(|c| c.is_ascii_digit()) {
         return Err(error("Invalid pane"));
     }
-    verify_process(pid).await?;
-    let state = run(
-        command,
-        prefix,
-        &[
-            "display-message",
-            "-p",
-            "-t",
+    send_codex_exit_with(
+        &TmuxTerminal {
+            command,
+            prefix,
             pane,
-            "#{pane_current_command}|#{cursor_x}|#{cursor_y}|#{pane_in_mode}|#{pane_dead}",
-        ],
+            allowed_processes: &["codex"],
+        },
+        pid,
     )
-    .await?;
-    let screen = run(command, prefix, &["capture-pane", "-p", "-t", pane]).await?;
-    validate_codex_prompt(&state, &screen)?;
-    if read_draft(command, prefix, pane, pid).await?.is_some() {
-        return Err(error(
-            "Terminal draft changed; confirm it in IM before sending",
-        ));
-    }
-    run(command, prefix, &["send-keys", "-t", pane, "-l", text]).await?;
-    wait_for_codex_command(command, prefix, pane, pid, text).await?;
-    run(command, prefix, &["send-keys", "-t", pane, "Enter"]).await?;
-    Ok(())
+    .await
 }
 
 #[cfg(test)]
