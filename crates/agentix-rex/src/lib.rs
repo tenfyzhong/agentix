@@ -64,13 +64,16 @@ mod tests {
 
     #[test]
     fn executable_candidates_prefer_path_then_standard_macos_apps() {
+        let first = std::env::temp_dir().join("rex-path-first");
+        let second = std::env::temp_dir().join("rex-path-second");
+        let path = std::env::join_paths([&first, &second]).unwrap();
         let paths = executable_candidates(
-            Some("/bin:/custom"),
+            path.to_str(),
             Some(std::path::Path::new("/home/test")),
             true,
         );
-        assert_eq!(paths[0], std::path::PathBuf::from("/bin/rex"));
-        assert_eq!(paths[1], std::path::PathBuf::from("/custom/rex"));
+        assert_eq!(paths[0], first.join("rex"));
+        assert_eq!(paths[1], second.join("rex"));
         assert_eq!(
             paths[2],
             std::path::PathBuf::from(
@@ -78,7 +81,7 @@ mod tests {
             )
         );
         assert_eq!(paths.len(), 6);
-        assert_eq!(executable_candidates(Some("/bin"), None, false).len(), 1);
+        assert_eq!(executable_candidates(path.to_str(), None, false).len(), 2);
     }
 
     #[test]

@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { RexTerminalAdapter, rexCandidates, decodeRexVT } from '../claude/rex.mjs';
 
 const env = { REX_SESSION: 'session:one', REX_BLOCK: 'block:one', PATH: '/bin', HOME: '/home/test' };
 test('Rex executable lookup preserves PATH before macOS application locations', () => {
     const paths = rexCandidates(env, 'darwin');
-    assert.equal(paths[0], '/bin/rex');
-    assert.equal(paths[1], '/Applications/Rex.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex');
+    assert.equal(paths[0], join('/bin', 'rex'));
+    assert.equal(paths[1], join('/Applications', 'Rex.app', 'Contents/Helpers/Rex Server.rex/Contents/MacOS/rex'));
     assert.equal(rexCandidates(env, 'linux').length, 1);
 });
 test('Rex VT snapshot decodes wide cells, erased padding and final cursor', () => {
