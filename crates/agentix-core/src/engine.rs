@@ -38,6 +38,7 @@ mod terminal_input;
 mod turn_flows;
 mod workspace_directories;
 mod workspace_flows;
+mod workspace_picker;
 use workspace_directories::{DirectoryAction, DirectoryDraft};
 
 use presentation::{
@@ -151,6 +152,10 @@ impl TurnBuffer {
 
 #[derive(Debug, Clone)]
 enum UiAction {
+    WorkspacePicker {
+        action: Box<UiAction>,
+        picker: workspace_picker::Picker,
+    },
     TerminalInput {
         session_id: SessionId,
         client_id: String,
@@ -196,6 +201,7 @@ enum UiAction {
 impl UiAction {
     fn targets_session(&self, session_id: &SessionId) -> bool {
         match self {
+            Self::WorkspacePicker { action, .. } => action.targets_session(session_id),
             Self::TerminalInput {
                 session_id: target, ..
             }

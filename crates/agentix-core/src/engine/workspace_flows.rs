@@ -1,4 +1,5 @@
-//! Workspace browser and mutation orchestration.
+use super::workspace_picker::Picker;
+// Workspace browser and mutation orchestration.
 use super::{
     ActionButton, ActionStyle, ConversationRef, Engine, EngineError, MultiplexerMutation,
     MultiplexerSession, MultiplexerSnapshot, MultiplexerTarget, MultiplexerUiAction,
@@ -126,29 +127,58 @@ impl Engine {
             .await
             .current_session(conversation)
             .cloned();
-        let (body, window_count, pane_count) = multiplexer_root_body(&snapshot, current.as_ref());
-        let actions = self
-            .multiplexer_root_actions(conversation, owner_id, &snapshot)
+        let (_, window_count, pane_count) = multiplexer_root_body(&snapshot, current.as_ref());
+        let picker = Picker::default();
+        let mut actions = self
+            .multiplexer_root_actions(conversation, owner_id, &snapshot, &picker)
             .await;
-        self.send_view(
+        let management = actions.split_off(snapshot.sessions.len());
+        let items = snapshot
+            .sessions
+            .iter()
+            .zip(actions)
+            .map(|(session, action)| {
+                let panes = session
+                    .windows
+                    .iter()
+                    .map(|window| window.panes.len())
+                    .sum::<usize>();
+                let attached =
+                    if super::presentation::multiplexer_session_contains(session, current.as_ref())
+                    {
+                        " · 📎 **Attached**"
+                    } else {
+                        ""
+                    };
+                (
+                    session.name.clone(),
+                    format!(
+                        "{} {} · {panes} {}{attached}",
+                        session.windows.len(),
+                        plural(session.windows.len(), "window", "windows"),
+                        plural(panes, "pane", "panes")
+                    ),
+                    vec![action],
+                )
+            })
+            .collect();
+        self.send_workspace_picker(
             conversation,
-            &OutboundView {
+            &picker,
+            items,
+            OutboundView {
                 sections: Vec::new(),
                 title: format!("Terminal · {}", self.multiplexer_kind),
                 subtitle: Some(format!(
-                    "{} {} · {window_count} {} · {pane_count} {}",
-                    snapshot.sessions.len(),
-                    plural(snapshot.sessions.len(), "session", "sessions"),
-                    plural(window_count, "window", "windows"),
-                    plural(pane_count, "pane", "panes")
+                    "{} sessions · {window_count} windows · {pane_count} panes",
+                    snapshot.sessions.len()
                 )),
-                body,
+                body: "Choose a session above, or create a new one.".into(),
                 status: ViewStatus::Info,
-                actions,
+                actions: management,
             },
         )
-        .await?;
-        Ok(())
+        .await
     }
 
     pub(super) async fn multiplexer_root_actions(
@@ -156,6 +186,7 @@ impl Engine {
         conversation: &ConversationRef,
         owner_id: &str,
         snapshot: &MultiplexerSnapshot,
+        picker: &Picker,
     ) -> Vec<ActionButton> {
         let mut actions = Vec::new();
         let action_group = Uuid::new_v4().simple().to_string();
@@ -165,7 +196,8 @@ impl Engine {
             .await;
         for session in &snapshot.sessions {
             let token = self
-                .issue_action(
+                .issue_picker_action(
+                    picker,
                     conversation,
                     owner_id,
                     &action_group,
@@ -179,7 +211,7 @@ impl Engine {
                 .await;
             actions.push(ActionButton {
                 disabled: false,
-                label: session.name.clone(),
+                label: "Select".into(),
                 token,
                 style: ActionStyle::Default,
             });
@@ -198,7 +230,8 @@ impl Engine {
             ("Refresh", MultiplexerUiAction::ShowRoot),
         ] {
             let token = self
-                .issue_action(
+                .issue_picker_action(
+                    picker,
                     conversation,
                     owner_id,
                     &action_group,
@@ -237,59 +270,36 @@ impl Engine {
             .await
             .current_session(conversation)
             .cloned();
+        let picker = Picker::default();
         let mut actions = self
-            .multiplexer_session_actions(conversation, owner_id, &session)
+            .multiplexer_session_actions(conversation, owner_id, &session, &picker)
             .await;
-        let mut sections = Vec::new();
-        for (window, action) in session.windows.iter().zip(&actions) {
-            let summary = format!(
-                "{} {}",
-                window.panes.len(),
-                plural(window.panes.len(), "pane", "panes")
-            );
-            let details =
-                multiplexer_window_body(window, current.as_ref(), self.agent.display_name());
-            let body = if details.is_empty() {
-                summary
-            } else {
-                format!("{summary}\n\n{details}")
-            };
-            if conversation.channel == crate::ChannelKind::Telegram {
-                self.send_view(
-                    conversation,
-                    &OutboundView {
-                        sections: Vec::new(),
-                        title: window.name.clone(),
-                        subtitle: Some(format!("{} · {}", self.multiplexer_kind, session.name)),
-                        body,
-                        status: ViewStatus::Info,
-                        actions: vec![action.clone()],
-                    },
+        let management = actions.split_off(session.windows.len());
+        let items = session
+            .windows
+            .iter()
+            .zip(actions)
+            .map(|(window, action)| {
+                let summary = format!(
+                    "{} {}",
+                    window.panes.len(),
+                    plural(window.panes.len(), "pane", "panes")
+                );
+                let details =
+                    multiplexer_window_body(window, current.as_ref(), self.agent.display_name());
+                (
+                    window.name.clone(),
+                    format!("{summary}\n\n{details}"),
+                    vec![action],
                 )
-                .await?;
-            } else {
-                sections.push(agentix_domain::ViewSection {
-                    title: window.name.clone(),
-                    body,
-                    action_tokens: vec![action.token.clone()],
-                    ..agentix_domain::ViewSection::default()
-                });
-            }
-        }
-        let body = if conversation.channel == crate::ChannelKind::Telegram {
-            actions = actions.split_off(session.windows.len());
-            "Choose a window above, or create a new one.".into()
-        } else {
-            sections
-                .iter()
-                .map(|section| format!("**{}**\n{}", section.title, section.body))
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        };
-        self.send_view(
+            })
+            .collect();
+        self.send_workspace_picker(
             conversation,
-            &OutboundView {
-                sections,
+            &picker,
+            items,
+            OutboundView {
+                sections: Vec::new(),
                 title: format!("{} · {}", self.multiplexer_kind, session.name),
                 subtitle: Some(format!(
                     "{} {}",
@@ -297,16 +307,16 @@ impl Engine {
                     plural(session.windows.len(), "window", "windows")
                 )),
                 body: if session.windows.is_empty() {
-                    "No windows. Create a window to get started.".into()
+                    "No windows. Create a window to get started."
                 } else {
-                    body
-                },
+                    "Choose a window above, or create a new one."
+                }
+                .into(),
                 status: ViewStatus::Info,
-                actions,
+                actions: management,
             },
         )
-        .await?;
-        Ok(())
+        .await
     }
 
     pub(super) async fn multiplexer_session_actions(
@@ -314,6 +324,7 @@ impl Engine {
         conversation: &ConversationRef,
         owner_id: &str,
         session: &MultiplexerSession,
+        picker: &Picker,
     ) -> Vec<ActionButton> {
         let mut actions = Vec::new();
         let action_group = Uuid::new_v4().simple().to_string();
@@ -323,7 +334,8 @@ impl Engine {
             .await;
         for window in &session.windows {
             let token = self
-                .issue_action(
+                .issue_picker_action(
+                    picker,
                     conversation,
                     owner_id,
                     &action_group,
@@ -358,7 +370,8 @@ impl Engine {
             ("← Back", MultiplexerUiAction::ShowRoot),
         ] {
             let token = self
-                .issue_action(
+                .issue_picker_action(
+                    picker,
                     conversation,
                     owner_id,
                     &action_group,
@@ -406,23 +419,40 @@ impl Engine {
             .await
             .current_session(conversation)
             .cloned();
-        let body = multiplexer_window_body(&window, current.as_ref(), self.agent.display_name());
+        let picker = Picker::default();
         let action_group = Uuid::new_v4().simple().to_string();
-        let mut actions = self
+        let pane_actions = self
             .multiplexer_pane_actions(
                 conversation,
                 owner_id,
                 &window,
                 current.as_ref(),
                 &action_group,
+                &picker,
             )
             .await;
-        actions.extend(
-            self.multiplexer_split_actions(conversation, owner_id, &window, &action_group)
-                .await?,
-        );
+        let items = window
+            .panes
+            .iter()
+            .zip(pane_actions)
+            .map(|(pane, actions)| {
+                (
+                    format!("{} · {}", pane.index, pane.current_command),
+                    super::presentation::multiplexer_pane_body(
+                        pane,
+                        current.as_ref(),
+                        self.agent.display_name(),
+                    ),
+                    actions,
+                )
+            })
+            .collect();
+        let mut actions = self
+            .multiplexer_split_actions(conversation, owner_id, &window, &action_group, &picker)
+            .await?;
         let back_token = self
-            .issue_action(
+            .issue_picker_action(
+                &picker,
                 conversation,
                 owner_id,
                 &action_group,
@@ -440,9 +470,11 @@ impl Engine {
             token: back_token,
             style: ActionStyle::Primary,
         });
-        self.send_view(
+        self.send_workspace_picker(
             conversation,
-            &OutboundView {
+            &picker,
+            items,
+            OutboundView {
                 sections: Vec::new(),
                 title: format!(
                     "{} · {} · {}",
@@ -453,13 +485,12 @@ impl Engine {
                     window.panes.len(),
                     plural(window.panes.len(), "pane", "panes")
                 )),
-                body,
+                body: "Choose a pane above, or split this window.".into(),
                 status: ViewStatus::Info,
                 actions,
             },
         )
-        .await?;
-        Ok(())
+        .await
     }
 
     pub(super) async fn multiplexer_pane_actions(
@@ -469,22 +500,21 @@ impl Engine {
         window: &MultiplexerWindow,
         current: Option<&SessionId>,
         action_group: &str,
-    ) -> Vec<ActionButton> {
+        picker: &Picker,
+    ) -> Vec<Vec<ActionButton>> {
         let mut actions = Vec::new();
         for pane in &window.panes {
             let attached =
                 current.is_some_and(|current| pane.agent_session.as_ref() == Some(current));
             let (label, action) = if let Some(codex_session) = &pane.agent_session {
                 if attached {
+                    actions.push(Vec::new());
                     continue;
                 }
-                (
-                    format!("{} · Attach", pane.index),
-                    UiAction::Attach(codex_session.clone()),
-                )
+                ("Attach".into(), UiAction::Attach(codex_session.clone()))
             } else if is_shell_command(&pane.current_command) {
                 (
-                    format!("{} · Run agent", pane.index),
+                    "Run agent".into(),
                     UiAction::Multiplexer(
                         self.multiplexer_backend(conversation).await,
                         MultiplexerUiAction::ChooseAgent {
@@ -493,17 +523,18 @@ impl Engine {
                     ),
                 )
             } else {
+                actions.push(Vec::new());
                 continue;
             };
             let token = self
-                .issue_action(conversation, owner_id, action_group, action)
+                .issue_picker_action(picker, conversation, owner_id, action_group, action)
                 .await;
-            actions.push(ActionButton {
+            actions.push(vec![ActionButton {
                 disabled: false,
                 label,
                 token,
                 style: ActionStyle::Default,
-            });
+            }]);
         }
         actions
     }
@@ -514,6 +545,7 @@ impl Engine {
         owner_id: &str,
         window: &MultiplexerWindow,
         action_group: &str,
+        picker: &Picker,
     ) -> Result<Vec<ActionButton>, EngineError> {
         let pane_id = window
             .panes
@@ -543,7 +575,7 @@ impl Engine {
                 }),
             );
             let token = self
-                .issue_action(conversation, owner_id, action_group, action)
+                .issue_picker_action(picker, conversation, owner_id, action_group, action)
                 .await;
             actions.push(ActionButton {
                 disabled: false,

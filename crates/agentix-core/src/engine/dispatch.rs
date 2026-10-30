@@ -51,6 +51,7 @@ impl From<&UiAction> for ActionRoute {
     fn from(action: &UiAction) -> Self {
         let mut route = Self::default();
         match action {
+            UiAction::WorkspacePicker { action, .. } => return Self::from(action.as_ref()),
             UiAction::TerminalInput {
                 session_id: session,
                 ..

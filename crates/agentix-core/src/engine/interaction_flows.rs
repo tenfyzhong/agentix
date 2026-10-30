@@ -303,14 +303,23 @@ impl Engine {
             .await
             .consume(token, conversation, owner_id, generation, binding_epoch)
             .map_err(|_| EngineError::InvalidAction)?;
+        let (action, picker) = match action {
+            UiAction::WorkspacePicker { action, picker } => (*action, Some(picker)),
+            action => (action, None),
+        };
         if !matches!(
             &action,
             UiAction::Multiplexer(_, super::MultiplexerUiAction::Directory { .. })
         ) {
             self.cancel_directory_draft(conversation).await;
         }
-        self.disable_consumed_actions(conversation, message).await?;
+        if let Some(picker) = picker {
+            self.clear_workspace_picker(conversation, &picker).await;
+        } else {
+            self.disable_consumed_actions(conversation, message).await?;
+        }
         match action {
+            UiAction::WorkspacePicker { .. } => return Err(EngineError::InvalidAction),
             UiAction::TerminalInput {
                 session_id,
                 client_id,

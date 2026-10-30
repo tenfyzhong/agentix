@@ -214,7 +214,7 @@ async fn new_window_defaults_home_and_allows_explicit_pane_directory() {
         .handle_inbound(inbound("chat-a", "/rmux"))
         .await
         .unwrap();
-    click(&engine, &channel, "agentix").await;
+    click(&engine, &channel, "Select").await;
     click(&engine, &channel, "+ Window").await;
     let view = channel.sent().last().unwrap().1.clone();
     assert!(view.actions.iter().any(|a| a.label == "/other"));
@@ -230,7 +230,7 @@ async fn new_window_defaults_home_and_allows_explicit_pane_directory() {
         .handle_inbound(inbound("chat-a", "/rmux"))
         .await
         .unwrap();
-    click(&engine, &channel, "agentix").await;
+    click(&engine, &channel, "Select").await;
     click(&engine, &channel, "+ Window").await;
     let view = channel.sent().last().unwrap().1.clone();
     assert!(view.body.contains("/work/multiplexer"));
@@ -249,7 +249,7 @@ async fn missing_target_at_confirmation_never_creates() {
         .handle_inbound(inbound("chat-a", "/rmux"))
         .await
         .unwrap();
-    click(&engine, &channel, "agentix").await;
+    click(&engine, &channel, "Select").await;
     click(&engine, &channel, "+ Window").await;
     agent.snapshot.lock().unwrap().sessions.clear();
     let token = channel
@@ -514,7 +514,7 @@ async fn multiplexer_management_buttons_distinguish_existing_targets() {
             .handle_inbound(inbound("chat-a", &format!("/{kind}")))
             .await
             .unwrap();
-        for next in [Some("agentix"), Some("Select"), None] {
+        for next in [Some("Select"), Some("Select"), None] {
             let view = channel.sent().last().unwrap().1.clone();
             for action in &view.actions {
                 let management = matches!(
@@ -562,7 +562,7 @@ async fn new_window_defaults_to_home_even_when_panes_use_tmp() {
             .handle_inbound(inbound("chat-a", &format!("/{kind}")))
             .await
             .unwrap();
-        click(&engine, &channel, "agentix").await;
+        click(&engine, &channel, "Select").await;
         click(&engine, &channel, "+ Window").await;
         let view = channel.sent().last().unwrap().1.clone();
         assert!(
