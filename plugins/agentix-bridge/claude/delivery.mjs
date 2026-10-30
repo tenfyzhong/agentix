@@ -30,7 +30,7 @@ export class TerminalDelivery {
         if (this.mode !== 'multiplexer') return;
         const kind = result?.multiplexer?.kind;
         if (kind === null) return;
-        if (!['rmux', 'tmux'].includes(kind)) throw failure('invalid_request', 'Bridge registration is missing valid multiplexer configuration');
+        if (!['rmux', 'tmux', 'rex'].includes(kind)) throw failure('invalid_request', 'Bridge registration is missing valid multiplexer configuration');
         this.configured = new TerminalAdapter(kind, this.options);
     }
     async resolve(signal) {
@@ -42,7 +42,7 @@ export class TerminalDelivery {
         const [, command, x, y, mode, dead] = await terminal.inspect(signal);
         if (command !== 'claude' || mode !== '0' || dead !== '0') throw failure('busy', 'Original Claude process is not the active terminal pane');
         await terminal.foreground(signal);
-        const screen = await terminal.call(['capture-pane', '-p', '-t', terminal.pane], undefined, signal);
+        const screen = await terminal.capture(signal);
         const lines = screen.split('\n'), row = Number(y);
         const border = line => /^─{3,}\s*$/.test(line ?? '');
         let top = row - 1, bottom = row + 1;
@@ -62,7 +62,7 @@ export class TerminalDelivery {
         const current = await this.check(terminal, undefined, true);
         if (expected === undefined || expected === null || current !== expected) return current;
         await terminal.foreground();
-        await terminal.call(['send-keys', '-t', terminal.pane, 'C-c']);
+        await terminal.sendKey('C-c');
         await this.delay(150);
         await this.check(terminal);
         return null;
@@ -71,25 +71,24 @@ export class TerminalDelivery {
         let pasted = false, loaded = false;
         const buffer = `agentix-${randomUUID()}`;
         let terminal;
-        const call = (args, input) => terminal.call(args, input, signal);
         try {
             if (typeof text !== 'string' || !text.trim() || /^[\s]*[\/!]/.test(text) || /[\x00-\x08\x0b-\x1f\x7f]/.test(text) || Buffer.byteLength(text) > 65536) throw failure('invalid_request', 'Send plain prompt text up to 64 KiB, without terminal controls or leading slash/bang commands');
             terminal = await this.resolve(signal);
             await this.check(terminal, signal);
             loaded = true;
-            await call(['load-buffer', '-b', buffer, '-'], text);
+            await terminal.loadPaste(buffer, text, signal);
             await this.check(terminal, signal);
             signal?.throwIfAborted();
             pasted = true;
-            await call(['paste-buffer', '-p', '-r', '-d', '-b', buffer, '-t', terminal.pane]);
+            await terminal.pasteLoaded(buffer, signal);
             await this.delay(150);
             signal?.throwIfAborted();
-            await call(['send-keys', '-t', terminal.pane, 'Enter']);
+            await terminal.sendKey('Enter', signal);
         } catch (error) {
             if (!pasted) error.notSent = true;
             throw error;
         } finally {
-            if (loaded) await terminal.call(['delete-buffer', '-b', buffer]).catch(() => {});
+            if (loaded) await terminal.clearPaste(buffer).catch(() => {});
         }
     }
 }

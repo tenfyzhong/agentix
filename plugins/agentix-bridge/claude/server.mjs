@@ -1,3 +1,4 @@
+import { hasTerminalContext } from './terminal.mjs';
 import { NativeSessionControl } from '../new-session.mjs';
 import { ChannelDelivery, TerminalDelivery, deliveryMode } from './delivery.mjs';
 import { Server, StdioServerTransport, CallToolRequestSchema, ListToolsRequestSchema } from './vendor/sdk.mjs';
@@ -56,7 +57,7 @@ async function poll() {
             const store = new ClaudeStateStore(path);
             session = new ClaudeSession({ saved: store.load(() => readTranscript(identity.transcript_path, identity.session_id)), append: value => store.append(value),
                 delivery, clientId,
-                nativeNew: delivery instanceof TerminalDelivery && process.env.TMUX_PANE ? busy => new NativeSessionControl('claude', {
+                nativeNew: delivery instanceof TerminalDelivery && hasTerminalContext() ? busy => new NativeSessionControl('claude', {
                     resolve: () => delivery.resolve(), ready: terminal => delivery.check(terminal),
                 }).newSession(busy) : undefined,
                 usage: (id, value) => transport.usage(id, value),

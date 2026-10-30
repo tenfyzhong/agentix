@@ -17,7 +17,7 @@ export class NativeSessionControl {
         await this.verify(terminal);
         if (busy()) {
             if (this.options.stop) await this.options.stop();
-            else await terminal.call(['send-keys', '-t', terminal.pane, 'C-c']);
+            else await terminal.sendKey('C-c');
             const deadline = Date.now() + 30000;
             while (busy()) {
                 if (Date.now() >= deadline) throw failure('busy', 'The active task did not stop');
@@ -26,8 +26,8 @@ export class NativeSessionControl {
         }
         await this.options.ready(terminal);
         await this.verify(terminal);
-        await terminal.call(['send-keys', '-t', terminal.pane, '-l', this.kind === 'claude' ? '/clear' : '/new']);
+        await terminal.sendText(this.kind === 'claude' ? '/clear' : '/new');
         await this.verify(terminal);
-        await terminal.call(['send-keys', '-t', terminal.pane, 'Enter']);
+        await terminal.sendKey('Enter');
     }
 }

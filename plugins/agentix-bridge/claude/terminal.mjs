@@ -1,3 +1,4 @@
+import { RexTerminalAdapter } from './rex.mjs';
 import { execFile } from 'node:child_process';
 import { failure } from '../protocol/errors.mjs';
 
@@ -12,7 +13,8 @@ function run(command, args, input, signal) {
 // Both drivers speak the same terminal command vocabulary. Keep server selection
 // and read-only process verification here, outside Claude's input workflow.
 export class TerminalAdapter {
-    constructor(kind, { env = process.env, pid = process.ppid, run: execute = run } = {}) {
+    constructor(kind, { env = process.env, pid = process.ppid, run: execute = run, command } = {}) {
+        if (kind === 'rex') return new RexTerminalAdapter({ env, pid, run: execute, command });
         if (!['rmux', 'tmux'].includes(kind)) throw failure('invalid_request', 'Invalid multiplexer configuration');
         this.kind = kind;
         this.socket = env.TMUX?.replace(/,\d+,\d+$/, '');
@@ -39,6 +41,12 @@ export class TerminalAdapter {
         }
         return state;
     }
+    capture(signal) { return this.call(['capture-pane', '-p', '-t', this.pane], undefined, signal); }
+    sendKey(key, signal) { return this.call(['send-keys', '-t', this.pane, key], undefined, signal); }
+    sendText(text, signal) { return this.call(['send-keys', '-t', this.pane, '-l', text], undefined, signal); }
+    loadPaste(id, text, signal) { return this.call(['load-buffer', '-b', id, '-'], text, signal); }
+    pasteLoaded(id, signal) { return this.call(['paste-buffer', '-p', '-r', '-d', '-b', id, '-t', this.pane], undefined, signal); }
+    clearPaste(id) { return this.call(['delete-buffer', '-b', id]); }
     async foreground(signal) {
         const [group, foreground] = (await this.run('ps', ['-p', String(this.pid), '-o', 'pgid=,tpgid='], undefined, signal)).trim().split(/\s+/).map(Number);
         if (!(group > 0) || group !== foreground) throw failure('busy', 'Original Claude process is not in the foreground');
@@ -46,7 +54,7 @@ export class TerminalAdapter {
 }
 
 export async function detectTerminal(options, signal) {
-    const candidates = await Promise.all(['rmux', 'tmux'].map(async kind => {
+    const candidates = await Promise.all(['rmux', 'tmux', 'rex'].map(async kind => {
         const adapter = new TerminalAdapter(kind, options);
         try { const [root] = await adapter.inspect(signal); return { adapter, root }; } catch { return null; }
     }));
@@ -54,6 +62,8 @@ export async function detectTerminal(options, signal) {
     const matches = candidates.filter(Boolean);
     // rmux can provide a tmux compatibility alias; both names may reach one pane.
     const targets = new Set(matches.map(({ adapter, root }) => JSON.stringify([adapter.socket, adapter.pane, root])));
-    if (targets.size !== 1) throw failure('unsupported_method', 'Cannot uniquely verify the original rmux or tmux pane');
+    if (targets.size !== 1) throw failure('unsupported_method', 'Cannot uniquely verify the original rmux, tmux or Rex pane');
     return matches[0].adapter;
 }
+
+export function hasTerminalContext(env = process.env) { return Boolean(env.TMUX_PANE || (env.REX_SESSION && env.REX_BLOCK)); }

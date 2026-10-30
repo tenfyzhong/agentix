@@ -64,6 +64,10 @@ async fn native_codex_draft_is_read_and_cleared_only_after_matching_confirmation
         ("tmux", "plain", "legacy"),
         ("rmux", "plain", "legacy"),
     ] {
+        // Creation and guarded operations must use the same executable even when
+        // the login PATH exposes a tmux compatibility alias for another backend.
+        let driver_path = output("which", &[driver]);
+        let driver = driver_path.as_str();
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("bin");
         std::fs::create_dir(&bin).unwrap();

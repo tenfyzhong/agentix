@@ -11,7 +11,7 @@ flowchart LR
     IM["Telegram, Feishu, or Slack"]
     CLI["agentix client"]
     BACKEND["Codex app-server and Pi / OMP / Claude / OpenCode live bridges"]
-    RMUX["rmux or tmux server"]
+    RMUX["rmux, tmux, or Rex server"]
 
     subgraph SERVICE["agentix serve"]
         subgraph CHANNEL["Selected ChannelAdapter and its clones"]
@@ -538,3 +538,7 @@ wrappers with active work, leases or dispatcher work. Retryable activation retai
 native source identity; cleanup preserves continuation context without recording
 a completed reply. The event pool bounds queued plugin work, not native history
 or external provider memory.
+
+### Rex terminal adapter
+
+`agentix-rex` implements the multiplexer port using the Rex CLI against a verified local Unix socket. Shared `TerminalControl` snapshots and guarded input operations in `agentix-multiplexer` keep Codex composer and interaction parsing independent of tmux command syntax. Agent adapters do not depend on concrete terminal crates. The Node bridge exposes the same semantic operations through its Rex adapter for Claude and OMP native terminal control. See [Rex multiplexer](rex-multiplexer.md) for discovery and validation boundaries.

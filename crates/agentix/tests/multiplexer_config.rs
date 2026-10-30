@@ -65,10 +65,12 @@ async fn configured_mode_resolves_only_successful_probes() {
                     calls.borrow_mut().push("tmux");
                     compatible
                 },
+                async { false },
             )
             .await;
         assert_eq!(resolved, expected, "{mode:?}, {native}, {compatible}");
         let expected_calls = match mode {
+            agentix::MultiplexerMode::Rex => vec!["rex"],
             Tmux => vec!["tmux"],
             Auto if !native => vec!["rmux", "tmux"],
             _ => vec!["rmux"],
@@ -104,4 +106,53 @@ fn removed_working_directory_is_rejected() {
     let error =
         Config::from_toml(&format!("{BASE}\n[multiplexer]\nworking_dir='~/work'\n")).unwrap_err();
     assert!(format!("{error:#}").contains("working_dir"));
+}
+
+#[test]
+fn rex_configuration_and_menu_are_available() {
+    let config = Config::from_toml(&format!("{BASE}\n[multiplexer]\nkind='rex'\n")).unwrap();
+    assert_eq!(format!("{:?}", config.multiplexer.kind), "Rex");
+    let menu = agentix_core::command_menu_for(false, agentix_core::MultiplexerKind::Rex);
+    assert!(menu.commands.iter().any(|entry| entry.name == "rex"));
+    assert!(
+        !menu
+            .commands
+            .iter()
+            .any(|entry| entry.name == "tmux" || entry.name == "rmux")
+    );
+}
+
+#[tokio::test]
+async fn rex_detection_keeps_existing_priority_and_explicit_mode_does_not_fall_back() {
+    use agentix::MultiplexerMode;
+    use agentix_core::MultiplexerKind;
+    for rmux in [false, true] {
+        for tmux in [false, true] {
+            for rex in [false, true] {
+                let resolved = MultiplexerMode::Auto
+                    .resolve_with(async { rmux }, async { tmux }, async { rex })
+                    .await;
+                assert_eq!(
+                    resolved,
+                    if rmux {
+                        Some(MultiplexerKind::Rmux)
+                    } else if tmux {
+                        Some(MultiplexerKind::Tmux)
+                    } else if rex {
+                        Some(MultiplexerKind::Rex)
+                    } else {
+                        None
+                    }
+                );
+                let explicit = MultiplexerMode::Rex
+                    .resolve_with(
+                        async { panic!("rmux must not be polled") },
+                        async { panic!("tmux must not be polled") },
+                        async { rex },
+                    )
+                    .await;
+                assert_eq!(explicit, rex.then_some(MultiplexerKind::Rex));
+            }
+        }
+    }
 }

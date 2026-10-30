@@ -1,5 +1,5 @@
 import { NativeSessionControl } from './new-session.mjs';
-import { detectTerminal } from './claude/terminal.mjs';
+import { detectTerminal, hasTerminalContext } from './claude/terminal.mjs';
 import { BridgeTransport } from './transport.mjs';
 export { PROTOCOL_VERSION } from './transport.mjs';
 import { randomUUID } from 'node:crypto';
@@ -50,7 +50,7 @@ export function registerBridge(api, kind, options = {}) {
     }
 
     const event = value => transport.event(value);
-    function info() { return { instance, seq: transport.sequence, session: session.summary(api.getSessionName?.() ?? null), capabilities: [...host.capabilities(ctx), ...((kind === 'pi' && api.registerCommand) || (kind === 'omp' && process.env.TMUX_PANE && typeof ctx.ui?.getEditorText === 'function') ? ['new'] : [])] }; }
+    function info() { return { instance, seq: transport.sequence, session: session.summary(api.getSessionName?.() ?? null), capabilities: [...host.capabilities(ctx), ...((kind === 'pi' && api.registerCommand) || (kind === 'omp' && hasTerminalContext() && typeof ctx.ui?.getEditorText === 'function') ? ['new'] : [])] }; }
     function snapshot() { return { ...info(), turns: session.history().turns, queue: queue.view() }; }
     function start() {
         if (session.start()) event({ TurnStarted: { session_id: record.session_id, turn_id: session.turn.id } });

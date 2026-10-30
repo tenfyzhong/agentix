@@ -30,6 +30,7 @@ pub enum MultiplexerKind {
     #[default]
     Rmux,
     Tmux,
+    Rex,
 }
 
 impl MultiplexerKind {
@@ -38,6 +39,7 @@ impl MultiplexerKind {
         match self {
             Self::Rmux => "rmux",
             Self::Tmux => "tmux",
+            Self::Rex => "rex",
         }
     }
 }
