@@ -3,8 +3,7 @@ use super::{
     ActionButton, ActionStyle, ConversationRef, Engine, EngineError, MultiplexerMutation,
     MultiplexerSession, MultiplexerSnapshot, MultiplexerTarget, MultiplexerUiAction,
     MultiplexerWindow, OutboundView, PaneSplitDirection, SessionId, UiAction, Uuid, ViewStatus,
-    is_shell_command, multiplexer_root_body, multiplexer_session_body, multiplexer_window_body,
-    plural,
+    is_shell_command, multiplexer_root_body, multiplexer_window_body, plural,
 };
 
 impl Engine {
@@ -231,14 +230,6 @@ impl Engine {
             .ok_or_else(|| {
                 EngineError::InvalidInput("multiplexer session no longer exists".into())
             })?;
-        let current = self
-            .sessions
-            .bindings
-            .lock()
-            .await
-            .current_session(conversation)
-            .cloned();
-        let body = multiplexer_session_body(&session, current.as_ref());
         let actions = self
             .multiplexer_session_actions(conversation, owner_id, &session)
             .await;
@@ -252,7 +243,7 @@ impl Engine {
                     session.windows.len(),
                     plural(session.windows.len(), "window", "windows")
                 )),
-                body,
+                body: "Choose a window.".into(),
                 status: ViewStatus::Info,
                 actions,
             },
@@ -290,7 +281,7 @@ impl Engine {
                 .await;
             actions.push(ActionButton {
                 disabled: false,
-                label: format!("{} · {}", window.index, window.name),
+                label: window.name.clone(),
                 token,
                 style: ActionStyle::Default,
             });
@@ -397,8 +388,8 @@ impl Engine {
             &OutboundView {
                 sections: Vec::new(),
                 title: format!(
-                    "{} · {} · {} ({})",
-                    self.multiplexer_kind, session.name, window.index, window.name
+                    "{} · {} · {}",
+                    self.multiplexer_kind, session.name, window.name
                 ),
                 subtitle: Some(format!(
                     "{} {}",

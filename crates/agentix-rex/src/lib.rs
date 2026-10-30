@@ -461,7 +461,7 @@ mod screen_tests {
 mod launch_tests {
     use super::*;
     #[test]
-    fn creation_arguments_preserve_ids_directories_and_agent_arguments() {
+    fn creation_arguments_start_only_the_primary_shell() {
         let target = MultiplexerTarget::NewWindow {
             session_id: "session:one".into(),
             name: "agent".into(),
@@ -479,13 +479,17 @@ mod launch_tests {
         assert!(args.windows(2).any(|v| v == ["-c", "/tmp/中文 dir"]));
         assert!(args.contains(&"--focus=false".into()));
         assert!(args.contains(&"--shell=none".into()));
-        assert!(args.iter().any(|v| v.contains("a;b")));
+        assert!(!args.iter().any(|v| v.contains("a;b")));
+        assert_eq!(
+            &args[args.iter().position(|v| v == "--").unwrap() + 1..],
+            agentix_multiplexer::interactive_login_shell_argv().unwrap_or_default()
+        );
     }
 }
 
 fn creation_args(
     prepared: &PreparedMutation,
-    argv: Option<&[String]>,
+    _argv: Option<&[String]>,
     session: Option<&str>,
 ) -> Result<Vec<String>, MultiplexerError> {
     if let MultiplexerTarget::NewSession { name, .. } | MultiplexerTarget::NewWindow { name, .. } =
@@ -538,10 +542,7 @@ fn creation_args(
         "--shell=none".into(),
         "--".into(),
     ]);
-    command_args.extend(argv.map_or_else(
-        || agentix_multiplexer::interactive_login_shell_argv().unwrap_or_default(),
-        agentix_multiplexer::persistent_launch_argv,
-    ));
+    command_args.extend(agentix_multiplexer::interactive_login_shell_argv().unwrap_or_default());
     Ok(command_args)
 }
 impl RexDriver {
@@ -564,40 +565,7 @@ impl RexDriver {
         if let MultiplexerTarget::ExistingPane { .. } = &prepared.mutation.target {
             let pane = original.ok_or_else(|| error("Missing Rex pane"))?;
             let argv = argv.ok_or_else(|| error("An existing pane must launch an agent"))?;
-            if !["bash", "dash", "fish", "ksh", "sh", "zsh"]
-                .contains(&pane.current_command.as_str())
-            {
-                return Err(MultiplexerError::BusyPane {
-                    pane_id: pane.pane_id.clone(),
-                    command: pane.current_command.clone(),
-                });
-            }
-            let pid = pane
-                .foreground_pid
-                .ok_or_else(|| error("Rex shell process is unavailable"))?;
-            let terminal = RexTerminal {
-                driver: self,
-                session: pane.session_id.clone(),
-                block: pane.pane_id.clone(),
-                expected_command: pane.current_command.clone(),
-            };
-            terminal.send_key(pid, "C-c").await?;
-            let quote = |s: &str| {
-                let value = if pane.current_command == "fish" {
-                    s.replace('\\', "\\\\")
-                } else {
-                    s.into()
-                };
-                format!("'{}'", value.replace('\'', "'\\''"))
-            };
-            let launch = agentix_multiplexer::persistent_launch_argv(argv)
-                .iter()
-                .map(|s| quote(s))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let text = format!("cd {}; {}", quote(&prepared.cwd.to_string_lossy()), launch);
-            terminal.send_text(pid, &text).await?;
-            terminal.send_key(pid, "Enter").await?;
+            self.launch_in_shell(pane, &prepared.cwd, argv).await?;
             return Ok(MultiplexerOutcome {
                 location: terminal_location(pane),
             });
@@ -618,15 +586,73 @@ impl RexDriver {
             .ok_or_else(|| {
                 error("Rex creation returned no block ID; inspect Rex before retrying")
             })?;
-        match self.panes().await?.iter().find(|p| p.pane_id == bid) {
-            Some(pane) => Ok(MultiplexerOutcome {
-                location: terminal_location(pane),
-            }),
-            None => Err(error(format!(
-                "Created Rex block {bid} is unavailable; inspect Rex before retrying"
-            ))),
+        let pane = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(pane) = self.panes().await?.into_iter().find(|p| p.pane_id == bid)
+                    && (argv.is_none()
+                        || pane
+                            .foreground_pid
+                            .is_some_and(|_| is_shell(&pane.current_command)))
+                {
+                    return Ok::<_, MultiplexerError>(pane);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            error(format!(
+                "Created Rex block {bid} is not ready; inspect Rex before retrying"
+            ))
+        })??;
+        if let Some(argv) = argv {
+            self.launch_in_shell(&pane, &prepared.cwd, argv).await?;
         }
+        Ok(MultiplexerOutcome {
+            location: terminal_location(&pane),
+        })
     }
+
+    async fn launch_in_shell(
+        &self,
+        pane: &PaneState,
+        cwd: &Path,
+        argv: &[String],
+    ) -> Result<(), MultiplexerError> {
+        if !is_shell(&pane.current_command) {
+            return Err(MultiplexerError::BusyPane {
+                pane_id: pane.pane_id.clone(),
+                command: pane.current_command.clone(),
+            });
+        }
+        let pid = pane
+            .foreground_pid
+            .ok_or_else(|| error("Rex shell process is unavailable"))?;
+        let terminal = RexTerminal {
+            driver: self,
+            session: pane.session_id.clone(),
+            block: pane.pane_id.clone(),
+            expected_command: pane.current_command.clone(),
+        };
+        terminal.send_key(pid, "C-c").await?;
+        let quote = |s: &str| {
+            let value = if pane.current_command == "fish" {
+                s.replace('\\', "\\\\")
+            } else {
+                s.into()
+            };
+            format!("'{}'", value.replace('\'', "'\\''"))
+        };
+        let launch = argv.iter().map(|s| quote(s)).collect::<Vec<_>>().join(" ");
+        let text = format!("cd -- {} && {}", quote(&cwd.to_string_lossy()), launch);
+        terminal.send_text(pid, &text).await?;
+        terminal.send_key(pid, "Enter").await?;
+        Ok(())
+    }
+}
+
+fn is_shell(command: &str) -> bool {
+    ["bash", "dash", "fish", "ksh", "sh", "zsh"].contains(&command)
 }
 
 struct RexTerminal<'a> {
@@ -814,6 +840,8 @@ impl RexDriver {
 mod live_tests {
     use super::*;
     use agentix_multiplexer::TerminalControl;
+    static NATIVE_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     struct SessionCleanup {
         command: PathBuf,
         endpoint: String,
@@ -835,9 +863,119 @@ mod live_tests {
         }
     }
     #[tokio::test]
+    #[ignore = "creates an isolated Rex shell and checks a single EOF returns to it"]
+    #[allow(clippy::too_many_lines)] // Verify the complete original-shell lifecycle in one fixture.
+    async fn local_rex_agent_eof_returns_to_the_original_shell() {
+        let _serial = NATIVE_TEST.lock().await;
+        let directory = tempfile::tempdir().unwrap();
+        let driver = RexDriver::default();
+        let prepared = PreparedMutation {
+            mutation: agentix_domain::MultiplexerMutation {
+                target: MultiplexerTarget::NewSession {
+                    name: format!("agentix-eof-test-{}", std::process::id()),
+                    cwd: directory.path().to_string_lossy().into_owned(),
+                },
+                launch_agent: false,
+            },
+            cwd: directory.path().into(),
+        };
+        let created = driver.execute(&prepared, None).await.unwrap();
+        let connection = driver.connection().await.unwrap();
+        let pane = driver
+            .panes()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|p| p.pane_id == created.location.pane_id)
+            .unwrap();
+        let _cleanup = SessionCleanup {
+            command: connection.command.clone(),
+            endpoint: connection.endpoint.clone(),
+            id: pane.session_id.clone(),
+        };
+        let shell = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let pane = driver
+                    .panes()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .find(|p| p.pane_id == created.location.pane_id)
+                    .unwrap();
+                if pane.foreground_pid.is_some()
+                    && ["fish", "zsh", "bash", "sh"].contains(&pane.current_command.as_str())
+                {
+                    break pane;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let target_directory = directory.path().join("中文 ' \\ directory");
+        std::fs::create_dir(&target_directory).unwrap();
+        let launch = PreparedMutation {
+            mutation: agentix_domain::MultiplexerMutation {
+                target: MultiplexerTarget::ExistingPane {
+                    pane_id: shell.pane_id.clone(),
+                },
+                launch_agent: true,
+            },
+            cwd: target_directory.clone(),
+        };
+        driver
+            .execute(&launch, Some(&["/bin/cat".into()]))
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if driver
+                    .panes()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|p| p.pane_id == shell.pane_id && p.current_command == "cat")
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap();
+        driver
+            .call(&[
+                "send-key".into(),
+                "-s".into(),
+                shell.session_id.clone(),
+                "-b".into(),
+                shell.pane_id.clone(),
+                "ctrl+d".into(),
+            ])
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if driver.panes().await.unwrap().iter().any(|p| {
+                    p.pane_id == shell.pane_id
+                        && p.foreground_pid == shell.foreground_pid
+                        && Path::new(&p.cwd).canonicalize().ok()
+                            == target_directory.canonicalize().ok()
+                }) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("One Ctrl-D must return to the same primary shell PID");
+    }
+
+    #[tokio::test]
     #[ignore = "runs a deterministic Codex terminal fixture on the local Rex service"]
     #[allow(clippy::too_many_lines)] // Keep the complete isolated lifecycle scenario together.
     async fn local_rex_codex_draft_new_checkout_and_exit() {
+        let _serial = NATIVE_TEST.lock().await;
         let directory = tempfile::tempdir().unwrap();
         let node_output = std::process::Command::new("node")
             .args(["-p", "process.execPath"])
@@ -955,6 +1093,7 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "creates an isolated session on the local Rex service"]
     async fn local_rex_creation_snapshot_and_split() {
+        let _serial = NATIVE_TEST.lock().await;
         let directory = tempfile::tempdir().unwrap();
         let driver = RexDriver::default();
         let name = format!("agentix-test-{}", std::process::id());

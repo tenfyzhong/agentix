@@ -513,7 +513,7 @@ async fn multiplexer_management_buttons_distinguish_existing_targets() {
             .handle_inbound(inbound("chat-a", &format!("/{kind}")))
             .await
             .unwrap();
-        for next in [Some("agentix"), Some("0 · codex:agentix"), None] {
+        for next in [Some("agentix"), Some("codex:agentix"), None] {
             let view = channel.sent().last().unwrap().1.clone();
             for action in &view.actions {
                 let management = matches!(

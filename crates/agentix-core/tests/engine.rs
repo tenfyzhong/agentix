@@ -2401,8 +2401,17 @@ async fn session_picker_disables_the_current_session_button_without_a_title_mark
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // Keep navigation and callback ownership assertions together.
 async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
     let agent = Arc::new(FakeAgent::new());
+    agent.snapshot.lock().unwrap().sessions[0]
+        .windows
+        .push(MultiplexerWindow {
+            id: "@2".into(),
+            index: "1".into(),
+            name: "logs".into(),
+            panes: Vec::new(),
+        });
     let channel = Arc::new(FakeChannel::default());
     let state = SqliteState::in_memory().await.unwrap();
     let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
@@ -2435,12 +2444,28 @@ async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
         .unwrap();
     let session = channel.sent().last().unwrap().1.clone();
     assert_eq!(session.title, "rmux · agentix");
-    assert!(session.body.contains("**0 · codex:agentix**"));
+    assert_eq!(session.body, "Choose a window.");
+    assert_eq!(
+        session
+            .actions
+            .iter()
+            .filter(|a| a.label == "codex:agentix")
+            .count(),
+        1
+    );
 
+    assert_eq!(
+        session
+            .actions
+            .iter()
+            .map(|a| a.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["codex:agentix", "logs", "+ Window", "← Back"]
+    );
     let window_token = session
         .actions
         .iter()
-        .find(|action| action.label == "0 · codex:agentix")
+        .find(|action| action.label == "codex:agentix")
         .unwrap()
         .token
         .clone();
@@ -2454,7 +2479,7 @@ async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
         .await
         .unwrap();
     let window = channel.sent().last().unwrap().1.clone();
-    assert_eq!(window.title, "rmux · agentix · 0 (codex:agentix)");
+    assert_eq!(window.title, "rmux · agentix · codex:agentix");
     assert!(window.body.contains("**0 · codex** · Codex"));
     assert!(window.body.contains("**1 · fish** · Active · Idle shell"));
     assert!(window.body.contains("**2 · cargo** · Busy"));
@@ -7220,10 +7245,10 @@ async fn multiplexer_creates_shell_then_selects_agent_for_exact_pane() {
         for (navigation, target) in [
             (vec!["+ Session"], "NewSession"),
             (vec!["agentix", "+ Window"], "NewWindow"),
-            (vec!["agentix", "0 · codex:agentix", "Split ↔"], "SplitPane"),
-            (vec!["agentix", "0 · codex:agentix", "Split ↕"], "SplitPane"),
+            (vec!["agentix", "codex:agentix", "Split ↔"], "SplitPane"),
+            (vec!["agentix", "codex:agentix", "Split ↕"], "SplitPane"),
             (
-                vec!["agentix", "0 · codex:agentix", "1 · Run agent"],
+                vec!["agentix", "codex:agentix", "1 · Run agent"],
                 "ExistingPane",
             ),
         ] {
