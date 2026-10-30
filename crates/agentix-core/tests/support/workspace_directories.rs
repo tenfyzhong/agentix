@@ -21,12 +21,13 @@ async fn fixture() -> (Engine, Arc<FakeAgent>, Arc<FakeChannel>) {
 }
 
 pub(super) async fn click(engine: &Engine, channel: &FakeChannel, label: &str) {
-    let view = channel.sent().last().unwrap().1.clone();
-    let token = view
-        .actions
+    let token = channel
+        .sent()
         .iter()
+        .rev()
+        .flat_map(|(_, view)| &view.actions)
         .find(|a| a.label == label)
-        .unwrap_or_else(|| panic!("missing {label}: {view:?}"))
+        .unwrap_or_else(|| panic!("missing {label}"))
         .token
         .clone();
     engine
@@ -513,7 +514,7 @@ async fn multiplexer_management_buttons_distinguish_existing_targets() {
             .handle_inbound(inbound("chat-a", &format!("/{kind}")))
             .await
             .unwrap();
-        for next in [Some("agentix"), Some("codex:agentix"), None] {
+        for next in [Some("agentix"), Some("Select"), None] {
             let view = channel.sent().last().unwrap().1.clone();
             for action in &view.actions {
                 let management = matches!(

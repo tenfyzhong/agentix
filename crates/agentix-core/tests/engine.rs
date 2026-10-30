@@ -2401,6 +2401,140 @@ async fn session_picker_disables_the_current_session_button_without_a_title_mark
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // Compare transport layouts and callback targets in the same scenario.
+async fn multiplexer_window_picker_pairs_details_with_each_select_button() {
+    for kind in [
+        ChannelKind::Telegram,
+        ChannelKind::Feishu,
+        ChannelKind::Slack,
+    ] {
+        let agent = Arc::new(FakeAgent::new());
+        agent.snapshot.lock().unwrap().sessions[0]
+            .windows
+            .push(MultiplexerWindow {
+                id: "@2".into(),
+                index: "1".into(),
+                name: "logs".into(),
+                panes: vec![MultiplexerPane {
+                    id: "%4".into(),
+                    index: "0".into(),
+                    active: true,
+                    current_command: "fish".into(),
+                    cwd: "/work/logs".into(),
+                    agent_session: None,
+                }],
+            });
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            ..FakeChannel::default()
+        });
+        let engine = Engine::new(
+            agent,
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        let conversation = ConversationRef::new(kind, "chat-a");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                conversation.clone(),
+                "owner",
+                "/attach thr_a",
+            ))
+            .await
+            .unwrap();
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "root",
+                conversation.clone(),
+                "owner",
+                "/rmux",
+            ))
+            .await
+            .unwrap();
+        let token = channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .actions
+            .iter()
+            .find(|a| a.label == "agentix")
+            .unwrap()
+            .token
+            .clone();
+        let before = channel.sent().len();
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "windows",
+                conversation.clone(),
+                "owner",
+                token,
+            ))
+            .await
+            .unwrap();
+        let sent = channel.sent();
+        let views = &sent[before..];
+        let second_token = if kind == ChannelKind::Telegram {
+            assert_eq!(
+                views.len(),
+                3,
+                "Each window has its own card, followed by management controls"
+            );
+            for (view, name) in views[..2].iter().zip(["codex:agentix", "logs"]) {
+                assert_eq!(view.1.title, name);
+                assert_eq!(view.1.actions.len(), 1);
+                assert_eq!(view.1.actions[0].label, "Select");
+            }
+            assert!(views[0].1.body.contains("3 panes"));
+            assert!(views[0].1.body.contains("/work/parser"));
+            assert!(views[0].1.body.contains("Attached"));
+            assert!(views[0].1.body.contains("Idle shell"));
+            assert!(views[1].1.body.contains("1 pane"));
+            assert_eq!(
+                views[2]
+                    .1
+                    .actions
+                    .iter()
+                    .map(|a| a.label.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["+ Window", "← Back"]
+            );
+            views[1].1.actions[0].token.clone()
+        } else {
+            assert_eq!(views.len(), 1);
+            let view = &views[0].1;
+            assert_eq!(view.sections.len(), 2);
+            for (index, name) in ["codex:agentix", "logs"].iter().enumerate() {
+                assert_eq!(&view.sections[index].title, name);
+                assert_eq!(
+                    view.sections[index].action_tokens,
+                    vec![view.actions[index].token.clone()]
+                );
+                assert_eq!(view.actions[index].label, "Select");
+            }
+            assert!(view.sections[0].body.contains("/work/parser"));
+            assert!(view.sections[0].body.contains("Attached"));
+            assert!(view.sections[1].body.contains("1 pane"));
+            view.actions[1].token.clone()
+        };
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "select-second",
+                conversation,
+                "owner",
+                second_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            channel.sent().last().unwrap().1.title,
+            "rmux · agentix · logs"
+        );
+    }
+}
+
+#[tokio::test]
 #[allow(clippy::too_many_lines)] // Keep navigation and callback ownership assertions together.
 async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
     let agent = Arc::new(FakeAgent::new());
@@ -2442,33 +2576,15 @@ async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
         ))
         .await
         .unwrap();
-    let session = channel.sent().last().unwrap().1.clone();
-    assert_eq!(session.title, "rmux · agentix");
-    assert_eq!(session.body, "Choose a window.");
-    assert_eq!(
-        session
-            .actions
-            .iter()
-            .filter(|a| a.label == "codex:agentix")
-            .count(),
-        1
-    );
-
-    assert_eq!(
-        session
-            .actions
-            .iter()
-            .map(|a| a.label.as_str())
-            .collect::<Vec<_>>(),
-        vec!["codex:agentix", "logs", "+ Window", "← Back"]
-    );
-    let window_token = session
-        .actions
-        .iter()
-        .find(|action| action.label == "codex:agentix")
-        .unwrap()
-        .token
-        .clone();
+    let sent = channel.sent();
+    let session = &sent[sent.len() - 3].1;
+    assert_eq!(session.title, "codex:agentix");
+    assert!(session.body.contains("3 panes"));
+    assert!(session.body.contains("/work/parser"));
+    assert_eq!(session.actions.len(), 1);
+    assert_eq!(session.actions[0].label, "Select");
+    assert_eq!(sent[sent.len() - 2].1.title, "logs");
+    let window_token = session.actions[0].token.clone();
     engine
         .handle_inbound(InboundEnvelope::action(
             "open-mux-window",
@@ -7245,12 +7361,9 @@ async fn multiplexer_creates_shell_then_selects_agent_for_exact_pane() {
         for (navigation, target) in [
             (vec!["+ Session"], "NewSession"),
             (vec!["agentix", "+ Window"], "NewWindow"),
-            (vec!["agentix", "codex:agentix", "Split ↔"], "SplitPane"),
-            (vec!["agentix", "codex:agentix", "Split ↕"], "SplitPane"),
-            (
-                vec!["agentix", "codex:agentix", "1 · Run agent"],
-                "ExistingPane",
-            ),
+            (vec!["agentix", "Select", "Split ↔"], "SplitPane"),
+            (vec!["agentix", "Select", "Split ↕"], "SplitPane"),
+            (vec!["agentix", "Select", "1 · Run agent"], "ExistingPane"),
         ] {
             for selected in [
                 AgentKind::Codex,
@@ -7298,12 +7411,13 @@ async fn check_pane_agent_choice(
         .await
         .unwrap();
     for (i, label) in navigation.iter().enumerate() {
-        let view = channel.sent().last().unwrap().1.clone();
-        let token = view
-            .actions
+        let token = channel
+            .sent()
             .iter()
+            .rev()
+            .flat_map(|(_, view)| &view.actions)
             .find(|a| a.label == *label)
-            .unwrap_or_else(|| panic!("missing {label}: {view:?}"))
+            .unwrap_or_else(|| panic!("missing {label}"))
             .token
             .clone();
         engine

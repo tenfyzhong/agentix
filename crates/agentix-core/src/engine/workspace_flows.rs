@@ -230,20 +230,77 @@ impl Engine {
             .ok_or_else(|| {
                 EngineError::InvalidInput("multiplexer session no longer exists".into())
             })?;
-        let actions = self
+        let current = self
+            .sessions
+            .bindings
+            .lock()
+            .await
+            .current_session(conversation)
+            .cloned();
+        let mut actions = self
             .multiplexer_session_actions(conversation, owner_id, &session)
             .await;
+        let mut sections = Vec::new();
+        for (window, action) in session.windows.iter().zip(&actions) {
+            let summary = format!(
+                "{} {}",
+                window.panes.len(),
+                plural(window.panes.len(), "pane", "panes")
+            );
+            let details =
+                multiplexer_window_body(window, current.as_ref(), self.agent.display_name());
+            let body = if details.is_empty() {
+                summary
+            } else {
+                format!("{summary}\n\n{details}")
+            };
+            if conversation.channel == crate::ChannelKind::Telegram {
+                self.send_view(
+                    conversation,
+                    &OutboundView {
+                        sections: Vec::new(),
+                        title: window.name.clone(),
+                        subtitle: Some(format!("{} · {}", self.multiplexer_kind, session.name)),
+                        body,
+                        status: ViewStatus::Info,
+                        actions: vec![action.clone()],
+                    },
+                )
+                .await?;
+            } else {
+                sections.push(agentix_domain::ViewSection {
+                    title: window.name.clone(),
+                    body,
+                    action_tokens: vec![action.token.clone()],
+                    ..agentix_domain::ViewSection::default()
+                });
+            }
+        }
+        let body = if conversation.channel == crate::ChannelKind::Telegram {
+            actions = actions.split_off(session.windows.len());
+            "Choose a window above, or create a new one.".into()
+        } else {
+            sections
+                .iter()
+                .map(|section| format!("**{}**\n{}", section.title, section.body))
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        };
         self.send_view(
             conversation,
             &OutboundView {
-                sections: Vec::new(),
+                sections,
                 title: format!("{} · {}", self.multiplexer_kind, session.name),
                 subtitle: Some(format!(
                     "{} {}",
                     session.windows.len(),
                     plural(session.windows.len(), "window", "windows")
                 )),
-                body: "Choose a window.".into(),
+                body: if session.windows.is_empty() {
+                    "No windows. Create a window to get started.".into()
+                } else {
+                    body
+                },
                 status: ViewStatus::Info,
                 actions,
             },
@@ -281,7 +338,7 @@ impl Engine {
                 .await;
             actions.push(ActionButton {
                 disabled: false,
-                label: window.name.clone(),
+                label: "Select".into(),
                 token,
                 style: ActionStyle::Default,
             });
