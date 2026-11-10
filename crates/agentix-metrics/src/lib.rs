@@ -74,11 +74,11 @@ macro_rules! operations {
 }
 operations! {
     Engine=>("engine","dispatch"), Control=>("control","dispatch"),
-    CodexRpc=>("codex","rpc"), PiRpc=>("pi","rpc"), OmpRpc=>("omp","rpc"), ClaudeRpc=>("claude","rpc"), OpencodeRpc=>("opencode","rpc"),
+    CodexRpc=>("codex","rpc"), PiRpc=>("pi","rpc"), OmpRpc=>("omp","rpc"), ClaudeRpc=>("claude","rpc"), OpencodeRpc=>("opencode","rpc"), AntigravityRpc=>("antigravity","rpc"),
     TelegramSend=>("telegram","send"), TelegramUpdate=>("telegram","update"),
     FeishuSend=>("feishu","send"), FeishuUpdate=>("feishu","update"), SlackSend=>("slack","send"), SlackUpdate=>("slack","update"),
-    CodexTurn=>("codex","turn"), PiTurn=>("pi","turn"), OmpTurn=>("omp","turn"), ClaudeTurn=>("claude","turn"), OpencodeTurn=>("opencode","turn"),
-    CodexFirstOutput=>("codex","first_output"), PiFirstOutput=>("pi","first_output"), OmpFirstOutput=>("omp","first_output"), ClaudeFirstOutput=>("claude","first_output"), OpencodeFirstOutput=>("opencode","first_output"),
+    CodexTurn=>("codex","turn"), PiTurn=>("pi","turn"), OmpTurn=>("omp","turn"), ClaudeTurn=>("claude","turn"), OpencodeTurn=>("opencode","turn"), AntigravityTurn=>("antigravity","turn"),
+    CodexFirstOutput=>("codex","first_output"), PiFirstOutput=>("pi","first_output"), OmpFirstOutput=>("omp","first_output"), ClaudeFirstOutput=>("claude","first_output"), OpencodeFirstOutput=>("opencode","first_output"), AntigravityFirstOutput=>("antigravity","first_output"),
     MemoryApi=>("memory","api"), MemoryQuery=>("memory","query"), MemoryDeep=>("memory","deep_query"), MemoryExtract=>("memory","extract"), MemoryConsolidate=>("memory","consolidate"), MemoryEmbedding=>("memory","embedding"), MemoryProjection=>("memory","projection"),
     ModelRequest=>("model","request"), EmbeddingRequest=>("embedding","request"), ProviderWait=>("provider","wait"),
     JevRouting=>("jev","routing"), JevDiscussion=>("jev","discussion"), JevRecovery=>("jev","recovery"), JevOutcome=>("jev","outcome"), JevReview=>("jev","review_policy"), JevCompletion=>("jev","completion"), JevTriage=>("jev","memory_triage")
@@ -91,6 +91,7 @@ impl Operation {
             "omp" | "oh-my-pi" => Self::OmpRpc,
             "claude" => Self::ClaudeRpc,
             "opencode" => Self::OpencodeRpc,
+            "antigravity" => Self::AntigravityRpc,
             _ => Self::CodexRpc,
         }
     }
@@ -101,6 +102,7 @@ impl Operation {
             "omp" | "oh-my-pi" => Self::OmpTurn,
             "claude" => Self::ClaudeTurn,
             "opencode" => Self::OpencodeTurn,
+            "antigravity" => Self::AntigravityTurn,
             _ => Self::CodexTurn,
         }
     }
@@ -111,6 +113,7 @@ impl Operation {
             "omp" | "oh-my-pi" => Self::OmpFirstOutput,
             "claude" => Self::ClaudeFirstOutput,
             "opencode" => Self::OpencodeFirstOutput,
+            "antigravity" => Self::AntigravityFirstOutput,
             _ => Self::CodexFirstOutput,
         }
     }
@@ -473,15 +476,17 @@ pub enum TokenSource {
     Omp,
     Claude,
     OpenCode,
+    Antigravity,
 }
 impl TokenSource {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Codex,
         Self::Memory,
         Self::Pi,
         Self::Omp,
         Self::Claude,
         Self::OpenCode,
+        Self::Antigravity,
     ];
     const fn name(self) -> &'static str {
         match self {
@@ -491,6 +496,7 @@ impl TokenSource {
             Self::Omp => "omp_bridge",
             Self::Claude => "claude_bridge",
             Self::OpenCode => "opencode_bridge",
+            Self::Antigravity => "antigravity_bridge",
         }
     }
 }
@@ -664,6 +670,20 @@ impl Drop for ConnectionGuard {
     fn drop(&mut self) {
         if let Some(gauge) = &self.0 {
             gauge.dec();
+        }
+    }
+}
+
+#[cfg(test)]
+mod antigravity_tests {
+    #[test]
+    fn antigravity_operations_do_not_fall_back_to_codex() {
+        for operation in [
+            super::Operation::rpc("antigravity"),
+            super::Operation::turn("antigravity"),
+            super::Operation::first_output("antigravity"),
+        ] {
+            assert_eq!(operation.labels().component, "antigravity");
         }
     }
 }

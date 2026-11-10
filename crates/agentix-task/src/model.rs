@@ -427,7 +427,7 @@ pub(crate) fn agent_name(executor: &str) -> Option<&str> {
         .split(':')
         .next()?;
     match name {
-        "codex" | "claude" | "pi" | "omp" | "opencode" => Some(name),
+        "codex" | "claude" | "pi" | "omp" | "opencode" | "antigravity" => Some(name),
         _ => None,
     }
 }
@@ -439,6 +439,17 @@ mod opencode_tests {
         assert_eq!(
             super::agent_name("agent:opencode:ses_native"),
             Some("opencode")
+        );
+    }
+}
+
+#[cfg(test)]
+mod antigravity_tests {
+    #[test]
+    fn antigravity_executor_projects_native_host_identity() {
+        assert_eq!(
+            super::agent_name("agent:antigravity:conversation"),
+            Some("antigravity")
         );
     }
 }

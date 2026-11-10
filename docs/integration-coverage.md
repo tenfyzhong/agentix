@@ -823,3 +823,54 @@ not establish live service quality or remote deployment.
 ## Rex multiplexer coverage
 
 The Rex adapter and Node bridge share the existing native control parsers through semantic terminal operations. Regression tests and opt-in local Rex fixtures are documented in [Rex multiplexer](rex-multiplexer.md#verification). These fixtures cover local session creation, splitting, Unicode snapshots, Codex draft protection and checkout selection, and Claude native paste. They do not establish live IM or real-agent acceptance on Rex.
+
+## Antigravity
+
+The agy 1.5.5 adapter has reusable tests for native identity, bounded transcript
+projection, hook-time turn attribution, invocations and idle Stop, prompt
+receipts, uncertain delivery/recovery, original socket acknowledgements across
+lazy `/new`, conditional draft clearing, model/effort menus, stale approval and
+question cards, Taskix routing/discussion/lease binding, native MCP shutdown,
+packaging, strict validation, installation rollback and unrelated-plugin
+preservation. Rust bridge and engine tests exercise the existing IM dispatch and
+handoff boundaries using the Antigravity backend. Telegram and Feishu mock API
+tests traverse the real channel/engine stack and native Antigravity hook fixture. Common channel tests remain
+responsible for Telegram, Feishu and Slack formatting/interaction transport.
+
+```sh
+node --test plugins/agentix-bridge/tests/antigravity*.test.mjs
+node --test plugins/taskix-manager/tests/antigravity*.test.mjs
+AGENTIX_TEST_ANTIGRAVITY_NATIVE=1 node --test plugins/agentix-bridge/tests/antigravity-native.test.mjs
+AGENTIX_TEST_ANTIGRAVITY_INSTALL=1 node --test plugins/taskix-manager/tests/antigravity-native-install.test.mjs
+AGENTIX_ANTIGRAVITY_PERFORMANCE=1 node --test plugins/agentix-bridge/tests/antigravity-performance.test.mjs
+AGENTIX_TEST_ANTIGRAVITY_TERMINAL=tmux node --test plugins/agentix-bridge/tests/antigravity-terminal-native.test.mjs
+```
+
+Native installation/headless tests use an isolated HOME and terminate before
+model inference. They validate installed plugin loading, original conversation
+registration and Taskix startup/shutdown. Terminal tests preserve the user's
+existing agy login and create disposable workspaces and mux sessions. Set the
+terminal to `rmux` or `rex` to exercise those adapters. Optional environment flags
+`AGENTIX_TEST_ANTIGRAVITY_APPROVAL=1`, `AGENTIX_TEST_ANTIGRAVITY_QUESTIONS=1`,
+`AGENTIX_TEST_ANTIGRAVITY_FILE=1` (creation) or `=edit`, and
+`AGENTIX_TEST_ANTIGRAVITY_NEW=1` exercise real model-backed interactions. These
+require authenticated agy and can incur normal provider usage. NEW requires
+APPROVAL or QUESTIONS. No global permission settings are changed.
+
+Local macOS native runs covered tmux command/file approvals and questions,
+rmux command approval plus lazy new-session identity, Rex single/multiple/write-in
+questions, and exact draft protection/clearing. Model/effort menu acceptance
+selected the current value; changing to a different model remains unverified.
+These component and protocol tests do not establish a live Telegram, Feishu or
+Slack account closed loop, Windows/Linux terminal acceptance, every possible
+native screen layout, or provider reliability.
+
+On the local development machine, an 11,897,780-byte synthetic transcript took
+29.9 ms for cold projection, 0.161 ms per unchanged read (1,000 reads), and
+19.6 ms per append/reprojection (20 appends). Measurements include local file
+metadata, parsing and cloning, but exclude terminal, model and network latency.
+RSS ranged from 156 to 317 MB for the whole benchmark process, including fixture
+construction; it is not the adapter's retained-memory footprint. The test reports
+measurements without machine-dependent timing assertions. The parser reads a
+16 MiB tail and returns at most 200 turns; metadata caching avoids unchanged
+content reads. These figures are a baseline, not a throughput guarantee.

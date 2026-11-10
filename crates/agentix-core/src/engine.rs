@@ -975,13 +975,14 @@ fn event_importance(event: &AgentEvent) -> EventImportance {
 
 fn parse_backend(kind: &str) -> Result<crate::AgentKind, EngineError> {
     match kind {
+        "antigravity" => Ok(crate::AgentKind::Antigravity),
         "claude" => Ok(crate::AgentKind::Claude),
         "opencode" => Ok(crate::AgentKind::OpenCode),
         "codex" => Ok(crate::AgentKind::Codex),
         "pi" => Ok(crate::AgentKind::Pi),
         "omp" | "oh-my-pi" => Ok(crate::AgentKind::Omp),
         _ => Err(EngineError::InvalidInput(
-            "Choose codex, pi, omp, or claude".into(),
+            "Choose codex, pi, omp, claude, opencode, or antigravity".into(),
         )),
     }
 }
@@ -1187,6 +1188,13 @@ mod architecture_tests {
         assert!(!views[0].body.contains("/history newer"));
     }
 
+    #[test]
+    fn antigravity_backend_can_be_selected() {
+        assert_eq!(
+            parse_backend("antigravity").unwrap(),
+            crate::AgentKind::Antigravity
+        );
+    }
     #[test]
     fn claude_backend_can_be_selected() {
         assert_eq!(parse_backend("claude").unwrap(), crate::AgentKind::Claude);

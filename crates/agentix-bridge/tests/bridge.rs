@@ -14,6 +14,94 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 const HOST_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 #[tokio::test]
+async fn antigravity_bridge_preserves_drafts_and_acknowledges_lazy_new_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = TestControl::bind(directory.path()).unwrap();
+    let adapter = BridgeAdapter::new(
+        BridgeKind::Antigravity,
+        server.hub.clone(),
+        directory.path(),
+    );
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../plugins/agentix-bridge/tests/antigravity-host.mjs");
+    let mut host = tokio::process::Command::new("node")
+        .arg(fixture)
+        .arg(&server.endpoint)
+        .arg(directory.path())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    tokio::time::timeout(
+        HOST_STARTUP_TIMEOUT,
+        BufReader::new(host.stdout.take().unwrap()).read_line(&mut line),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(line.trim(), "ready");
+    wait_for_session(&adapter).await;
+    let old = SessionId::new("native-antigravity");
+    adapter.attach(&old).await.unwrap();
+    assert_eq!(
+        adapter
+            .terminal_input(&old, false, None)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("fixture draft")
+    );
+    assert_eq!(
+        adapter
+            .terminal_input(&old, false, Some("stale"))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("fixture draft")
+    );
+    assert_eq!(
+        adapter
+            .terminal_input(&old, false, Some("fixture draft"))
+            .await
+            .unwrap(),
+        None
+    );
+    adapter
+        .session_control()
+        .unwrap()
+        .run_session_command(&old, agentix_domain::SessionCommand::New)
+        .await
+        .unwrap();
+    assert_eq!(
+        adapter.start_turn(&old, "first new input").await.unwrap(),
+        "replacement-antigravity:step:0"
+    );
+    let new = SessionId::new("replacement-antigravity");
+    tokio::time::timeout(HOST_STARTUP_TIMEOUT, async {
+        loop {
+            if adapter.attach(&new).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let history = adapter.read_history(&new, None, 20).await.unwrap();
+    assert_eq!(
+        history.turns[0].user_text.as_deref(),
+        Some("first new input")
+    );
+    assert_eq!(
+        history.turns[0].agent_text.as_deref(),
+        Some("Antigravity reply")
+    );
+    adapter.unsubscribe(&new).await.unwrap();
+    assert!(host.try_wait().unwrap().is_none());
+}
+
+#[tokio::test]
 async fn bridge_controls_original_host_and_detach_does_not_kill_it() {
     let directory = tempfile::tempdir().unwrap();
     let server = TestControl::bind(directory.path()).unwrap();

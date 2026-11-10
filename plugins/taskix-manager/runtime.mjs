@@ -88,7 +88,7 @@ async function prepareMeasuredPrompt(prompt, options, runner, routing, history =
             ready = true;
             if (routing.telemetry) routing.telemetry.project_id = context.project_id;
             if (event?.transcript_path) {
-                try { history = (await transcriptConversation(event.transcript_path, { maxBytes: 256 * 1024, recentTurns: 8, signal })).messages; }
+                try { history = (await transcriptConversation(event.transcript_path, { maxBytes: 256 * 1024, recentTurns: 8, signal, sessionId: options.session })).messages; }
                 catch { return deferPrompt(context, { decision: { reason: "history_unavailable" } }, routing); }
             }
             signal.throwIfAborted();
@@ -400,7 +400,7 @@ export function registerExtension(
             }
             if (params.args[0] === "conversation" && params.args[1] === "classify") {
                 const target = JSON.parse(params.args[2]);
-                const result = await selectDiscussion({target,current_turn:stateFor(ctx)?.turn},options,runner,routing);
+                const result = await selectDiscussion({target,current_turn:stateFor(ctx)?.turn ?? ctx.turnId},options,runner,routing);
                 return {content:[{type:"text",text:JSON.stringify(result)}],details:result};
             }
             const context = await runner(["context"], options);

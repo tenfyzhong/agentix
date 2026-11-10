@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NativeSessionControl } from '../new-session.mjs';
 
-for (const kind of ['omp', 'claude']) {
+for (const kind of ['omp', 'claude', 'antigravity']) {
     test(`${kind}: native new validates pane, stops and submits only its fixed command`, async () => {
         const calls = []; let busy = true;
-        const terminal = { pane: '%1', inspect: async () => ['1', kind, '0', '0', '0', '0'], foreground: async () => {},
+        const terminal = { pane: '%1', inspect: async () => ['1', kind === 'antigravity' ? 'agy' : kind, '0', '0', '0', '0'], foreground: async () => {},
             sendKey: async key => calls.push(["key", key]), sendText: async text => calls.push(["text", text]) };
         const control = new NativeSessionControl(kind, { resolve: async () => terminal, ready: async () => assert.equal(busy, false),
             stop: async () => { calls.push(['stop']); busy = false; } });
@@ -17,13 +17,13 @@ for (const kind of ['omp', 'claude']) {
     });
 }
 
-for (const kind of ['omp', 'claude']) {
+for (const kind of ['omp', 'claude', 'antigravity']) {
     for (const scenario of ['copy mode', 'dead pane', 'draft', 'foreground changed']) {
         test(`${kind}: native new rejects ${scenario} without submitting input`, async () => {
             const calls = [];
             const terminal = {
                 pane: '%1',
-                inspect: async () => ['1', kind, '0', '0', scenario === 'copy mode' ? '1' : '0', scenario === 'dead pane' ? '1' : '0'],
+                inspect: async () => ['1', kind === 'antigravity' ? 'agy' : kind, '0', '0', scenario === 'copy mode' ? '1' : '0', scenario === 'dead pane' ? '1' : '0'],
                 foreground: async () => { if (scenario === 'foreground changed') throw new Error('foreground changed'); },
                 sendKey: async key => calls.push(["key", key]), sendText: async text => calls.push(["text", text]),
             };
@@ -38,7 +38,7 @@ for (const kind of ['omp', 'claude']) {
     test(`${kind}: native new rechecks foreground before pressing Enter`, async () => {
         const calls = []; let foregroundChecks = 0;
         const terminal = {
-            pane: '%1', inspect: async () => ['1', kind, '0', '0', '0', '0'],
+            pane: '%1', inspect: async () => ['1', kind === 'antigravity' ? 'agy' : kind, '0', '0', '0', '0'],
             foreground: async () => { if (++foregroundChecks === 3) throw new Error('agent exited'); },
             sendKey: async key => calls.push(["key", key]), sendText: async text => calls.push(["text", text]),
         };

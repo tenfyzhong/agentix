@@ -7,17 +7,19 @@ import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
-const hosts = ["codex", "pi", "omp", "claude", "opencode"];
+const hosts = ["codex", "pi", "omp", "claude", "opencode", "antigravity"];
 const branch = "feature/plugin-test";
-const cleanupHosts = hosts.filter(host => host !== "opencode");
+const cleanupHosts = hosts.filter(host => !["opencode", "antigravity"].includes(host));
 const removals = {
     codex: ["codex plugin remove taskix-manager@agentix", "codex plugin marketplace remove agentix"],
     pi: ["pi remove .", "pi remove git:github.com/tenfyzhong/agentix", "pi remove git:github.com/tenfyzhong/agentix@main", `pi remove git:github.com/tenfyzhong/agentix@${branch}`],
     omp: ["omp plugin uninstall agentix-plugins", "omp plugin uninstall taskix-manager@agentix", "omp plugin uninstall agentix-bridge@agentix", "omp plugin marketplace remove agentix", "node scripts/omp-plugin.mjs remove"],
     claude: ["claude plugin uninstall taskix-manager@agentix", "claude plugin uninstall agentix-bridge@agentix", "claude plugin marketplace remove agentix"],
     opencode: ["node scripts/opencode-plugin.mjs remove"],
+    antigravity: ["node scripts/antigravity-plugin.mjs remove"],
 };
 function installs(host) {
+    if (host === "antigravity") return [`node scripts/antigravity-plugin.mjs install ${branch}`];
     if (host === "opencode") return [`node scripts/opencode-plugin.mjs install --remote ${branch}`];
     if (host === "omp") return [`node scripts/omp-plugin.mjs install ${branch}`];
     if (host === "pi") return [`pi install git:github.com/tenfyzhong/agentix@${branch}`];
@@ -34,7 +36,7 @@ async function fixture(t) {
     t.after(() => rm(directory, { recursive: true, force: true }));
     const bin = join(directory, "bin");
     await mkdir(bin);
-    for (const command of ["cargo", "cp", "rm", "taskix", "codex", "claude", "pi", "omp", "opencode", "node", "git"]) {
+    for (const command of ["cargo", "cp", "rm", "taskix", "codex", "claude", "pi", "omp", "opencode", "agy", "node", "git"]) {
         const path = join(bin, command);
         await writeFile(path, `#!/bin/sh
 if [ "${command}" = "git" ]; then
@@ -44,9 +46,9 @@ if [ "${command}" = "git" ]; then
     esac
 fi
 echo "${command} $*" >> "$INSTALL_FIXTURE_DIR/calls"
-if [ "${command}" = "$INSTALL_FAIL_HOST" ] || { [ "${command}" = "node" ] && [ "$INSTALL_FAIL_HOST" = "opencode" -o "$INSTALL_FAIL_HOST" = "omp" ]; }; then
+if [ "${command}" = "$INSTALL_FAIL_HOST" ] || { [ "${command}" = "node" ] && [ "$INSTALL_FAIL_HOST" = "opencode" -o "$INSTALL_FAIL_HOST" = "omp" -o "$INSTALL_FAIL_HOST" = "antigravity" ]; }; then
     case "$*" in
-        "plugin add "*|"plugin install "*|"install "*|"scripts/opencode-plugin.mjs install "*|"scripts/omp-plugin.mjs install "*) [ "$INSTALL_FAIL" != "install" ] || exit 8 ;;
+        "plugin add "*|"plugin install "*|"install "*|"scripts/opencode-plugin.mjs install "*|"scripts/omp-plugin.mjs install "*|"scripts/antigravity-plugin.mjs install "*) [ "$INSTALL_FAIL" != "install" ] || exit 8 ;;
         "plugin remove "*|"plugin uninstall "*|"remove "*) [ "$INSTALL_FAIL" != "remove" ] || exit 7 ;;
     esac
 fi
@@ -65,7 +67,7 @@ exit 0
 }
 
 
-test("remove_plugin_cleans_all_five_hosts", { skip: process.platform === "win32" }, async t => {
+test("remove_plugin_cleans_all_six_hosts", { skip: process.platform === "win32" }, async t => {
     const f = await fixture(t);
     assert.equal(f.run("remove-plugin").status, 0);
     assert.deepEqual(await f.calls(), hosts.flatMap(host => removals[host]));
@@ -89,7 +91,7 @@ for (const host of hosts) {
         const args = ["plugin", `HOSTS=${host}`];
         assert.equal(f.run(args, "remove", host).status, 0);
         assert.deepEqual(await f.calls(), [
-            ...(host === "opencode" ? [] : removals[host]), ...installs(host),
+            ...(["opencode", "antigravity"].includes(host) ? [] : removals[host]), ...installs(host),
         ]);
         assert.notEqual(f.run(args, "install", host).status, 0);
     });

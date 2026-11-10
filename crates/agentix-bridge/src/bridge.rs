@@ -39,6 +39,7 @@ impl BridgeUsage {
             "omp" => Some(TokenSource::Omp),
             "claude" => Some(TokenSource::Claude),
             "opencode" => Some(TokenSource::OpenCode),
+            "antigravity" => Some(TokenSource::Antigravity),
             _ => None,
         };
         Self {
@@ -366,6 +367,7 @@ impl AgentAdapter for BridgeAdapter {
         match self.flavor {
             BridgeKind::Claude => "Claude Code",
             BridgeKind::OpenCode => "OpenCode",
+            BridgeKind::Antigravity => "Antigravity",
             BridgeKind::Codex => "Codex",
             BridgeKind::Pi => "Pi",
             BridgeKind::Omp => "OMP",
@@ -395,7 +397,7 @@ impl AgentAdapter for BridgeAdapter {
         clear: Option<&str>,
     ) -> Result<Option<String>, AgentError> {
         let connection = self.connection(session).await?;
-        if connection.agent != "claude" {
+        if !matches!(connection.agent.as_str(), "claude" | "antigravity") {
             return Ok(None);
         }
         let result = connection
@@ -978,6 +980,21 @@ mod connection_tests {
 #[cfg(test)]
 mod usage_tests {
     use super::*;
+    #[test]
+    fn antigravity_usage_uses_its_own_metric_source() {
+        let metrics = agentix_metrics::Metrics::new(agentix_metrics::Service::Agentix, "test");
+        let mut usage = BridgeUsage::new("antigravity", None);
+        usage.record(
+            &metrics,
+            Some(&serde_json::from_value(json!({"input":12,"cached":3,"output":4})).unwrap()),
+        );
+        assert!(
+            metrics
+                .encode()
+                .unwrap()
+                .contains("source=\"antigravity_bridge\",kind=\"input\"} 12")
+        );
+    }
     #[test]
     fn wire_usage_is_optional_and_reconnect_snapshot_is_not_counted() {
         let metrics = agentix_metrics::Metrics::new(agentix_metrics::Service::Agentix, "test");

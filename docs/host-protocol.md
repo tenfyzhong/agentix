@@ -278,3 +278,29 @@ owned leases or dispatcher work are not evicted to meet the inactive-session LRU
 limit. Failed activation can retry with the same native identity. Plugin cleanup
 preserves active source/context for native continuation while releasing timers;
 it does not synthesize a completed assistant reply.
+
+## Antigravity
+
+`antigravity` uses native agy 1.5.5 `SessionStart`, `PreInvocation`,
+`PostInvocation` and `Stop` hooks plus an MCP sidecar in the original CLI process.
+The sidecar advertises no model tools. `conversationId` is the native session ID;
+`client_id` includes the parent process start time, not just its PID. Native
+`USER_INPUT` steps have stable turn IDs `<conversationId>:step:<step_index>`;
+multiple model invocations belong to the same user turn. Only a fully idle Stop
+settles it. User cancellation is interrupted; invocation/token limits fail.
+
+The bridge uses protocol v2 registration, event sequence, snapshot/history,
+terminal_input, native command, interaction and prompt receipt contracts. The
+original socket remains available long enough to acknowledge a pending prompt
+across native `/new`. Unlike eager-ID hosts, `/new` is ready before agy allocates
+the replacement identity: the first input must reach the original terminal
+before the normal SessionSwitchStarted/SessionReplaced handoff can complete.
+Uncertain prompts survive restart and require explicit recovery without replay.
+There is no automatic prompt FIFO.
+
+Terminal adapters revalidate foreground process, composer, choice menus and
+approval/question cards before sending keys. A draft clear is conditional on an
+exact matching single-line input. Unknown layouts fail closed. Native file and
+command permissions remain host decisions. The Taskix sidecar is independently
+packaged, preserves the common tool authorization rules, and releases its
+session on MCP EOF. See [setup and boundaries](antigravity.md).

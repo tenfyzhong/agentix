@@ -21,7 +21,7 @@ export async function stageTranscript(event, runner, options, directory = join(t
     try { receipt = JSON.parse(await readFile(path,"utf8")); } catch {}
     const initial = event.hook_event_name === "PreToolUse";
     if (initial && event.turn_id && receipt?.turn === event.turn_id && receipt.expires > Date.now()) return;
-    const capture = await transcriptConversation(event.transcript_path,{currentOnly:true});
+    const capture = await transcriptConversation(event.transcript_path,{currentOnly:true,sessionId:options.session});
     if (!capture.turn_id || !capture.messages.length) return;
     if (initial && receipt?.turn === capture.turn_id && receipt.expires > Date.now()) return;
     await recordMessages(capture.messages,runner,options,undefined,{turn_id:capture.turn_id,source:"transcript"});

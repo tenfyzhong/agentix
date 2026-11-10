@@ -95,3 +95,9 @@ test('decision panels distinguish provider and protocol using neutral metrics', 
   assert.ok(keep.test('taskix_decision_duration_seconds_bucket'));
   assert.ok(keep.test('taskix_jev_duration_seconds_bucket'));
 });
+
+test('agent_operation_panels_include_antigravity', () => {
+  const panels = dashboards[0].panels.filter(panel => panel.targets?.some(target => target.expr?.includes('component=~"codex|')));
+  assert.ok(panels.length > 0);
+  for (const panel of panels) assert.ok(panel.targets.every(target => target.expr.includes('|antigravity|')));
+});

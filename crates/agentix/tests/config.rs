@@ -376,7 +376,8 @@ owner_user_ids = [42]
                 session_dir,
                 ..
             } => (command, session_dir),
-            AgentConfig::Codex { .. }
+            AgentConfig::Antigravity { .. }
+            | AgentConfig::Codex { .. }
             | AgentConfig::Claude { .. }
             | AgentConfig::OpenCode { .. } => {
                 panic!("expected a Pi-compatible configuration")

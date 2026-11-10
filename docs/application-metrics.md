@@ -183,7 +183,7 @@ that window is outside the live-event coverage contract.
 
 The three Agent input/output/cached tokens-per-second panels group all five hosts
 by `source` and `instance`; sources are `codex_app_server`, `pi_bridge`,
-`omp_bridge`, `claude_bridge`, and `opencode_bridge`. Memory remains separate.
+`omp_bridge`, `claude_bridge`, `opencode_bridge`, and `antigravity_bridge`. Memory remains separate.
 Only fields present in native usage are recorded; missing values are not zero.
 Input/output preserve each host's native semantics. Codex cached input is a subset
 of its input; other hosts may report cache reads separately from uncached input.
@@ -227,7 +227,9 @@ collector health/error metrics are uploaded. Reads still consume some database
 I/O and CPU; the mechanism does not promise zero overhead.
 
 The finite full operation space plus snapshot/queue/event/token allowance stays
-under 2,000 application series per installation. Build changes create historical
+under 2,200 application series per installation with six agent backends.
+The finite-operation test measures 1,636 operation series and reserves another
+450 for snapshots, queues, events and tokens. Build changes create historical
 version series; multiple installations multiply the budget. Existing OTLP series
 are separate from this budget.
 

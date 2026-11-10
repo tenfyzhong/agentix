@@ -16,6 +16,60 @@ use tempfile::tempdir;
 use tokio::sync::broadcast;
 
 #[tokio::test]
+async fn antigravity_new_waits_for_first_input_before_starting_handoff() {
+    use agentix_core::{AgentKind, AgentRegistry};
+    let agent = Arc::new(FakeAgent::new());
+    let registry = AgentRegistry::new(vec![(AgentKind::Antigravity, agent.clone())]).unwrap();
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        Arc::new(registry),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach antigravity:thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    assert!(
+        state.session_switch(&chat).await.unwrap().is_none(),
+        "agy allocates its new identity only after input; do not queue that input awaiting an identity"
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "first new input"))
+        .await
+        .unwrap();
+    assert!(
+        agent
+            .calls()
+            .contains(&"start:thr_a:first new input".to_owned())
+    );
+    engine
+        .handle_agent_event(AgentEvent::SessionSwitchStarted {
+            session_id: "antigravity:thr_a".into(),
+            client_id: "host".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionReplaced {
+            session_id: "antigravity:thr_a".into(),
+            replacement_session_id: "antigravity:thr_b".into(),
+            client_id: "host".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("antigravity:thr_b"))
+    );
+}
+
+#[tokio::test]
 async fn native_terminal_interaction_can_be_cancelled_without_a_session_switch() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());

@@ -30,7 +30,16 @@ _agentix() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:agentix-command-$line[1]:"
         case $line[1] in
-            (launch-open-code)
+            (launch-antigravity)
+_arguments "${_arguments_options[@]}" : \
+'--command=[]:COMMAND:_files' \
+'--state-dir=[]:STATE_DIR:_files' \
+'--endpoint=[]:ENDPOINT:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(launch-open-code)
 _arguments "${_arguments_options[@]}" : \
 '--command=[]:COMMAND:_files' \
 '--state-dir=[]:STATE_DIR:_files' \
@@ -207,7 +216,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:agentix-help-command-$line[1]:"
         case $line[1] in
-            (launch-open-code)
+            (launch-antigravity)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(launch-open-code)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -287,6 +300,7 @@ esac
 (( $+functions[_agentix_commands] )) ||
 _agentix_commands() {
     local commands; commands=(
+'launch-antigravity:' \
 'launch-open-code:' \
 'serve:Run the Agentix bridge until interrupted' \
 'reload:Reload the running server configuration without restarting the process' \
@@ -413,6 +427,7 @@ _agentix__subcmd__doctor_commands() {
 (( $+functions[_agentix__subcmd__help_commands] )) ||
 _agentix__subcmd__help_commands() {
     local commands; commands=(
+'launch-antigravity:' \
 'launch-open-code:' \
 'serve:Run the Agentix bridge until interrupted' \
 'reload:Reload the running server configuration without restarting the process' \
@@ -486,6 +501,11 @@ _agentix__subcmd__help__subcmd__help_commands() {
     local commands; commands=()
     _describe -t commands 'agentix help help commands' commands "$@"
 }
+(( $+functions[_agentix__subcmd__help__subcmd__launch-antigravity_commands] )) ||
+_agentix__subcmd__help__subcmd__launch-antigravity_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help launch-antigravity commands' commands "$@"
+}
 (( $+functions[_agentix__subcmd__help__subcmd__launch-open-code_commands] )) ||
 _agentix__subcmd__help__subcmd__launch-open-code_commands() {
     local commands; commands=()
@@ -500,6 +520,11 @@ _agentix__subcmd__help__subcmd__reload_commands() {
 _agentix__subcmd__help__subcmd__serve_commands() {
     local commands; commands=()
     _describe -t commands 'agentix help serve commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__launch-antigravity_commands] )) ||
+_agentix__subcmd__launch-antigravity_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix launch-antigravity commands' commands "$@"
 }
 (( $+functions[_agentix__subcmd__launch-open-code_commands] )) ||
 _agentix__subcmd__launch-open-code_commands() {

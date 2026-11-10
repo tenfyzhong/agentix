@@ -85,7 +85,33 @@ function parsed(value) {
 
 function turnMessages(rows, turn) {
     const questions = new Map();
+    let nativeQuestions = [];
     return rows.reverse().flatMap(row => {
+        if (row.antigravity) {
+            const step = row.antigravity, messages = [];
+            if (step.type === "PLANNER_RESPONSE") {
+                nativeQuestions = [];
+                if (typeof step.content === "string" && step.content.trim()) messages.push({ id: row.uuid, role: "assistant", text: step.content });
+                for (const tool of Array.isArray(step.tool_calls) ? step.tool_calls : []) {
+                    if (tool.name !== "ask_question") continue;
+                    const list = parsed(tool.args?.questions);
+                    if (!Array.isArray(list)) continue;
+                    nativeQuestions = list.filter(question => typeof question.question === "string");
+                    for (const [index, question] of nativeQuestions.entries()) {
+                        const options = (Array.isArray(question.options) ? question.options : []).filter(value => typeof value === "string");
+                        messages.push({ id: `${row.uuid}:question:${index}`, role: "assistant",
+                            text: question.question + (options.length ? "\n\n" + options.map(value => `- ${value}`).join("\n") : "") });
+                    }
+                }
+            } else if (step.type === "GENERIC" && typeof step.content === "string" && nativeQuestions.length) {
+                for (const match of step.content.matchAll(/(?:^|\n)A(\d+): ([\s\S]*?)(?=\nA\d+: |$)/g)) {
+                    const index = Number(match[1]) - 1, question = nativeQuestions[index];
+                    if (question && match[2].trim()) messages.push({ id: `${row.uuid}:answer:${index}`, role: "user", text: `${question.question}\n${match[2].trim()}` });
+                }
+                nativeQuestions = [];
+            }
+            return messages;
+        }
         const item = row.type === "response_item" ? row.payload : undefined;
         if (item?.type === "function_call" && item.name === "request_user_input" && item.call_id) {
             const list = parsed(item.arguments)?.questions;
@@ -122,6 +148,7 @@ function turnMessages(rows, turn) {
 
 export async function transcriptConversation(path, options) {
     let rows = [], current, planning = [], mode, turn = "", currentTurn;
+    const nativeSteps = new Set();
     let needsTurn = false, foundUser = false, recovering = false;
     const recentLimit = !options?.currentOnly && Number.isInteger(options?.recentTurns)
         ? Math.min(8, Math.max(1, options.recentTurns)) : 0;
@@ -130,8 +157,21 @@ export async function transcriptConversation(path, options) {
     try {
         for await (const line of reverseLines(path, options)) {
             if (!line.trim()) continue;
-            const row = parsed(line);
+            let row = parsed(line);
             if (!row) continue;
+            if (Number.isSafeInteger(row.step_index) && row.step_index >= 0) {
+                if (nativeSteps.has(row.step_index)) continue;
+                nativeSteps.add(row.step_index);
+                const user = row.type === "USER_INPUT" && row.source === "USER_EXPLICIT";
+                const assistant = ["PLANNER_RESPONSE", "GENERIC"].includes(row.type) && row.source === "MODEL";
+                if (!user && !assistant) continue;
+                const id = `${options?.sessionId ?? "antigravity"}:step:${row.step_index}`;
+                if (user) {
+                    if (typeof row.content !== "string") continue;
+                    turn = id;
+                    row = { uuid: id, message: { role: "user", content: row.content } };
+                } else row = { uuid: id, antigravity: row };
+            }
             if (row.type === "turn_context") {
                 mode = row.payload?.collaboration_mode?.mode;
                 // Never traverse an older execution turn to recover a plan.

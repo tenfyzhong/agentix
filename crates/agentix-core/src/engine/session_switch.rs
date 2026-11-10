@@ -127,6 +127,27 @@ impl Engine {
         {
             return Ok(());
         }
+        // agy allocates the new conversation identity on the first user input.
+        // Its bridge retains the old registration until that input is acknowledged.
+        // Starting the generic handoff queue here would prevent that input reaching agy.
+        if retry.is_none()
+            && agentix_domain::SessionKey::decode(session)
+                .is_some_and(|key| key.agent == agentix_domain::AgentKind::Antigravity)
+        {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                self.operations.command(session, SessionCommand::New),
+            )
+            .await
+            .map_err(|_| {
+                EngineError::InvalidInput(
+                    "New session request timed out; inspect the terminal before retrying.".into(),
+                )
+            })??;
+            self.send_view(conversation, &OutboundView::text(result.title, result.body))
+                .await?;
+            return Ok(());
+        }
         if let Some(mut switch) = retry {
             switch.paused = None;
             switch.deadline = u64::try_from(notification_now()).unwrap_or_default() + 30;

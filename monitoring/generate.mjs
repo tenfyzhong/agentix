@@ -42,7 +42,7 @@ const specs = [
     panel('Dispatch rejections', rate('agentix_events_total', 'event="rejected"', 'instance,component'), 'ops'),
   ]],
   ['agents', 'Agents and dispatch', [
-    ...operationPanels('agentix', 'component=~"codex|pi|omp|claude|opencode|engine|control"'),
+    ...operationPanels('agentix', 'component=~"codex|pi|omp|claude|opencode|antigravity|engine|control"'),
     panel('Live backend connections', select('agentix_backend_connections')),
     panel('First output p95', quantile('agentix', 'operation="first_output"', 0.95), 's', 'Measured once per observed turn. No per-fragment histogram updates.'),
     panel('First output p99', quantile('agentix', 'operation="first_output"', 0.99), 's', 'Measured once per observed turn. No per-fragment histogram updates.'),

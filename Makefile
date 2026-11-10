@@ -8,8 +8,9 @@ PI ?= pi
 OMP ?= omp
 CLAUDE ?= claude
 OPENCODE ?= opencode
+AGY ?= agy
 NODE ?= node
-HOSTS ?= codex pi omp claude opencode
+HOSTS ?= codex pi omp claude opencode antigravity
 VERSION ?= stable
 FORMULAE ?= agentix taskix
 override PLUGIN_BRANCH := $(shell git symbolic-ref --quiet --short HEAD)
@@ -138,6 +139,7 @@ define check-plugin-hosts
 			omp) command -v "$(NODE)" >/dev/null && command -v "$(OMP)" >/dev/null ;; \
 			claude) command -v "$(CLAUDE)" >/dev/null ;; \
 			opencode) command -v "$(OPENCODE)" >/dev/null && command -v "$(NODE)" >/dev/null ;; \
+			antigravity) command -v "$(AGY)" >/dev/null && command -v "$(NODE)" >/dev/null ;; \
 			*) echo "Unknown plugin host: $$host" >&2; exit 2 ;; \
 		esac || { echo "Missing $$host CLI; install it or adjust HOSTS" >&2; exit 1; }; \
 	done
@@ -149,6 +151,7 @@ remove-plugin:
 	for host in $(HOSTS); do \
 		case "$$host" in \
 			opencode) $(NODE) scripts/opencode-plugin.mjs remove ;; \
+			antigravity) AGY="$(AGY)" $(NODE) scripts/antigravity-plugin.mjs remove ;; \
 			codex) \
 				$(CODEX) plugin remove taskix-manager@agentix || true; \
 				$(CODEX) plugin marketplace remove agentix || true ;; \
@@ -175,11 +178,12 @@ plugin:
 	@test -n "$$PLUGIN_BRANCH" || { echo 'Plugin installation requires a checked-out Git branch' >&2; exit 2; }
 	@git ls-remote --exit-code --heads https://github.com/tenfyzhong/agentix.git "refs/heads/$$PLUGIN_BRANCH" >/dev/null || { echo 'Current branch is unavailable on the plugin remote' >&2; exit 2; }
 	$(check-plugin-hosts)
-	$(if $(filter-out opencode,$(HOSTS)),$(MAKE) remove-plugin HOSTS="$(filter-out opencode,$(HOSTS))",@:)
+	$(if $(filter-out opencode antigravity,$(HOSTS)),$(MAKE) remove-plugin HOSTS="$(filter-out opencode antigravity,$(HOSTS))",@:)
 	@set -eu; \
 	for host in $(HOSTS); do \
 		case "$$host" in \
 			opencode) $(NODE) scripts/opencode-plugin.mjs install --remote "$$PLUGIN_BRANCH" ;; \
+			antigravity) AGY="$(AGY)" $(NODE) scripts/antigravity-plugin.mjs install "$$PLUGIN_BRANCH" ;; \
 			codex) \
 				$(CODEX) plugin marketplace add tenfyzhong/agentix --ref "$$PLUGIN_BRANCH"; \
 				$(CODEX) plugin add taskix-manager@agentix ;; \
@@ -210,7 +214,8 @@ help:
 		'  PROFILE=release|debug (default: release), CARGO_TARGET_DIR selects build output' \
 		'  FORMULAE=agentix or FORMULAE=taskix selects one CLI (default: both)' \
 		'make plugin         Install remote plugins from the current Git branch for all five hosts' \
-		'  HOSTS="codex pi omp claude opencode" selects plugin hosts (default: all five)' \
+		'  HOSTS="codex pi omp claude opencode antigravity" selects plugin hosts (default: all six)' \
+		'  HOSTS=antigravity selects the native agy Taskix and Agentix plugins' \
 		'  HOSTS=opencode selects only the OpenCode 2.0.32+ server and TUI plugins' \
 		'make remove-plugin  Remove Agentix plugins for selected hosts' \
 		'make clean    Remove Cargo build artifacts'

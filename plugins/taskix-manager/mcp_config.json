@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "taskix": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/antigravity/server.mjs"]
+    }
+  }
+}

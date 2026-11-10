@@ -50,10 +50,10 @@ impl TryFrom<ConfigFile> for Config {
                 for (name, value) in backends {
                     if !matches!(
                         name.as_str(),
-                        "codex" | "pi" | "omp" | "claude" | "opencode"
+                        "codex" | "pi" | "omp" | "claude" | "opencode" | "antigravity"
                     ) {
                         bail!(
-                            "unknown agent backend '{name}'; expected codex, pi, omp, claude, or opencode"
+                            "unknown agent backend '{name}'; expected codex, pi, omp, claude, opencode, or antigravity"
                         );
                     }
                     let toml::Value::Table(mut fields) = value else {

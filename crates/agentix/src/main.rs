@@ -66,6 +66,15 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum CliCommand {
     #[command(hide = true)]
+    LaunchAntigravity {
+        #[arg(long)]
+        command: PathBuf,
+        #[arg(long)]
+        state_dir: PathBuf,
+        #[arg(long)]
+        endpoint: String,
+    },
+    #[command(hide = true)]
     LaunchOpenCode {
         #[arg(long)]
         command: PathBuf,
@@ -146,6 +155,14 @@ enum ClientCommand {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let CliCommand::LaunchAntigravity {
+        command,
+        state_dir,
+        endpoint,
+    } = &cli.command
+    {
+        return launch_antigravity(command, state_dir, endpoint);
+    }
     if let CliCommand::LaunchOpenCode {
         command,
         state_dir,
@@ -210,7 +227,8 @@ async fn run(cli: Cli) -> Result<()> {
         CliCommand::Client { command } => client(&config.server.endpoint, command).await,
         CliCommand::Completions { .. }
         | CliCommand::Reload { .. }
-        | CliCommand::LaunchOpenCode { .. } => {
+        | CliCommand::LaunchOpenCode { .. }
+        | CliCommand::LaunchAntigravity { .. } => {
             unreachable!("completions and reload are handled before runtime initialization")
         }
     }
@@ -717,19 +735,6 @@ async fn doctor(config: &Config) -> Result<()> {
                 )
                 .await?;
             }
-            AgentConfig::Claude {
-                command,
-                session_dir,
-                ..
-            } => {
-                doctor_pi(
-                    BridgeKind::Claude,
-                    command,
-                    session_dir,
-                    &config.server.endpoint,
-                )
-                .await?;
-            }
             AgentConfig::Codex {
                 endpoint,
                 proxy_endpoint: _,
@@ -755,27 +760,23 @@ async fn doctor(config: &Config) -> Result<()> {
                 command,
                 session_dir,
                 ..
-            } => {
-                doctor_pi(
-                    BridgeKind::Pi,
-                    command,
-                    session_dir,
-                    &config.server.endpoint,
-                )
-                .await?;
             }
-            AgentConfig::OhMyPi {
+            | AgentConfig::OhMyPi {
+                command,
+                session_dir,
+                ..
+            }
+            | AgentConfig::Claude {
+                command,
+                session_dir,
+                ..
+            }
+            | AgentConfig::Antigravity {
                 command,
                 session_dir,
                 ..
             } => {
-                doctor_pi(
-                    BridgeKind::Omp,
-                    command,
-                    session_dir,
-                    &config.server.endpoint,
-                )
-                .await?;
+                doctor_pi(agent.kind(), command, session_dir, &config.server.endpoint).await?;
             }
         }
     }
@@ -811,6 +812,44 @@ fn opencode_workspace_args(command: &Path, state_dir: &Path, endpoint: &str) -> 
         "--endpoint".into(),
         endpoint.into(),
     ]
+}
+
+fn antigravity_workspace_args(command: &Path, state_dir: &Path, endpoint: &str) -> Vec<String> {
+    vec![
+        "launch-antigravity".into(),
+        "--command".into(),
+        command.to_string_lossy().into_owned(),
+        "--state-dir".into(),
+        state_dir.to_string_lossy().into_owned(),
+        "--endpoint".into(),
+        endpoint.into(),
+    ]
+}
+
+fn antigravity_launch_command(
+    command: &Path,
+    state_dir: &Path,
+    endpoint: &str,
+) -> std::process::Command {
+    let mut child = std::process::Command::new(command);
+    child
+        .env("AGENTIX_ANTIGRAVITY_DATA_DIR", state_dir)
+        .env("AGENTIX_CONTROL_ENDPOINT", endpoint);
+    child
+}
+
+fn launch_antigravity(command: &Path, state_dir: &Path, endpoint: &str) -> Result<()> {
+    let mut child = antigravity_launch_command(command, state_dir, endpoint);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        Err(child.exec()).context("cannot launch Antigravity")
+    }
+    #[cfg(not(unix))]
+    {
+        let status = child.status().context("cannot launch Antigravity")?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
 }
 
 fn opencode_command(command: &Path) -> std::process::Command {
@@ -871,6 +910,17 @@ fn claude_workspace_args() -> Vec<String> {
     Vec::new()
 }
 
+fn pi_workspace_args(session_dir: &Path, extension: Option<&Path>) -> Vec<String> {
+    let mut args = vec![
+        "--session-dir".into(),
+        session_dir.to_string_lossy().into_owned(),
+    ];
+    if let Some(extension) = extension {
+        args.extend(["-e".into(), extension.to_string_lossy().into_owned()]);
+    }
+    args
+}
+
 async fn build_agent(
     config: &AgentConfig,
     background_turn_notifications: Arc<std::sync::atomic::AtomicBool>,
@@ -881,22 +931,37 @@ async fn build_agent(
     let directory = &multiplexer.home_dir;
     let driver = build_multiplexer(multiplexer.resolved_kind);
     match config {
-        AgentConfig::OpenCode { command, state_dir } => Ok(BuiltAgent {
-            adapter: Arc::new(
-                BridgeAdapter::new(
-                    BridgeKind::OpenCode,
-                    bridge_hub.context("native bridge hub is not configured")?,
+        AgentConfig::Antigravity {
+            command, state_dir, ..
+        }
+        | AgentConfig::OpenCode { command, state_dir } => {
+            let (session_dir, args) = match config {
+                AgentConfig::Antigravity { session_dir, .. } => (
+                    session_dir,
+                    antigravity_workspace_args(command, state_dir, endpoint),
+                ),
+                _ => (
                     state_dir,
-                )
-                .with_workspace(
-                    &std::env::current_exe().context("cannot locate Agentix launcher")?,
                     opencode_workspace_args(command, state_dir, endpoint),
-                    directory,
-                )
-                .with_optional_multiplexer(driver),
-            ),
-            codex: None,
-        }),
+                ),
+            };
+            Ok(BuiltAgent {
+                adapter: Arc::new(
+                    BridgeAdapter::new(
+                        config.kind(),
+                        bridge_hub.context("native bridge hub is not configured")?,
+                        session_dir,
+                    )
+                    .with_workspace(
+                        &std::env::current_exe().context("cannot locate Agentix launcher")?,
+                        args,
+                        directory,
+                    )
+                    .with_optional_multiplexer(driver),
+                ),
+                codex: None,
+            })
+        }
         AgentConfig::Claude {
             command,
             session_dir,
@@ -944,22 +1009,11 @@ async fn build_agent(
             session_dir,
             bridge_extension,
         } => {
-            let flavor = if matches!(config, AgentConfig::Pi { .. }) {
-                BridgeKind::Pi
-            } else {
-                BridgeKind::Omp
-            };
-            let mut args = vec![
-                "--session-dir".into(),
-                session_dir.to_string_lossy().into_owned(),
-            ];
-            if let Some(extension) = bridge_extension {
-                args.extend(["-e".into(), extension.to_string_lossy().into_owned()]);
-            }
+            let args = pi_workspace_args(session_dir, bridge_extension.as_deref());
             Ok(BuiltAgent {
                 adapter: Arc::new(
                     BridgeAdapter::new(
-                        flavor,
+                        config.kind(),
                         bridge_hub.context("native bridge hub is not configured")?,
                         session_dir,
                     )
@@ -4230,5 +4284,45 @@ owner_user_ids = ["U1"]
                     .any(|c| matches!(c.command.as_str(), "board" | "jobs" | "tasks"))
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod antigravity_launch_tests {
+    use super::*;
+
+    #[test]
+    fn antigravity_launch_preserves_paths_and_sets_bridge_environment() {
+        let command = Path::new("/custom directory/agy");
+        let state = Path::new("/custom state/antigravity");
+        let endpoint = "unix:///custom directory/control.sock";
+        let args = antigravity_workspace_args(command, state, endpoint);
+        let parsed =
+            Cli::try_parse_from(std::iter::once("agentix".to_owned()).chain(args)).unwrap();
+        let CliCommand::LaunchAntigravity {
+            command: parsed_command,
+            state_dir,
+            endpoint: parsed_endpoint,
+        } = parsed.command
+        else {
+            panic!("expected Antigravity launcher");
+        };
+        assert_eq!(parsed_command, command);
+        assert_eq!(state_dir, state);
+        assert_eq!(parsed_endpoint, endpoint);
+        let child = antigravity_launch_command(command, state, endpoint);
+        assert_eq!(child.get_program(), command.as_os_str());
+        assert_eq!(child.get_args().count(), 0);
+        let env = child
+            .get_envs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            env[std::ffi::OsStr::new("AGENTIX_ANTIGRAVITY_DATA_DIR")],
+            Some(state.as_os_str())
+        );
+        assert_eq!(
+            env[std::ffi::OsStr::new("AGENTIX_CONTROL_ENDPOINT")],
+            Some(std::ffi::OsStr::new(endpoint))
+        );
     }
 }

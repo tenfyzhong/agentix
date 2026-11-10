@@ -8,6 +8,7 @@
 | Claude Code | `.claude-plugin/plugin.json` | Default `hooks/hooks.json` plus manifest `hooks/claude.json` |
 | Pi | `package.json` → `pi.extensions` | `extensions/pi.ts` |
 | OMP | `package.json` → `omp.extensions` | `extensions/omp.ts` |
+| Antigravity agy 1.5.5 | `.antigravity-plugin/plugin.json` (packaged as `plugin.json`) | `hooks.json` and `antigravity/server.mjs` |
 | OpenCode 2.0.32+ | Taskix package default export | `opencode/server.mjs` |
 
 Codex and Claude share the common lifecycle hooks. Codex explicitly loads the shared file and a separate Interrupt hook; its manifest replaces default discovery, so each hook loads once. Claude merges default discovery of the shared file with its manifest-selected `hooks/claude.json`, which only adds PostToolUseFailure. Do not repeat the shared file in Claude’s manifest. Pi and OMP each select exactly one extension, so neither loads the other host's entrypoint. Pi declares the shared `skills/` directory in its manifest. OMP installs the marketplace plugin and discovers its shared `skills/` directory. The npm `files` list includes host manifests, hooks, extensions, OpenCode entrypoints, runtime, skills, Taskix Sync and its board styles, and this technical reference.
@@ -96,3 +97,12 @@ and `make remove-plugin HOSTS=opencode` to remove all installer-owned branch ref
 and legacy local registrations. Earlier 2.0 patches and OpenCode 1.x are unsupported;
 2.0.32 is the validated baseline.
 See the [OpenCode guide](https://github.com/tenfyzhong/agentix/wiki/OpenCode) for installation.
+
+## Antigravity native host
+
+`make plugin HOSTS=antigravity` installs independently loadable native packages.
+The Taskix MCP tool binds session/executor/lease options itself. Hooks map native
+invocations to stable user steps, distinguish invocation completion from idle
+Stop, and preserve shared memory, discussion, routing and lifecycle behavior.
+MCP EOF supplies SessionEnd; native user cancellation releases the lease.
+See the [Antigravity guide](https://github.com/tenfyzhong/agentix/wiki/Antigravity) for setup and boundaries.

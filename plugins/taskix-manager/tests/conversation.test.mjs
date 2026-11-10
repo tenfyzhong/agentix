@@ -6,6 +6,55 @@ import { join } from "node:path";
 import { runHook, registerExtension } from "../runtime.mjs";
 import { visibleMessage, transcriptMessages, transcriptConversation } from "../conversation.mjs";
 
+test("antigravity transcripts preserve explicit native turn identity and exclude internal steps", async t => {
+    const directory = await mkdtemp(join(tmpdir(), "taskix-agy-transcript-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, "transcript.jsonl");
+    const rows = [
+        { step_index: 0, type: "USER_INPUT", source: "USER_EXPLICIT", content: "old request" },
+        { step_index: 1, type: "PLANNER_RESPONSE", source: "MODEL", content: "old reply" },
+        { step_index: 2, type: "USER_INPUT", source: "USER_EXPLICIT", content: "new request" },
+        { step_index: 3, type: "USER_INPUT", source: "SYSTEM", content: "injected context" },
+        { step_index: 4, type: "THINKING", source: "MODEL", content: "private reasoning" },
+        { step_index: 5, type: "PLANNER_RESPONSE", source: "MODEL", content: "partial reply" },
+        { step_index: 5, type: "PLANNER_RESPONSE", source: "MODEL", content: "final reply" },
+        { step_index: 6, type: "TOOL_RESULT", source: "TOOL", content: "tool data" },
+        { step_index: 7, type: "GENERIC", source: "MODEL", content: "Created At: timestamp\nraw tool output" },
+    ];
+    await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n") + "\n");
+    const capture = await transcriptConversation(path, { sessionId: "native", currentOnly: true });
+    assert.equal(capture.turn_id, "native:step:2");
+    assert.deepEqual(capture.messages, [
+        { id: "native:step:2", role: "user", text: "new request" },
+        { id: "native:step:5", role: "assistant", text: "final reply" },
+    ]);
+    const recent = await transcriptConversation(path, { sessionId: "native", recentTurns: 2 });
+    assert.equal(recent.turn_id, "native:step:2");
+    assert.deepEqual(recent.messages.map(message => message.text), ["old request", "old reply", "new request", "final reply"]);
+});
+
+test("antigravity question tools capture visible questions and user answers without tool metadata", async t => {
+    const directory = await mkdtemp(join(tmpdir(), "taskix-agy-question-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, "transcript.jsonl");
+    const rows = [
+        { step_index: 0, type: "USER_INPUT", source: "USER_EXPLICIT", content: "ask me" },
+        { step_index: 1, type: "PLANNER_RESPONSE", source: "MODEL", thinking: "private", tool_calls: [
+            { name: "ask_question", args: { questions: JSON.stringify([{ question: "Pick features", options: ["Logs", "Metrics"], is_multi_select: true }]) } },
+        ] },
+        { step_index: 2, type: "GENERIC", source: "MODEL", content: "Created At: timestamp\nCompleted At: timestamp\nA1: Metrics, Traces" },
+        { step_index: 3, type: "PLANNER_RESPONSE", source: "MODEL", content: "Thanks" },
+    ];
+    await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n") + "\n");
+    const capture = await transcriptConversation(path, { sessionId: "native" });
+    assert.deepEqual(capture.messages.map(({ role, text }) => ({ role, text })), [
+        { role: "user", text: "ask me" },
+        { role: "assistant", text: "Pick features\n\n- Logs\n- Metrics" },
+        { role: "user", text: "Pick features\nMetrics, Traces" },
+        { role: "assistant", text: "Thanks" },
+    ]);
+});
+
 test("current-turn extraction does not parse historical transcript records", async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "taskix-transcript-budget-"));
     t.after(() => rm(directory, {recursive:true, force:true}));

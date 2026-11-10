@@ -163,6 +163,14 @@ pub use agentix_core::ChannelKind as ImChannel;
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum AgentConfig {
+    Antigravity {
+        #[serde(default = "default_antigravity_command")]
+        command: PathBuf,
+        #[serde(default = "default_antigravity_session_dir")]
+        session_dir: PathBuf,
+        #[serde(default = "default_antigravity_state_dir")]
+        state_dir: PathBuf,
+    },
     #[serde(rename = "opencode")]
     OpenCode {
         #[serde(default = "default_opencode_command")]
@@ -282,6 +290,16 @@ impl std::fmt::Debug for SlackConfig {
     }
 }
 
+fn default_antigravity_command() -> PathBuf {
+    PathBuf::from("agy")
+}
+fn default_antigravity_session_dir() -> PathBuf {
+    PathBuf::from("~/.gemini/antigravity-cli/brain")
+}
+fn default_antigravity_state_dir() -> PathBuf {
+    PathBuf::from("~/.local/share/agentix/antigravity")
+}
+
 fn default_opencode_command() -> PathBuf {
     PathBuf::from("opencode")
 }
@@ -293,6 +311,7 @@ impl AgentConfig {
     #[must_use]
     pub const fn kind(&self) -> agentix_core::AgentKind {
         match self {
+            Self::Antigravity { .. } => agentix_core::AgentKind::Antigravity,
             Self::Claude { .. } => agentix_core::AgentKind::Claude,
             Self::OpenCode { .. } => agentix_core::AgentKind::OpenCode,
             Self::Codex { .. } => agentix_core::AgentKind::Codex,
@@ -455,6 +474,15 @@ impl Config {
 
         for agent in self.agent.iter_mut().chain(self.agents.iter_mut()) {
             match agent {
+                AgentConfig::Antigravity {
+                    command,
+                    session_dir,
+                    state_dir,
+                } => {
+                    *command = expand_home_path(command, home.as_deref())?;
+                    *session_dir = expand_home_path(session_dir, home.as_deref())?;
+                    *state_dir = expand_home_path(state_dir, home.as_deref())?;
+                }
                 AgentConfig::OpenCode {
                     command,
                     state_dir: session_dir,

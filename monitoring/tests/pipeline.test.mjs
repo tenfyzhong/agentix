@@ -17,7 +17,7 @@ test('real Alloy remote-write sends application samples and drops all other seri
   const children = [];
   const logs = [];
   const payload = process.env.METRICS_FIXTURE_FILE ? readFileSync(process.env.METRICS_FIXTURE_FILE, 'utf8').replace('# EOF\n', '') : '# TYPE agentix_build info\nagentix_build_info{version="test"} 1\n';
-  const sources = ['pi_bridge', 'omp_bridge', 'claude_bridge', 'opencode_bridge'];
+  const sources = ['pi_bridge', 'omp_bridge', 'claude_bridge', 'opencode_bridge', 'antigravity_bridge'];
   const tokenSamples = '# TYPE agentix_tokens counter\n' + sources.flatMap(source => ['input', 'output', 'cached_input'].map(kind => `agentix_tokens_total{source="${source}",kind="${kind}"} 17\n`)).join('');
   const fixture = createServer((_req, response) => {
     response.setHeader('content-type', 'application/openmetrics-text; version=1.0.0; charset=utf-8');
