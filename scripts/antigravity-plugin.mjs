@@ -82,7 +82,7 @@ export async function buildNativePlugins(repository, destination) {
             await copy('skills');
             const skill = join(target, 'skills/taskix-manager');
             const original = await readFile(join(skill, 'SKILL.md'), 'utf8');
-            const frontmatter = /^---\n[\s\S]*?\n---\n/.exec(original)?.[0];
+            const frontmatter = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(original)?.[0];
             if (!frontmatter) throw new Error('Taskix skill frontmatter is missing');
             await writeFile(join(skill, 'references/antigravity-workflow.md'),
                 original.slice(frontmatter.length).replaceAll('(references/', '('));

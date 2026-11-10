@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, access, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, cp, access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,5 +51,21 @@ test('native_packages_exclude_foreign_configuration_and_preserve_the_complete_ta
     assert.match(entry, /read.*antigravity-workflow\.md/i);
     const full = await readFile(join(skill, 'references/antigravity-workflow.md'), 'utf8');
     const original = await readFile(join(root, 'plugins/taskix-manager/skills/taskix-manager/SKILL.md'), 'utf8');
-    assert.equal(full, original.replace(/^---\n[\s\S]*?\n---\n/, '').replaceAll('(references/', '('));
+    assert.equal(full, original.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').replaceAll('(references/', '('));
+});
+
+test('native_packaging_preserves_workflow_from_a_crlf_checkout', async t => {
+    const temporary = await mkdtemp(join(tmpdir(), 'agy-crlf-'));
+    t.after(() => rm(temporary, { recursive: true, force: true }));
+    const repository = join(temporary, 'repository'), target = join(temporary, 'packages');
+    for (const name of ['taskix-manager', 'agentix-bridge']) {
+        await cp(join(root, 'plugins', name), join(repository, 'plugins', name), { recursive: true });
+    }
+    const skill = join(repository, 'plugins/taskix-manager/skills/taskix-manager/SKILL.md');
+    const original = (await readFile(skill, 'utf8')).replace(/\r?\n/g, '\r\n');
+    await writeFile(skill, original);
+    await buildNativePlugins(repository, target);
+    const full = await readFile(join(target, 'taskix-manager/skills/taskix-manager/references/antigravity-workflow.md'), 'utf8');
+    assert.equal(full, original.replace(/^---\r\n[\s\S]*?\r\n---\r\n/, '').replaceAll('(references/', '('));
+    assert.match(await readFile(join(target, 'taskix-manager/skills/taskix-manager/SKILL.md'), 'utf8'), /^---\r\nname:/);
 });
