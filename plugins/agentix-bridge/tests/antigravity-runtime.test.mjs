@@ -224,3 +224,50 @@ test('empty_process_registers_once_and_keeps_identity_across_sidecar_restart', a
     assert.equal(handlers[2].snapshot().session.name, 'New session (PID 43)');
     await runtime.close();
 });
+
+test('same_directory_hosts_keep_independent_bindings_across_repeated_new_and_restart', async t => {
+    const root = mkdtempSync(join(tmpdir(), 'agy-multiple-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const hosts = ['pane-a', 'pane-b'].map((clientId, index) => {
+        const records = [], handlers = [], sends = [];
+        const mailbox = new AntigravityMailbox(root, clientId);
+        const options = { root, mailbox, clientId, pid: 42 + index, cwd: root, sessionRoot: root,
+            nativeNew: async () => {}, delivery: { send: async text => sends.push(text) },
+            transportFactory: settings => {
+                handlers.push(settings);
+                return { sequence: 0, open: record => records.push(record), event: () => {}, close: async () => {} };
+            } };
+        return { options, mailbox, records, handlers, sends, runtime: createRuntime(options) };
+    });
+    t.after(async () => { for (const host of hosts) await host.runtime.close(); });
+    for (const host of hosts) await host.runtime.poll();
+    assert.notEqual(hosts[0].records[0].session_id, hosts[1].records[0].session_id);
+    for (let round = 0; round < 3; round++) {
+        for (const host of hosts) {
+            const oldId = host.records.at(-1).session_id;
+            const handler = host.handlers.at(-1);
+            if (round) await handler.handle('command', { name: 'new' });
+            const text = `${host.options.clientId}-${round}`;
+            const pending = handler.handle('prompt', { request_id: text, text });
+            await new Promise(resolve => setImmediate(resolve));
+            const transcriptPath = join(root, `${text}.jsonl`);
+            writeFileSync(transcriptPath, JSON.stringify({ step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', content: text }) + '\n');
+            for (const hookEventName of ['SessionStart', 'PreInvocation', 'Stop']) {
+                host.mailbox.publish({ hookEventName, conversationId: text, workspacePaths: [root], transcriptPath, fullyIdle: true });
+            }
+            await host.runtime.poll();
+            assert.deepEqual(await pending, { turn_id: `${text}:step:0` });
+            assert.equal(host.records.at(-1).previous_session_id, oldId);
+            assert.equal(host.records.at(-1).client_id, host.options.clientId);
+            assert.equal(host.records.at(-1).pid, host.options.pid);
+            assert.deepEqual((await host.handlers.at(-1).handle('history')).turns.map(turn => turn.user_text), [text]);
+            await host.runtime.close();
+            host.runtime = createRuntime(host.options);
+            await host.runtime.poll();
+            assert.equal(host.records.at(-1).session_id, text);
+            assert.deepEqual(await host.handlers.at(-1).handle('prompt', { request_id: text, text }), { turn_id: `${text}:step:0` });
+            assert.equal(host.sends.length, round + 1, 'reconnection must not resend acknowledged input');
+        }
+        assert.notEqual(hosts[0].records.at(-1).session_id, hosts[1].records.at(-1).session_id);
+    }
+});

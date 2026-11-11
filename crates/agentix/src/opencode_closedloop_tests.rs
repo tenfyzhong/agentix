@@ -130,20 +130,42 @@ async fn wait_body(api: &MockTelegramApi, needle: &str, after: usize) -> Value {
     result.unwrap_or_else(|_| panic!("Telegram never received {needle}"))
 }
 async fn wait_final(api: &MockTelegramApi, needle: &str, after: usize) {
-    tokio::time::timeout(Duration::from_secs(35), async {
+    let final_body = tokio::time::timeout(Duration::from_secs(35), async {
         loop {
-            if api.requests().await.iter().skip(after).any(|request| {
-                request.target.to_ascii_lowercase().contains("sendmessage")
+            for request in api.requests().await.iter().skip(after) {
+                if request
+                    .target
+                    .to_ascii_lowercase()
+                    .contains("editmessagetext")
                     && request.body.contains(needle)
                     && request.body.contains("Completed")
-            }) {
-                break;
+                {
+                    return serde_json::from_str::<Value>(&request.body).unwrap();
+                }
             }
             tokio::time::sleep(Duration::from_millis(30)).await;
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("Missing fresh completed Telegram card: {needle}"));
+    .unwrap_or_else(|_| panic!("Missing completed Telegram card update: {needle}"));
+    // The mock returns 77 for sends; completion must edit that existing message.
+    assert_eq!(final_body["message_id"], 77);
+    assert_eq!(
+        final_body["reply_markup"]["inline_keyboard"],
+        serde_json::json!([])
+    );
+    assert!(
+        !api.requests()
+            .await
+            .iter()
+            .skip(after)
+            .any(
+                |request| request.target.to_ascii_lowercase().contains("sendmessage")
+                    && request.body.contains(needle)
+                    && request.body.contains("Completed")
+            ),
+        "completion must not send a duplicate final card"
+    );
 }
 fn button(body: &Value, needle: &str) -> String {
     body["reply_markup"]["inline_keyboard"]

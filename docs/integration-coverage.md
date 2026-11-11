@@ -878,3 +878,16 @@ content reads. These figures are a baseline, not a throughput guarantee.
 Telegram completion regressions verify one card across final updates, rejected edits and repeated completion after cold restore. Empty or whitespace-only native errors do not render an `Error:` line. Antigravity Stop tests distinguish blank errors from actual failures.
 
 Antigravity empty-process regressions cover pre-input registration, stable sidecar restart identity, same-directory process separation, and first-prompt acknowledgement across the temporary-to-native handoff. Rust bridge integration verifies root admission, attach with empty history, native replacement and a single first input.
+
+Telegram engine integration tests verify final text, cleared controls and retained
+message identity when streaming is throttled or prompt/card acknowledgements arrive
+late. The native OpenCode Telegram closed loop requires a completed edit on the
+original message and rejects duplicate completed sends, including service recovery
+during approval.
+
+Antigravity runtime tests additionally exercise two hosts sharing a directory
+through three conversation generations, restarting each sidecar and replaying each
+acknowledged prompt without another send. Native plugin acceptance allows an
+initial provisional registration and verifies its client/PID-preserving handoff
+to the hook's conversation ID. These fixtures do not constitute a full live IM
+multi-pane acceptance run.

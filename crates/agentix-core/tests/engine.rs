@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use agentix_core::{
@@ -5766,6 +5766,14 @@ async fn stream_updates_are_throttled_but_completion_flushes_latest_text() {
             .unwrap();
     }
     assert_eq!(channel.sent().len(), before + 1);
+    let running_message = channel
+        .messages
+        .lock()
+        .unwrap()
+        .keys()
+        .find(|message| message.message_id == format!("m{}", before + 1))
+        .unwrap()
+        .clone();
 
     engine
         .handle_agent_event(AgentEvent::TurnCompleted {
@@ -5777,9 +5785,11 @@ async fn stream_updates_are_throttled_but_completion_flushes_latest_text() {
         .await
         .unwrap();
     let sent = channel.sent();
-    assert_eq!(sent.len(), before + 3);
-    assert_eq!(channel.messages.lock().unwrap().len(), cards_before + 2);
+    assert_eq!(sent.len(), before + 2);
+    assert_eq!(channel.messages.lock().unwrap().len(), cards_before + 1);
+    assert_eq!(channel.updated().last().unwrap().0, running_message);
     assert!(sent.last().unwrap().1.body.contains("first second"));
+    assert!(sent.last().unwrap().1.actions.is_empty());
 }
 
 #[tokio::test]
@@ -10393,6 +10403,13 @@ async fn runtime_pending_input_stops_when_early_turn_id_arrives() {
 async fn runtime_pending_ack_preserves_completed_output_and_card() {
     let (engine, _, channel, gate, _) = pending_runtime_input().await;
     let count = channel.messages.lock().unwrap().len();
+    let original_messages = channel
+        .messages
+        .lock()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<HashSet<_>>();
     engine
         .handle_agent_event(AgentEvent::TurnStarted {
             session_id: "thr_a".into(),
@@ -10432,8 +10449,18 @@ async fn runtime_pending_ack_preserves_completed_output_and_card() {
     );
     assert_eq!(
         channel.messages.lock().unwrap().len(),
-        count + 1,
-        "send one final card and preserve it across the late acknowledgement"
+        count,
+        "complete the existing card and preserve it across the late acknowledgement"
+    );
+    assert_eq!(
+        channel
+            .messages
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>(),
+        original_messages
     );
     let views = channel.sent();
     let view = &views.last().unwrap().1;
@@ -11139,7 +11166,12 @@ async fn runtime_pending_card_reconciles_completed_output_after_ack() {
     );
     release.cancel();
     apply_next_pending_input(&engine).await;
-    assert_eq!(channel.messages.lock().unwrap().len(), count + 2);
+    assert_eq!(channel.messages.lock().unwrap().len(), count + 1);
+    let completed_message = channel.updated().last().unwrap().0.clone();
+    let messages = channel.messages.lock().unwrap();
+    let completed = messages.get(&completed_message).unwrap();
+    assert!(completed.body.contains("completed before card"));
+    assert!(completed.actions.is_empty());
     let updated = channel.sent();
     let view = &updated.last().unwrap().1;
     assert!(view.body.contains("completed before card"));

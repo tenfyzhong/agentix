@@ -75,7 +75,8 @@ receipts. Native trajectory files are read without modification.
   Only choices actually offered by that host are available.
 - `/new` opens agy's native new conversation. Its identity is allocated after
   the next message, so the old binding remains usable until the native switch
-  is acknowledged. No synthetic conversation ID is created.
+  is acknowledged. This command does not allocate another temporary ID; the
+  startup-only temporary ID is replaced when the first native conversation appears.
 - Terminal drafts are preserved. Conditional clearing supports a matching
   single-line draft; clear multiline drafts in the original terminal. Busy,
   changed or unrecognized screen layouts are rejected before input is sent.

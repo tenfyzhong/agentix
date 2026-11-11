@@ -77,8 +77,22 @@ test('installed_native_plugins_load_hooks_and_register_original_mcp_host', { ski
     assert.equal(registration.params.agent, 'antigravity');
     assert.equal(await realpath(registration.params.cwd), await realpath(workspace));
     const recorded = (await readFile(events, 'utf8')).trim().split('\n').map(JSON.parse);
-    assert.equal(registration.params.session_id, recorded[0].event.conversationId);
-    const calls = (await readFile(log, 'utf8')).trim().split('\n').map(JSON.parse);
+    const native = frames.find(frame => frame.method === 'register'
+        && frame.params.session_id === recorded[0].event.conversationId);
+    assert.ok(native, 'The original native conversation replaces the startup registration');
+    if (registration !== native) {
+        assert.match(registration.params.session_id, /-pending$/);
+        assert.equal(native.params.previous_session_id, registration.params.session_id);
+        assert.equal(native.params.client_id, registration.params.client_id);
+        assert.equal(native.params.pid, registration.params.pid);
+    }
+    let calls;
+    // MCP EOF cleanup runs in a child and may finish after the agy parent exits.
+    for (let attempt = 0; attempt < 100; attempt++) {
+        calls = (await readFile(log, 'utf8')).trim().split('\n').map(JSON.parse);
+        if (calls.some(args => args.includes('session-end'))) break;
+        await new Promise(resolve => setTimeout(resolve, 30));
+    }
     assert.ok(calls.some(args => args.includes('session-start')), 'Installed Taskix SessionStart hook ran');
     assert.ok(calls.some(args => args.includes('session-end')), 'Native MCP EOF released Taskix session');
     t.diagnostic('Both installed native plugins loaded; bridge registered original conversation and Taskix observed startup/shutdown. Inference intentionally terminated.');
