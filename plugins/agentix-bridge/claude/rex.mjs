@@ -132,7 +132,7 @@ export class RexTerminalAdapter {
     async capture() { if (this.screen === undefined) throw fail('Inspect Rex before capture'); return this.screen; }
     async sendKey(key, signal) {
         await this.foreground(signal);
-        const mapped = { 'C-c': 'ctrl+c', Enter: 'enter', Escape: 'escape', Up: 'up', Down: 'down' }[key] ?? key;
+        const mapped = { 'C-c': 'ctrl+c', 'C-e': 'ctrl+e', 'C-u': 'ctrl+u', Enter: 'enter', Escape: 'escape', Up: 'up', Down: 'down' }[key] ?? key;
         await this.callJSON(['send-key', '-s', this.session, '-b', this.pane, mapped], signal);
     }
     async sendText(text, signal) { await this.foreground(signal); await this.block('write', { data: text }, signal); }

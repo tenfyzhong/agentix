@@ -90,7 +90,10 @@ receipts. Native trajectory files are read without modification.
 - History projects explicit user text and visible planner responses. Tool
   output and private thinking are not presented as assistant prose. The reader
   bounds work to a 16 MiB tail, 200 turns and 100,000 characters per text field;
-  older/truncated history is intentionally unavailable through this projection.
+  previously observed turns remain in the bridge's persisted history and are
+  merged in native step order. Older turns outside the reader window that the
+  bridge has never observed, and truncated text, cannot be recovered by this
+  projection.
 
 The Taskix MCP tool binds commands to the original native session and executor.
 Native hooks route each explicit user step once, capture discussion, renew
