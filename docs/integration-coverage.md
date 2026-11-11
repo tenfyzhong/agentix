@@ -153,7 +153,7 @@ parsing, request encoding, output, and process exit status.
 | `client call` / control `call` | CLI raw JSON forwarding and mock Codex RPCs; a native-only registry returns the explicit Codex-only error |
 | `client claim` / control `claim` | CLI output, real handler code generation and invalid TTL; existing owner-claim tests cover expiry, consumption, and owner persistence for both IM channels |
 | `doctor`, `serve`, completions | Native doctor checks Pi/OMP/Claude without a listener; Codex mock handshake; service lifecycle tests cover offline saved bindings, startup, shutdown, and socket cleanup; shell completion/config suites cover the CLI setup boundary |
-| Engine dispatch isolation | Production runtime tests hold a prompt or working-card send while another conversation continues, preserve same-conversation order, and bound shutdown while fencing uncertain inputs across restart. Shutdown tests also separate local preparation from IM effects and verify independent notices within a shared deadline. Engine routing tests cover consecutive transfers, displaced chats, opaque attach buttons, and early replacement events; both IM end-to-end suites use the production runtime |
+| Engine dispatch isolation | Production runtime tests hold a prompt or working-card send while another conversation continues, preserve same-conversation order, and bound shutdown while fencing uncertain inputs across restart. File-backed storage regression coverage discards returned connections with unowned transactions, verifies another writer can proceed, and checks uncommitted work is rolled back. Shutdown tests also separate local preparation from IM effects and verify independent notices within a shared deadline. Engine routing tests cover consecutive transfers, displaced chats, opaque attach buttons, and early replacement events; both IM end-to-end suites use the production runtime |
 | Control dispatch isolation | A real Pi plugin withholds prompt acknowledgment while OMP, catalog, same-session history and stop complete; handler cancellation finishes without releasing the host gate. Resource-queue tests cover bounds, FIFO, backend-exclusive operations and native aliases |
 | Control framing and errors | Unix/TCP round trips, loopback restriction, socket permissions, malformed and oversized requests, shared native/CLI listener; CLI errors produce nonzero exit and no success JSON |
 
@@ -823,3 +823,107 @@ not establish live service quality or remote deployment.
 ## Rex multiplexer coverage
 
 The Rex adapter and Node bridge share the existing native control parsers through semantic terminal operations. Regression tests and opt-in local Rex fixtures are documented in [Rex multiplexer](rex-multiplexer.md#verification). These fixtures cover local session creation, splitting, Unicode snapshots, Codex draft protection and checkout selection, and Claude native paste. They do not establish live IM or real-agent acceptance on Rex.
+
+## Antigravity
+
+The agy 1.5.5 adapter has reusable tests for native identity, bounded transcript
+projection, hook-time turn attribution, invocations and idle Stop, prompt
+receipts, uncertain delivery/recovery, original socket acknowledgements across
+lazy `/new`, conditional draft clearing, model/effort menus, stale approval and
+question cards, Taskix routing/discussion/lease binding, native MCP shutdown,
+packaging, strict validation, installation rollback and unrelated-plugin
+preservation. Rust bridge and engine tests exercise the existing IM dispatch and
+handoff boundaries using the Antigravity backend. Telegram and Feishu mock API
+tests traverse the real channel/engine stack and native Antigravity hook fixture. Common channel tests remain
+responsible for Telegram, Feishu and Slack formatting/interaction transport.
+
+```sh
+node --test plugins/agentix-bridge/tests/antigravity*.test.mjs
+node --test plugins/taskix-manager/tests/antigravity*.test.mjs
+AGENTIX_TEST_ANTIGRAVITY_NATIVE=1 node --test plugins/agentix-bridge/tests/antigravity-native.test.mjs
+AGENTIX_TEST_ANTIGRAVITY_INSTALL=1 node --test plugins/taskix-manager/tests/antigravity-native-install.test.mjs
+AGENTIX_ANTIGRAVITY_PERFORMANCE=1 node --test plugins/agentix-bridge/tests/antigravity-performance.test.mjs
+AGENTIX_TEST_ANTIGRAVITY_TERMINAL=tmux node --test plugins/agentix-bridge/tests/antigravity-terminal-native.test.mjs
+AGENTIX_TEST_ANTIGRAVITY_MULTIPANE=1 node --test plugins/agentix-bridge/tests/antigravity-multipane-native.test.mjs
+AGENTIX_TEST_TMUX=/absolute/path/to/tmux cargo test -p agentix --bin agentix antigravity_native_telegram_workspace_first_input_closed_loop -- --ignored --nocapture
+```
+
+Native installation/headless tests use an isolated HOME and terminate before
+model inference. They validate installed plugin loading, original conversation
+registration and Taskix startup/shutdown. Terminal tests preserve the user's
+existing agy login and create disposable workspaces and mux sessions. Set the
+terminal to `rmux` or `rex` to exercise those adapters. Optional environment flags
+`AGENTIX_TEST_ANTIGRAVITY_APPROVAL=1`, `AGENTIX_TEST_ANTIGRAVITY_QUESTIONS=1`,
+`AGENTIX_TEST_ANTIGRAVITY_FILE=1` (creation) or `=edit`, and
+`AGENTIX_TEST_ANTIGRAVITY_NEW=1` exercise real model-backed interactions. These
+require authenticated agy and can incur normal provider usage. NEW requires
+APPROVAL or QUESTIONS. No global permission settings are changed.
+
+The opt-in multipane test uses two real agy processes in one tmux window and
+working directory. It requires installed native plugins and existing onboarding,
+isolates bridge traffic/state and Taskix calls, and terminates before inference.
+It verifies distinct provisional identities, PID/workspace binding, first-input
+handoff with acknowledgements on the original sockets, and receipt/history
+recovery after disconnecting each bridge connection. This is native bridge
+protocol acceptance, not a live IM account test.
+
+Local macOS native runs covered tmux command/file approvals and questions,
+rmux command approval plus lazy new-session identity, Rex single/multiple/write-in
+questions, and exact draft protection/clearing. Model/effort menu acceptance
+now also switches to a different available model and visits each offered effort
+level before restoring the original model and effort. Enable this additional
+check with `AGENTIX_TEST_ANTIGRAVITY_CHANGE_MODEL=1`. Menu queries wait for
+composer readiness after dismissal, so consecutive control operations are safe.
+These component and protocol tests do not establish a live Telegram, Feishu or
+Slack account closed loop, Windows/Linux terminal acceptance, every possible
+native screen layout, or provider reliability.
+
+On the local development machine, an 11,897,780-byte synthetic transcript took
+29.9 ms for cold projection, 0.161 ms per unchanged read (1,000 reads), and
+19.6 ms per append/reprojection (20 appends). Measurements include local file
+metadata, parsing and cloning, but exclude terminal, model and network latency.
+RSS ranged from 156 to 317 MB for the whole benchmark process, including fixture
+construction; it is not the adapter's retained-memory footprint. The test reports
+measurements without machine-dependent timing assertions. The parser reads a
+16 MiB tail and returns at most 200 turns; metadata caching avoids unchanged
+content reads. These figures are a baseline, not a throughput guarantee.
+
+Telegram completion regressions verify one card across final updates, rejected edits and repeated completion after cold restore. Empty or whitespace-only native errors do not render an `Error:` line. Antigravity Stop tests distinguish blank errors from actual failures.
+
+Antigravity empty-process regressions cover pre-input registration, stable sidecar restart identity, same-directory process separation, and first-prompt acknowledgement across the temporary-to-native handoff. Rust bridge integration verifies root admission, attach with empty history, native replacement and a single first input.
+
+Telegram engine integration tests verify final text, cleared controls and retained
+message identity when streaming is throttled or prompt/card acknowledgements arrive
+late. The native OpenCode Telegram closed loop requires a completed edit on the
+original message and rejects duplicate completed sends, including service recovery
+during approval.
+
+Antigravity runtime tests additionally exercise two hosts sharing a directory
+through three conversation generations, restarting each sidecar and replaying each
+acknowledged prompt without another send. Native plugin acceptance allows an
+initial provisional registration and verifies its client/PID-preserving handoff
+to the hook's conversation ID. These fixtures do not constitute a full live IM
+multi-pane acceptance run.
+
+Native terminal acceptance records hooks independently of the bridge mailbox: an
+installed sidecar consumes mailbox events. Inference-free tests require the
+terminating PreInvocation witness; live scenarios require a fully idle Stop.
+Taskix PreToolUse regressions require an explicit `allow` decision for ordinary
+work (delegating to native permissions), while cancelled Issues still deny tools.
+
+The opt-in Antigravity Telegram workspace test launches an authenticated native
+agy through the production workspace adapter and drives the production Telegram
+adapter, Engine, Registry and bridge against a mock Telegram HTTP endpoint. It
+checks pre-input attachment, first-input identity handoff, lazy `/new` in the
+same pane, reuse of one message card through completion, active `/stop`,
+and a subsequent turn followed by `/last` returning that latest response.
+It requires installed native plugins and uses real model inference. Cancellation
+is confirmed from the native interruption result and idle composer when agy
+omits its Stop hook. Set `AGENTIX_TEST_TMUX` to the real tmux executable when a
+login shell provides a tmux-compatible rmux alias. Taskix calls, bridge state and
+the terminal server are isolated; this test does not send messages to Telegram.
+
+Missing-Stop session regressions cover live and restored active turns, unknown
+prior outcomes, delayed older hooks, and persistence-failure retries without
+premature events. Runtime mailbox coverage verifies that later hooks drain and
+latest history advances, while normal queued multi-turn replay retains completion.

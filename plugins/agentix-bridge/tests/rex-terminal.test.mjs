@@ -4,6 +4,14 @@ import { join } from 'node:path';
 import { RexTerminalAdapter, rexCandidates, decodeRexVT } from '../claude/rex.mjs';
 
 const env = { REX_SESSION: 'session:one', REX_BLOCK: 'block:one', PATH: '/bin', HOME: '/home/test' };
+test('rex_maps_draft_editing_control_keys_to_native_names', async () => {
+    const keys = [];
+    const terminal = new RexTerminalAdapter({ env, pid: 200, command: '/bin/rex' });
+    terminal.foreground = async () => {};
+    terminal.callJSON = async args => { keys.push(args.at(-1)); return {}; };
+    for (const key of ['C-e', 'C-u', 'C-c', 'Enter', 'Escape']) await terminal.sendKey(key);
+    assert.deepEqual(keys, ['ctrl+e', 'ctrl+u', 'ctrl+c', 'enter', 'escape']);
+});
 test('Rex executable lookup preserves PATH before macOS application locations', () => {
     const paths = rexCandidates(env, 'darwin');
     assert.equal(paths[0], join('/bin', 'rex'));

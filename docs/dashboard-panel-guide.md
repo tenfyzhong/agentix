@@ -283,15 +283,15 @@ Rates of Memory retrieval events. fallback counts queries using fts_fallback or 
 
 ### Agent input tokens / second
 
-Observed input-token deltas per second for all five agents, with `source · instance` legends. Sources are `codex_app_server`, `pi_bridge`, `omp_bridge`, `claude_bridge`, and `opencode_bridge`. This is not current context length. The initial cumulative notification establishes a baseline, so the initial turn may be undercounted.
+Observed input-token deltas per second for all six agents, with `source · instance` legends. Sources are `codex_app_server`, `pi_bridge`, `omp_bridge`, `claude_bridge`, `opencode_bridge`, and `antigravity_bridge`. This is not current context length. The initial cumulative notification establishes a baseline, so the initial turn may be undercounted.
 
 ### Agent output tokens / second
 
-Observed output-token deltas per second for all five agents, distinguished by source and instance. Usage notifications can arrive in batches, so spikes do not represent instantaneous token-generation speed.
+Observed output-token deltas per second for all six agents, distinguished by source and instance. Usage notifications can arrive in batches, so spikes do not represent instantaneous token-generation speed.
 
 ### Agent cached tokens / second
 
-Observed cache-read token deltas per second for all five agents, distinguished by source and instance. Missing native usage remains absent. Codex includes cached input in its input count; other hosts can report cache reads separately. Cache writes are not included.
+Observed cache-read token deltas per second for all six agents, distinguished by source and instance. Missing native usage remains absent. Codex includes cached input in its input count; other hosts can report cache reads separately. Cache writes are not included.
 
 ### Memory input tokens / second
 

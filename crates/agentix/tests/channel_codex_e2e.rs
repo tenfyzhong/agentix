@@ -257,18 +257,26 @@ async fn native_bridge(
     let directory = tempfile::tempdir().unwrap();
     let server = bridge_control::TestControl::bind(directory.path()).unwrap();
     let claude = kind == agentix_core::AgentKind::Claude;
+    let antigravity = kind == agentix_core::AgentKind::Antigravity;
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(if claude {
         "../../plugins/agentix-bridge/tests/claude-host.mjs"
+    } else if antigravity {
+        "../../plugins/agentix-bridge/tests/antigravity-host.mjs"
     } else {
         "../../plugins/agentix-bridge/tests/host.mjs"
     });
     let mut host = tokio::process::Command::new("node")
         .arg(fixture)
         .arg(&server.endpoint)
-        .arg(if claude {
+        .arg(if claude || antigravity {
             directory.path().as_os_str()
         } else {
             std::ffi::OsStr::new(kind.as_str())
+        })
+        .args(if antigravity {
+            vec!["--empty-draft"]
+        } else {
+            vec![]
         })
         .stdout(std::process::Stdio::piped())
         .kill_on_drop(true)
@@ -279,7 +287,7 @@ async fn native_bridge(
     let bridge = Arc::new(agentix_bridge::BridgeAdapter::new(
         kind,
         server.hub.clone(),
-        if claude {
+        if claude || antigravity {
             directory.path()
         } else {
             std::path::Path::new("/tmp")
@@ -308,9 +316,12 @@ async fn telegram_round_trip_reaches_original_native_bridges() {
         agentix_core::AgentKind::Pi,
         agentix_core::AgentKind::Omp,
         agentix_core::AgentKind::Claude,
+        agentix_core::AgentKind::Antigravity,
     ] {
         let (native, answer) = if kind == agentix_core::AgentKind::Claude {
             ("native-claude", "Claude reply")
+        } else if kind == agentix_core::AgentKind::Antigravity {
+            ("native-antigravity", "Antigravity reply")
         } else {
             ("native-id", "bridge answer")
         };
@@ -367,9 +378,12 @@ async fn feishu_round_trip_reaches_original_native_bridges() {
         agentix_core::AgentKind::Pi,
         agentix_core::AgentKind::Omp,
         agentix_core::AgentKind::Claude,
+        agentix_core::AgentKind::Antigravity,
     ] {
         let (native, answer) = if kind == agentix_core::AgentKind::Claude {
             ("native-claude", "Claude reply")
+        } else if kind == agentix_core::AgentKind::Antigravity {
+            ("native-antigravity", "Antigravity reply")
         } else {
             ("native-id", "bridge answer")
         };

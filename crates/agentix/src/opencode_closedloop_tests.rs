@@ -127,23 +127,60 @@ async fn wait_body(api: &MockTelegramApi, needle: &str, after: usize) -> Value {
         }
     })
     .await;
+    if result.is_err() {
+        for request in api.requests().await.into_iter().skip(after) {
+            if !request.target.to_ascii_lowercase().contains("getupdates") {
+                eprintln!("Telegram diagnostic: {}", request.body);
+            }
+        }
+    }
     result.unwrap_or_else(|_| panic!("Telegram never received {needle}"))
 }
 async fn wait_final(api: &MockTelegramApi, needle: &str, after: usize) {
-    tokio::time::timeout(Duration::from_secs(35), async {
+    let final_body = tokio::time::timeout(Duration::from_secs(35), async {
         loop {
-            if api.requests().await.iter().skip(after).any(|request| {
-                request.target.to_ascii_lowercase().contains("sendmessage")
+            for request in api.requests().await.iter().skip(after) {
+                if request
+                    .target
+                    .to_ascii_lowercase()
+                    .contains("editmessagetext")
                     && request.body.contains(needle)
                     && request.body.contains("Completed")
-            }) {
-                break;
+                {
+                    return serde_json::from_str::<Value>(&request.body).unwrap();
+                }
             }
             tokio::time::sleep(Duration::from_millis(30)).await;
         }
     })
-    .await
-    .unwrap_or_else(|_| panic!("Missing fresh completed Telegram card: {needle}"));
+    .await;
+    if final_body.is_err() {
+        for request in api.requests().await.into_iter().skip(after) {
+            if !request.target.to_ascii_lowercase().contains("getupdates") {
+                eprintln!("Final diagnostic: {} {}", request.target, request.body);
+            }
+        }
+    }
+    let final_body =
+        final_body.unwrap_or_else(|_| panic!("Missing completed Telegram card update: {needle}"));
+    // The mock returns 77 for sends; completion must edit that existing message.
+    assert_eq!(final_body["message_id"], 77);
+    assert_eq!(
+        final_body["reply_markup"]["inline_keyboard"],
+        serde_json::json!([])
+    );
+    assert!(
+        !api.requests()
+            .await
+            .iter()
+            .skip(after)
+            .any(
+                |request| request.target.to_ascii_lowercase().contains("sendmessage")
+                    && request.body.contains(needle)
+                    && request.body.contains("Completed")
+            ),
+        "completion must not send a duplicate final card"
+    );
 }
 fn button(body: &Value, needle: &str) -> String {
     body["reply_markup"]["inline_keyboard"]
@@ -447,4 +484,262 @@ fn opencode_native_rmux_telegram_closed_loop() {
     }
     let status = command.status().unwrap();
     assert!(status.success());
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated agy, installed native plugins and tmux; uses model inference"]
+#[allow(clippy::too_many_lines)]
+async fn antigravity_native_telegram_workspace_first_input_closed_loop() {
+    let directory = tempfile::tempdir().unwrap();
+    let endpoint = format!("unix://{}", directory.path().join("control.sock").display());
+    let hub = Arc::new(BridgeHub::with_multiplexer_kind(
+        agentix_core::MultiplexerKind::Tmux,
+    ));
+    let socket = directory.path().join("tmux.sock");
+    let driver = Arc::new(agentix_tmux::TmuxDriver::with_command(
+        std::env::var("AGENTIX_TEST_TMUX")
+            .unwrap_or_else(|_| "tmux".into())
+            .into(),
+        Some(socket.clone()),
+    ));
+    let native: Arc<dyn AgentAdapter> = Arc::new(
+        BridgeAdapter::new(
+            AgentKind::Antigravity,
+            hub.clone(),
+            PathBuf::from(std::env::var("HOME").unwrap()).join(".gemini/antigravity-cli/brain"),
+        )
+        .with_workspace(
+            &directory.path().join("launch"),
+            vec![],
+            &directory.path().join("project"),
+        )
+        .with_multiplexer(driver),
+    );
+    let agent: Arc<dyn AgentAdapter> =
+        Arc::new(AgentRegistry::new(vec![(AgentKind::Antigravity, native)]).unwrap());
+    let shutdown = CancellationToken::new();
+    let (control_tx, _control_rx) = mpsc::channel(16);
+    let listener = tokio::spawn({
+        let endpoint = endpoint.clone();
+        let shutdown = shutdown.clone();
+        let hub = hub.clone();
+        async move { control::serve_with_bridge(&endpoint, control_tx, shutdown, Some(hub)).await }
+    });
+    let child = tokio::process::Command::new("node")
+        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .arg("plugins/agentix-bridge/tests/antigravity-closedloop-host.mjs")
+        .arg(directory.path())
+        .arg(&endpoint)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut host = NativeHost {
+        child,
+        socket,
+        pid_file: directory.path().join("native-pids"),
+        rmux: false,
+    };
+    let mut ready = String::new();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        BufReader::new(host.child.stdout.take().unwrap()).read_line(&mut ready),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(ready.trim(), "ready");
+    let telegram = MockTelegramApi::start().await;
+    let channel = Arc::new(agentix_telegram::TelegramAdapter::with_bot(
+        Bot::new("fixture-token").set_api_url(telegram.api_url().parse().unwrap()),
+        agentix_telegram::TelegramPolicy::new([42]),
+    ));
+    let state = SqliteState::open(&directory.path().join("agentix.sqlite3"))
+        .await
+        .unwrap();
+    let engine = Arc::new(
+        Engine::new(agent.clone(), state, vec![channel.clone()])
+            .with_multiplexer_kind(agentix_core::MultiplexerKind::Tmux),
+    );
+    engine.restore_bindings_deferred().await.unwrap();
+    let (tx, rx) = mpsc::channel(32);
+    let channel_task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move { channel.run(tx, shutdown).await }
+    });
+    let engine_task = tokio::spawn(run_engine_loop(engine, agent.clone(), rx, shutdown.clone()));
+    telegram
+        .push_updates(vec![message(90, "/tmux antigravity")])
+        .await;
+    let menu = wait_body(&telegram, "+ Session", 0).await;
+    let before = telegram.requests().await.len();
+    telegram
+        .push_updates(vec![callback(91, &button(&menu, "+ Session"))])
+        .await;
+    let create = wait_body(&telegram, "Create", before).await;
+    let before = telegram.requests().await.len();
+    telegram
+        .push_updates(vec![callback(92, &button(&create, "Create"))])
+        .await;
+    let picker = wait_body(&telegram, "Antigravity", before).await;
+    let before = telegram.requests().await.len();
+    telegram
+        .push_updates(vec![callback(93, &button(&picker, "Antigravity"))])
+        .await;
+    wait_body(&telegram, "Attached", before).await;
+    let empty = agent.list_sessions(None, 100).await.unwrap();
+    assert_eq!(empty.sessions.len(), 1);
+    assert!(empty.sessions[0].id.as_str().ends_with("-pending"));
+    // Registration can precede TUI initialization; await readiness without sending input.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let screen = tokio::process::Command::new(
+                std::env::var("AGENTIX_TEST_TMUX").unwrap_or_else(|_| "tmux".into()),
+            )
+            .arg("-S")
+            .arg(&host.socket)
+            .args([
+                "capture-pane",
+                "-p",
+                "-t",
+                &empty.sessions[0].terminal.as_ref().unwrap().pane_id,
+            ])
+            .output()
+            .await
+            .unwrap();
+            if String::from_utf8_lossy(&screen.stdout).contains("? for shortcuts") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let before = telegram.requests().await.len();
+    telegram
+        .push_updates(vec![message(
+            101,
+            "Reply exactly AGENTIXNATIVEACK. Do not use tools.",
+        )])
+        .await;
+    wait_final(&telegram, "AGENTIXNATIVEACK", before).await;
+    assert_eq!(
+        telegram
+            .requests()
+            .await
+            .iter()
+            .skip(before)
+            .filter(
+                |request| request.target.to_ascii_lowercase().contains("sendmessage")
+                    && request.body.contains("AGENTIXNATIVEACK")
+            )
+            .count(),
+        1,
+        "identity handoff must retain the original Sending card"
+    );
+
+    let native = agent.list_sessions(None, 100).await.unwrap();
+    assert_eq!(native.sessions.len(), 1);
+    assert_ne!(native.sessions[0].id, empty.sessions[0].id);
+    assert!(!native.sessions[0].id.as_str().ends_with("-pending"));
+    let before = telegram.requests().await.len();
+    telegram.push_updates(vec![message(102, "/new")]).await;
+    wait_body(&telegram, "New conversation ready", before).await;
+    let before = telegram.requests().await.len();
+    telegram
+        .push_updates(vec![message(
+            103,
+            "Reply exactly AGENTIXAFTERNEW. Do not use tools.",
+        )])
+        .await;
+    wait_final(&telegram, "AGENTIXAFTERNEW", before).await;
+    assert_eq!(
+        telegram
+            .requests()
+            .await
+            .iter()
+            .skip(before)
+            .filter(|r| r.target.to_ascii_lowercase().contains("sendmessage")
+                && r.body.contains("AGENTIXAFTERNEW"))
+            .count(),
+        1,
+        "lazy /new must keep one reply card"
+    );
+    let replaced = agent.list_sessions(None, 100).await.unwrap();
+    assert_eq!(replaced.sessions.len(), 1);
+    assert_ne!(replaced.sessions[0].id, native.sessions[0].id);
+    assert_eq!(replaced.sessions[0].terminal, native.sessions[0].terminal);
+    let before = telegram.requests().await.len();
+    telegram
+        .push_updates(vec![message(
+            104,
+            "Write 2000 numbered lines about trees. Do not use tools.",
+        )])
+        .await;
+    wait_body(&telegram, "Working", before).await;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let screen = tokio::process::Command::new(
+                std::env::var("AGENTIX_TEST_TMUX").unwrap_or_else(|_| "tmux".into()),
+            )
+            .arg("-S")
+            .arg(&host.socket)
+            .args([
+                "capture-pane",
+                "-p",
+                "-t",
+                &replaced.sessions[0].terminal.as_ref().unwrap().pane_id,
+            ])
+            .output()
+            .await
+            .unwrap();
+            if String::from_utf8_lossy(&screen.stdout).contains("Working...") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    telegram.push_updates(vec![message(105, "/stop")]).await;
+    wait_body(&telegram, "Interrupted", before).await;
+    let history = agent
+        .read_history(&replaced.sessions[0].id, None, 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        history.turns.last().unwrap().status,
+        agentix_core::TurnStatus::Interrupted
+    );
+    let before = telegram.requests().await.len();
+    telegram
+        .push_updates(vec![message(
+            106,
+            "Reply exactly AGENTIXLATESTTURN. Do not use tools.",
+        )])
+        .await;
+    wait_final(&telegram, "AGENTIXLATESTTURN", before).await;
+    let latest = agent
+        .read_history(&replaced.sessions[0].id, None, 1)
+        .await
+        .unwrap();
+    assert!(
+        latest.turns[0]
+            .agent_text
+            .as_deref()
+            .unwrap()
+            .contains("AGENTIXLATESTTURN")
+    );
+    let before = telegram.requests().await.len();
+    telegram.push_updates(vec![message(107, "/last")]).await;
+    wait_body(&telegram, "AGENTIXLATESTTURN", before).await;
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(10), engine_task)
+        .await
+        .unwrap()
+        .unwrap();
+    channel_task.abort();
+    hub.shutdown().await;
+    listener.abort();
 }

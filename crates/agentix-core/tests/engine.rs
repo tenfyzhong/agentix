@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use agentix_core::{
@@ -14,6 +14,164 @@ use agentix_core::{
 use async_trait::async_trait;
 use tempfile::tempdir;
 use tokio::sync::broadcast;
+
+#[tokio::test]
+async fn antigravity_new_waits_for_first_input_before_starting_handoff() {
+    use agentix_core::{AgentKind, AgentRegistry};
+    let agent = Arc::new(FakeAgent::new());
+    let registry = AgentRegistry::new(vec![(AgentKind::Antigravity, agent.clone())]).unwrap();
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        Arc::new(registry),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach antigravity:thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    assert!(
+        state.session_switch(&chat).await.unwrap().is_none(),
+        "agy allocates its new identity only after input; do not queue that input awaiting an identity"
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "first new input"))
+        .await
+        .unwrap();
+    assert!(
+        agent
+            .calls()
+            .contains(&"start:thr_a:first new input".to_owned())
+    );
+    engine
+        .handle_agent_event(AgentEvent::SessionSwitchStarted {
+            session_id: "antigravity:thr_a".into(),
+            client_id: "host".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionReplaced {
+            session_id: "antigravity:thr_a".into(),
+            replacement_session_id: "antigravity:thr_b".into(),
+            client_id: "host".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("antigravity:thr_b"))
+    );
+}
+
+#[tokio::test]
+async fn antigravity_first_input_handoff_preserves_pending_card() {
+    use agentix_core::{AgentKind, AgentRegistry, EngineWork};
+    for deliver_card_first in [false, true] {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let mut adapter = FakeAgent::new();
+        adapter.start_gate = Some(gate.clone());
+        let history_turns = adapter.history_turns.clone();
+        let registry = AgentRegistry::new(vec![(
+            AgentKind::Antigravity,
+            Arc::new(adapter) as Arc<dyn AgentAdapter>,
+        )])
+        .unwrap();
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            Arc::new(registry),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound("chat-a", "/attach antigravity:thr_a"))
+            .await
+            .unwrap();
+        let release = tokio_util::sync::CancellationToken::new();
+        *channel.next_send_gate.lock().unwrap() =
+            Some((tokio_util::sync::CancellationToken::new(), release.clone()));
+        engine
+            .execute_work(EngineWork::Inbound(inbound("chat-a", "handoff prompt")))
+            .await
+            .unwrap();
+        if deliver_card_first {
+            release.cancel();
+            apply_next_pending_input(&engine).await;
+        }
+        *history_turns.lock().unwrap() = vec![TurnSummary {
+            id: "turn_new".into(),
+            status: TurnStatus::InProgress,
+            user_text: Some("handoff prompt".into()),
+            agent_text: None,
+            tools: Vec::new(),
+            items: Vec::new(),
+        }];
+        for event in [
+            AgentEvent::SessionSwitchStarted {
+                session_id: "antigravity:thr_a".into(),
+                client_id: "host".into(),
+            },
+            AgentEvent::SessionReplaced {
+                session_id: "antigravity:thr_a".into(),
+                replacement_session_id: "antigravity:thr_b".into(),
+                client_id: "host".into(),
+            },
+            AgentEvent::SessionResumed {
+                session_id: "antigravity:thr_b".into(),
+            },
+            AgentEvent::TurnStarted {
+                session_id: "antigravity:thr_b".into(),
+                turn_id: "turn_new".into(),
+            },
+        ] {
+            engine.handle_agent_event(event).await.unwrap();
+        }
+        if !deliver_card_first {
+            release.cancel();
+            apply_next_pending_input(&engine).await;
+        }
+        engine
+            .handle_agent_event(AgentEvent::AgentMessageDelta {
+                session_id: "antigravity:thr_b".into(),
+                turn_id: "turn_new".into(),
+                item_id: "answer".into(),
+                delta: "handoff answer".into(),
+            })
+            .await
+            .unwrap();
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "antigravity:thr_b".into(),
+                turn_id: "turn_new".into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        gate.notify_one();
+        apply_next_pending_input(&engine).await;
+        let prompt_cards = channel
+            .messages
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|view| view.body.contains("handoff prompt"))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            prompt_cards.len(),
+            1,
+            "first input must keep one card across native identity handoff"
+        );
+        assert!(prompt_cards[0].body.contains("handoff answer"));
+        assert!(engine.working_turns().await.is_empty());
+    }
+}
 
 #[tokio::test]
 async fn native_terminal_interaction_can_be_cancelled_without_a_session_switch() {
@@ -5712,6 +5870,14 @@ async fn stream_updates_are_throttled_but_completion_flushes_latest_text() {
             .unwrap();
     }
     assert_eq!(channel.sent().len(), before + 1);
+    let running_message = channel
+        .messages
+        .lock()
+        .unwrap()
+        .keys()
+        .find(|message| message.message_id == format!("m{}", before + 1))
+        .unwrap()
+        .clone();
 
     engine
         .handle_agent_event(AgentEvent::TurnCompleted {
@@ -5723,9 +5889,11 @@ async fn stream_updates_are_throttled_but_completion_flushes_latest_text() {
         .await
         .unwrap();
     let sent = channel.sent();
-    assert_eq!(sent.len(), before + 3);
-    assert_eq!(channel.messages.lock().unwrap().len(), cards_before + 2);
+    assert_eq!(sent.len(), before + 2);
+    assert_eq!(channel.messages.lock().unwrap().len(), cards_before + 1);
+    assert_eq!(channel.updated().last().unwrap().0, running_message);
     assert!(sent.last().unwrap().1.body.contains("first second"));
+    assert!(sent.last().unwrap().1.actions.is_empty());
 }
 
 #[tokio::test]
@@ -10339,6 +10507,13 @@ async fn runtime_pending_input_stops_when_early_turn_id_arrives() {
 async fn runtime_pending_ack_preserves_completed_output_and_card() {
     let (engine, _, channel, gate, _) = pending_runtime_input().await;
     let count = channel.messages.lock().unwrap().len();
+    let original_messages = channel
+        .messages
+        .lock()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<HashSet<_>>();
     engine
         .handle_agent_event(AgentEvent::TurnStarted {
             session_id: "thr_a".into(),
@@ -10378,8 +10553,18 @@ async fn runtime_pending_ack_preserves_completed_output_and_card() {
     );
     assert_eq!(
         channel.messages.lock().unwrap().len(),
-        count + 1,
-        "send one final card and preserve it across the late acknowledgement"
+        count,
+        "complete the existing card and preserve it across the late acknowledgement"
+    );
+    assert_eq!(
+        channel
+            .messages
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>(),
+        original_messages
     );
     let views = channel.sent();
     let view = &views.last().unwrap().1;
@@ -11085,7 +11270,12 @@ async fn runtime_pending_card_reconciles_completed_output_after_ack() {
     );
     release.cancel();
     apply_next_pending_input(&engine).await;
-    assert_eq!(channel.messages.lock().unwrap().len(), count + 2);
+    assert_eq!(channel.messages.lock().unwrap().len(), count + 1);
+    let completed_message = channel.updated().last().unwrap().0.clone();
+    let messages = channel.messages.lock().unwrap();
+    let completed = messages.get(&completed_message).unwrap();
+    assert!(completed.body.contains("completed before card"));
+    assert!(completed.actions.is_empty());
     let updated = channel.sent();
     let view = &updated.last().unwrap().1;
     assert!(view.body.contains("completed before card"));

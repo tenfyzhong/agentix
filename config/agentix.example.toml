@@ -104,7 +104,16 @@ owner_user_ids = []
 # enable = false
 # config = "~/.config/taskix/config.toml"
 
-# Enable any combination of [agent.codex], [agent.pi], [agent.omp], [agent.claude], and [agent.opencode].
+# Enable Antigravity CLI (agy 1.5.5 acceptance baseline):
+# [agent.antigravity]
+# command = "agy"
+# session_dir = "~/.gemini/antigravity-cli/brain"
+# state_dir = "~/.local/share/agentix/antigravity"
+# Install both native plugins with make plugin HOSTS=antigravity.
+# Keep the original agy running inside tmux, rmux, or Rex.
+# Custom state_dir: export AGENTIX_ANTIGRAVITY_DATA_DIR in original terminals.
+
+# Enable any combination of [agent.codex], [agent.pi], [agent.omp], [agent.claude], [agent.opencode], and [agent.antigravity].
 # The table name selects the backend; do not add a kind field.
 # Pi/OMP require agentix-bridge in the original process.
 # Optional Pi/OMP fields (place inside the corresponding backend table):

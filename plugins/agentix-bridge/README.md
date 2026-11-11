@@ -45,3 +45,11 @@ IDs supply turn identity. The validated minimum is 2.0.32; earlier patches are n
 supported and later host changes need continued compatibility testing.
 See the [OpenCode guide](https://github.com/tenfyzhong/agentix/wiki/OpenCode) and
 [wire contract](../../docs/host-protocol.md#opencode) for installation and lifecycle details.
+
+## Antigravity
+
+The `antigravity/` native hooks and MCP sidecar attach to the original `agy`
+process. Install the filtered native packages with `make plugin HOSTS=antigravity`.
+Remote delivery and controls require tmux, rmux or Rex. See the
+[Antigravity guide](https://github.com/tenfyzhong/agentix/wiki/Antigravity) and
+[wire contract](../../docs/host-protocol.md#antigravity).

@@ -179,8 +179,9 @@ fn complete_finite_operation_space_stays_below_machine_series_budget() {
         assert!(!text.contains("session="));
     }
     // Reserve 450 series for all finite snapshot, queue, event and token dimensions.
+    // Six native backends add three operations (RPC, turn, first output) per host.
     assert!(
-        series + 450 <= 2000,
+        series + 450 <= 2200,
         "operation series={series}, snapshots reserve=450"
     );
 }
@@ -264,6 +265,7 @@ fn bridge_usage_counts_only_post_registration_deltas_for_each_bounded_source() {
         (TokenSource::Omp, "omp_bridge"),
         (TokenSource::Claude, "claude_bridge"),
         (TokenSource::OpenCode, "opencode_bridge"),
+        (TokenSource::Antigravity, "antigravity_bridge"),
     ] {
         let mut baseline = Usage {
             input: Some(100),

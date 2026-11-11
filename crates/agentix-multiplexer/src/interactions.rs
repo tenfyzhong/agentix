@@ -227,6 +227,7 @@ fn agent_process_names(agent: AgentKind) -> &'static [&'static str] {
         AgentKind::Omp => &["omp", "node", "bun"],
         AgentKind::Claude => &["claude", "node"],
         AgentKind::OpenCode => &["opencode", "bun"],
+        AgentKind::Antigravity => &["agy"],
     }
 }
 
@@ -242,6 +243,7 @@ async fn screen_with(
         AgentKind::Omp => &["omp", "node", "bun"],
         AgentKind::Claude => &["claude", "node"],
         AgentKind::OpenCode => &["opencode", "bun"],
+        AgentKind::Antigravity => &["agy"],
     };
     if !names.contains(&snapshot.command.as_str()) || snapshot.in_mode || snapshot.dead {
         return Err(failure(

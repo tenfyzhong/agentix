@@ -1497,7 +1497,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (instance,component,operation) (rate(agentix_operations_total{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|engine|control\"}[$__rate_interval]))",
+          "expr": "sum by (instance,component,operation) (rate(agentix_operations_total{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|antigravity|engine|control\"}[$__rate_interval]))",
           "legendFormat": "__auto",
           "range": true,
           "interval": "1m"
@@ -1549,7 +1549,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (instance,component,operation,outcome) (rate(agentix_operations_total{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|engine|control\"}[$__rate_interval]))",
+          "expr": "sum by (instance,component,operation,outcome) (rate(agentix_operations_total{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|antigravity|engine|control\"}[$__rate_interval]))",
           "legendFormat": "__auto",
           "range": true,
           "interval": "1m"
@@ -1601,7 +1601,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (instance,component,operation,le) (rate(agentix_operation_duration_seconds_bucket{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|engine|control\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (instance,component,operation,le) (rate(agentix_operation_duration_seconds_bucket{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|antigravity|engine|control\"}[$__rate_interval])))",
           "legendFormat": "__auto",
           "range": true,
           "interval": "1m"
@@ -1653,7 +1653,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (instance,component,operation,le) (rate(agentix_operation_duration_seconds_bucket{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|engine|control\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (instance,component,operation,le) (rate(agentix_operation_duration_seconds_bucket{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|antigravity|engine|control\"}[$__rate_interval])))",
           "legendFormat": "__auto",
           "range": true,
           "interval": "1m"
@@ -1705,7 +1705,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.99, sum by (instance,component,operation,le) (rate(agentix_operation_duration_seconds_bucket{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|engine|control\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (instance,component,operation,le) (rate(agentix_operation_duration_seconds_bucket{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|antigravity|engine|control\"}[$__rate_interval])))",
           "legendFormat": "__auto",
           "range": true,
           "interval": "1m"
@@ -1757,7 +1757,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "agentix_operations_in_flight{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|engine|control\"}",
+          "expr": "agentix_operations_in_flight{instance=~\"$instance\",component=~\"codex|pi|omp|claude|opencode|antigravity|engine|control\"}",
           "legendFormat": "__auto",
           "range": true,
           "interval": "1m"

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "taskix-manager",
+  "displayName": "Taskix Manager",
+  "version": "0.2.2",
+  "description": "Manage Taskix tasks, jobs, discussions, and project memory.",
+  "author": { "name": "tenfyzhong" },
+  "repository": "https://github.com/tenfyzhong/agentix",
+  "license": "MIT"
+}

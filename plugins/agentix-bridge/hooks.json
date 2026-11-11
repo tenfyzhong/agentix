@@ -1,0 +1,8 @@
+{
+  "agentix-bridge": {
+    "SessionStart": [{ "type": "command", "command": "node antigravity/hook.mjs" }],
+    "PreInvocation": [{ "type": "command", "command": "node antigravity/hook.mjs" }],
+    "PostInvocation": [{ "type": "command", "command": "node antigravity/hook.mjs" }],
+    "Stop": [{ "type": "command", "command": "node antigravity/hook.mjs" }]
+  }
+}

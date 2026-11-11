@@ -109,7 +109,17 @@ impl Engine {
                 ..TurnBuffer::from_summary(turn, self.output)
             },
         );
-        self.turns.views.lock().await.remove(&key);
+        // A reconnect (including agy's first-input handoff) must retain the
+        // live card just adopted by record_turn_started. A different IM chat
+        // needs its own card when attachment moves the session.
+        let mut views = self.turns.views.lock().await;
+        if views
+            .get(&key)
+            .is_some_and(|message| message.conversation != *conversation)
+        {
+            views.remove(&key);
+        }
+        drop(views);
         self.turns.last_renders.lock().await.remove(&key);
         self.render_turn(
             conversation,
@@ -159,7 +169,7 @@ impl Engine {
         let buffer = buffers.entry(key).or_default();
         buffer.ensure_started();
         buffer.set_status(status.clone());
-        if let Some(error) = &error {
+        if let Some(error) = error.as_deref().filter(|error| !error.trim().is_empty()) {
             buffer.record_output(None, &format!("Error: {error}"), false, false);
         }
         drop(buffers);
@@ -883,7 +893,8 @@ impl Engine {
         snapshot: &TurnBuffer,
         delivery: DeliveryClass,
     ) -> Result<Option<MessageRef>, EngineError> {
-        let fresh_final = snapshot.status == TurnStatus::Completed
+        let fresh_final = conversation.channel != crate::ChannelKind::Telegram
+            && snapshot.status == TurnStatus::Completed
             && delivery == DeliveryClass::Live
             && !snapshot.final_card_delivered;
         if let Some((message, revision)) = existing {

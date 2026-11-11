@@ -62,6 +62,7 @@ struct UnusedChannel;
 
 #[derive(Default)]
 struct CompletedTurnChannel {
+    feishu: bool,
     interval: Duration,
     sends: std::sync::atomic::AtomicUsize,
     reject_send: std::sync::atomic::AtomicBool,
@@ -77,7 +78,11 @@ impl ChannelAdapter for CompletedTurnChannel {
         self.interval
     }
     fn kind(&self) -> ChannelKind {
-        ChannelKind::Telegram
+        if self.feishu {
+            ChannelKind::Feishu
+        } else {
+            ChannelKind::Telegram
+        }
     }
     async fn send(
         &self,
@@ -120,18 +125,94 @@ impl ChannelAdapter for CompletedTurnChannel {
 }
 
 #[tokio::test]
+async fn telegram_completion_updates_one_card_and_retries_without_duplicate_send() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let channel = Arc::new(CompletedTurnChannel::default());
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    let session = SessionId::new("antigravity:native");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    engine
+        .record_turn_started(session.clone(), "turn".into())
+        .await
+        .unwrap();
+    {
+        let mut buffers = engine.turns.buffers.lock().await;
+        let buffer = buffers.get_mut(&(session.clone(), "turn".into())).unwrap();
+        buffer.user_text = "test".into();
+        buffer.agent_text = "answer".into();
+    }
+    engine
+        .render_turn(&conversation, &session, "turn", DeliveryClass::Live, true)
+        .await
+        .unwrap();
+    channel.reject_update.store(true, Relaxed);
+    assert!(
+        engine
+            .handle_turn_completed(
+                &conversation,
+                &session,
+                "turn".into(),
+                crate::TurnStatus::Completed,
+                None,
+                DeliveryClass::Live
+            )
+            .await
+            .is_err()
+    );
+    for error in [Some(String::new()), Some("   ".into())] {
+        engine
+            .handle_turn_completed(
+                &conversation,
+                &session,
+                "turn".into(),
+                crate::TurnStatus::Completed,
+                error,
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(channel.sends.load(Relaxed), 1);
+    let updates = channel.updates.lock().await;
+    let (message, view) = updates.last().unwrap();
+    assert_eq!(message.message_id, "0");
+    assert!(view.body.contains("answer"));
+    assert!(!view.body.contains("Error:"));
+    assert!(view.actions.is_empty());
+}
+
+#[tokio::test]
 async fn final_response_uses_a_fresh_card_and_repeated_completion_reuses_it() {
-    assert_fresh_final_card(Arc::new(CompletedTurnChannel::default()), false).await;
+    assert_fresh_final_card(
+        Arc::new(CompletedTurnChannel {
+            feishu: true,
+            ..Default::default()
+        }),
+        false,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn final_response_send_failure_preserves_recoverable_card_and_retries() {
-    assert_fresh_final_card(Arc::new(CompletedTurnChannel::default()), true).await;
+    assert_fresh_final_card(
+        Arc::new(CompletedTurnChannel {
+            feishu: true,
+            ..Default::default()
+        }),
+        true,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn final_response_is_sent_when_previous_card_update_is_rejected() {
     let channel = Arc::new(CompletedTurnChannel {
+        feishu: true,
         reject_update: true.into(),
         ..Default::default()
     });
@@ -141,6 +222,7 @@ async fn final_response_is_sent_when_previous_card_update_is_rejected() {
 #[tokio::test]
 async fn final_response_is_sent_when_previous_card_update_stalls() {
     let channel = Arc::new(CompletedTurnChannel {
+        feishu: true,
         stall_update: true.into(),
         ..Default::default()
     });
@@ -160,7 +242,7 @@ async fn assert_fresh_final_card(channel: Arc<CompletedTurnChannel>, reject_firs
         vec![channel.clone()],
     );
     let session = SessionId::new("session");
-    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    let conversation = ConversationRef::new(ChannelKind::Feishu, "chat");
     let key = (session.clone(), "turn".to_owned());
     engine
         .record_turn_started(session.clone(), key.1.clone())

@@ -1,0 +1,10 @@
+{
+  "taskix-manager": {
+    "SessionStart": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }],
+    "PreInvocation": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }],
+    "PostInvocation": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }],
+    "PreToolUse": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }] }],
+    "PostToolUse": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }] }],
+    "Stop": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }]
+  }
+}

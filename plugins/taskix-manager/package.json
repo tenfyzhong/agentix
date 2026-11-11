@@ -8,6 +8,10 @@
     "pi-package"
   ],
   "files": [
+    "antigravity/",
+    ".antigravity-plugin/",
+    "mcp_config.json",
+    "hooks.json",
     ".codex-plugin/",
     ".claude-plugin/",
     "extensions/",

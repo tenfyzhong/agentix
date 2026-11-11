@@ -14,19 +14,7 @@ impl Engine {
         owner_id: &str,
         kind: &str,
     ) -> Result<(), EngineError> {
-        let kind = match kind {
-            "claude" => crate::AgentKind::Claude,
-            "opencode" => crate::AgentKind::OpenCode,
-            "codex" => crate::AgentKind::Codex,
-            "pi" => crate::AgentKind::Pi,
-            "omp" => crate::AgentKind::Omp,
-            _ => {
-                return Err(EngineError::InvalidInput(format!(
-                    "Use /{} codex, pi, omp, or claude",
-                    self.multiplexer_kind
-                )));
-            }
-        };
+        let kind = super::parse_backend(kind)?;
         if !self.agent.workspace_backends().contains(&kind) {
             return Err(EngineError::InvalidInput(
                 "Agent backend is not configured for terminal workspaces".into(),

@@ -27,6 +27,7 @@ end
 complete -c agentix -n "__fish_agentix_needs_command" -s c -l config -r -F
 complete -c agentix -n "__fish_agentix_needs_command" -s h -l help -d 'Print help'
 complete -c agentix -n "__fish_agentix_needs_command" -s V -l version -d 'Print version'
+complete -c agentix -n "__fish_agentix_needs_command" -f -a "launch-antigravity"
 complete -c agentix -n "__fish_agentix_needs_command" -f -a "launch-open-code"
 complete -c agentix -n "__fish_agentix_needs_command" -f -a "serve" -d 'Run the Agentix bridge until interrupted'
 complete -c agentix -n "__fish_agentix_needs_command" -f -a "reload" -d 'Reload the running server configuration without restarting the process'
@@ -34,6 +35,10 @@ complete -c agentix -n "__fish_agentix_needs_command" -f -a "doctor" -d 'Validat
 complete -c agentix -n "__fish_agentix_needs_command" -f -a "client" -d 'Use the running Agentix server for local diagnostics and setup'
 complete -c agentix -n "__fish_agentix_needs_command" -f -a "completions" -d 'Print a shell completion script to stdout'
 complete -c agentix -n "__fish_agentix_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c agentix -n "__fish_agentix_using_subcommand launch-antigravity" -l command -r -F
+complete -c agentix -n "__fish_agentix_using_subcommand launch-antigravity" -l state-dir -r -F
+complete -c agentix -n "__fish_agentix_using_subcommand launch-antigravity" -l endpoint -r
+complete -c agentix -n "__fish_agentix_using_subcommand launch-antigravity" -s h -l help -d 'Print help'
 complete -c agentix -n "__fish_agentix_using_subcommand launch-open-code" -l command -r -F
 complete -c agentix -n "__fish_agentix_using_subcommand launch-open-code" -l state-dir -r -F
 complete -c agentix -n "__fish_agentix_using_subcommand launch-open-code" -l endpoint -r
@@ -82,13 +87,14 @@ complete -c agentix -n "__fish_agentix_using_subcommand client; and __fish_seen_
 complete -c agentix -n "__fish_agentix_using_subcommand client; and __fish_seen_subcommand_from help" -f -a "call" -d 'Ask the server to send a raw JSON RPC request to Codex'
 complete -c agentix -n "__fish_agentix_using_subcommand client; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c agentix -n "__fish_agentix_using_subcommand completions" -s h -l help -d 'Print help'
-complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-open-code serve reload doctor client completions help" -f -a "launch-open-code"
-complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-open-code serve reload doctor client completions help" -f -a "serve" -d 'Run the Agentix bridge until interrupted'
-complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-open-code serve reload doctor client completions help" -f -a "reload" -d 'Reload the running server configuration without restarting the process'
-complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-open-code serve reload doctor client completions help" -f -a "doctor" -d 'Validate configuration, credentials, and the selected agent transport'
-complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-open-code serve reload doctor client completions help" -f -a "client" -d 'Use the running Agentix server for local diagnostics and setup'
-complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-open-code serve reload doctor client completions help" -f -a "completions" -d 'Print a shell completion script to stdout'
-complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-open-code serve reload doctor client completions help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-antigravity launch-open-code serve reload doctor client completions help" -f -a "launch-antigravity"
+complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-antigravity launch-open-code serve reload doctor client completions help" -f -a "launch-open-code"
+complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-antigravity launch-open-code serve reload doctor client completions help" -f -a "serve" -d 'Run the Agentix bridge until interrupted'
+complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-antigravity launch-open-code serve reload doctor client completions help" -f -a "reload" -d 'Reload the running server configuration without restarting the process'
+complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-antigravity launch-open-code serve reload doctor client completions help" -f -a "doctor" -d 'Validate configuration, credentials, and the selected agent transport'
+complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-antigravity launch-open-code serve reload doctor client completions help" -f -a "client" -d 'Use the running Agentix server for local diagnostics and setup'
+complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-antigravity launch-open-code serve reload doctor client completions help" -f -a "completions" -d 'Print a shell completion script to stdout'
+complete -c agentix -n "__fish_agentix_using_subcommand help; and not __fish_seen_subcommand_from launch-antigravity launch-open-code serve reload doctor client completions help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c agentix -n "__fish_agentix_using_subcommand help; and __fish_seen_subcommand_from client" -f -a "claim" -d 'Generate a temporary in-memory owner claim code for the selected IM channel'
 complete -c agentix -n "__fish_agentix_using_subcommand help; and __fish_seen_subcommand_from client" -f -a "sessions" -d 'List sessions available through the running Agentix server'
 complete -c agentix -n "__fish_agentix_using_subcommand help; and __fish_seen_subcommand_from client" -f -a "send" -d 'Send a prompt to an original session, or steer its active turn'

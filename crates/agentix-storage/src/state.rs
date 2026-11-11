@@ -2,7 +2,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Connection, Row, SqlitePool};
 
 use agentix_domain::{
     AttachOutcome, ChannelKind, ConversationRef, MessageRef, SessionId, TurnStatus,
@@ -96,6 +96,15 @@ impl SqliteState {
             .create_if_missing(true);
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
+            .after_release(|connection, _| {
+                Box::pin(async move {
+                    // Flush queued rollbacks first. SQLx 0.8 custom BEGIN can be
+                    // cancelled after acknowledgement but before its Transaction
+                    // guard exists; discard any connection still owning a transaction.
+                    connection.ping().await?;
+                    Ok(!connection.is_in_transaction())
+                })
+            })
             .connect_with(options)
             .await?;
         let state = Self { pool };
@@ -620,6 +629,32 @@ fn parse_turn_status(status: &str) -> Option<TurnStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn released_connection_with_unowned_transaction_does_not_lock_other_writers() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = SqliteState::open(&directory.path().join("cancelled.sqlite3"))
+            .await
+            .unwrap();
+        let mut orphan = state.pool.acquire().await.unwrap();
+        let mut writer = state.pool.acquire().await.unwrap();
+        let mut tx = orphan.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        sqlx::query("INSERT INTO processed_events (channel, event_id, status, attempts) VALUES ('telegram', 'uncommitted', 'processing', 1)")
+            .execute(&mut *tx).await.unwrap();
+        // Reproduce cancellation after SQLx acknowledges custom BEGIN but before
+        // its final lock_handle await creates the owning Transaction guard.
+        std::mem::forget(tx);
+        drop(orphan);
+        sqlx::query("INSERT INTO processed_events (channel, event_id, status, attempts) VALUES ('telegram', 'next', 'processing', 1)")
+            .execute(&mut *writer).await.expect("returned connection retained its write lock");
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM processed_events WHERE event_id = 'uncommitted'",
+        )
+        .fetch_one(&mut *writer)
+        .await
+        .unwrap();
+        assert_eq!(count, 0, "unowned work must be rolled back, not committed");
+    }
 
     #[tokio::test]
     async fn checkpoint_skips_locked_connection_and_preserves_committed_bindings() {
