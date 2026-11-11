@@ -844,6 +844,7 @@ AGENTIX_TEST_ANTIGRAVITY_NATIVE=1 node --test plugins/agentix-bridge/tests/antig
 AGENTIX_TEST_ANTIGRAVITY_INSTALL=1 node --test plugins/taskix-manager/tests/antigravity-native-install.test.mjs
 AGENTIX_ANTIGRAVITY_PERFORMANCE=1 node --test plugins/agentix-bridge/tests/antigravity-performance.test.mjs
 AGENTIX_TEST_ANTIGRAVITY_TERMINAL=tmux node --test plugins/agentix-bridge/tests/antigravity-terminal-native.test.mjs
+AGENTIX_TEST_ANTIGRAVITY_MULTIPANE=1 node --test plugins/agentix-bridge/tests/antigravity-multipane-native.test.mjs
 ```
 
 Native installation/headless tests use an isolated HOME and terminate before
@@ -856,6 +857,14 @@ terminal to `rmux` or `rex` to exercise those adapters. Optional environment fla
 `AGENTIX_TEST_ANTIGRAVITY_NEW=1` exercise real model-backed interactions. These
 require authenticated agy and can incur normal provider usage. NEW requires
 APPROVAL or QUESTIONS. No global permission settings are changed.
+
+The opt-in multipane test uses two real agy processes in one tmux window and
+working directory. It requires installed native plugins and existing onboarding,
+isolates bridge traffic/state and Taskix calls, and terminates before inference.
+It verifies distinct provisional identities, PID/workspace binding, first-input
+handoff with acknowledgements on the original sockets, and receipt/history
+recovery after disconnecting each bridge connection. This is native bridge
+protocol acceptance, not a live IM account test.
 
 Local macOS native runs covered tmux command/file approvals and questions,
 rmux command approval plus lazy new-session identity, Rex single/multiple/write-in
