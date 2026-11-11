@@ -611,6 +611,7 @@ impl TaskBoardService {
         let Some(service) = &self.backend else {
             return;
         };
+        let observed_at_ms = wall_clock_millis();
         let needs_source = matches!(event, crate::AgentEvent::TurnCompleted { .. })
             || matches!(event, crate::AgentEvent::ItemCompleted { item, .. } if item.kind == "userMessage");
         let project = if let Some(cwd) = cwd.filter(|_| needs_source) {
@@ -651,7 +652,10 @@ impl TaskBoardService {
                     .entry((session_id.clone(), turn_id.clone()))
                     .or_default();
                 let id = format!("{turn_id}:{}", item.id);
-                let message = json!({"id":id,"role":role,"text":text});
+                let mut message = json!({"id":id,"role":role,"text":text});
+                if role == "user" {
+                    message["completed_at_ms"] = json!(observed_at_ms);
+                }
                 if let Some(existing) = messages.iter_mut().find(|message| message["id"] == id) {
                     *existing = message;
                 } else {
@@ -672,7 +676,7 @@ impl TaskBoardService {
                 ..
             } => {
                 let key = (session_id.clone(), turn_id.clone());
-                let messages = self
+                let mut messages = self
                     .conversations
                     .lock()
                     .await
@@ -682,6 +686,7 @@ impl TaskBoardService {
                 if messages.is_empty() {
                     return;
                 }
+                complete_output(&mut messages, observed_at_ms);
                 let native = SessionId::new(session_id);
                 let result = service.execute(json!({"command":"session.record","project_hint":project,"session":native.native_str(),"turn_id":turn_id,"source":"agentix","messages":messages}), WriteOptions {session_ref:Some(native.native_str().to_owned()), ..WriteOptions::default()}).await;
                 match result {
@@ -696,5 +701,25 @@ impl TaskBoardService {
             }
             _ => (),
         }
+    }
+}
+
+fn wall_clock_millis() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(i64::MAX)
+}
+
+fn complete_output(messages: &mut [serde_json::Value], completed_at_ms: i64) {
+    if let Some(output) = messages
+        .iter_mut()
+        .rev()
+        .find(|message| message["role"] == "assistant")
+    {
+        output["completed_at_ms"] = json!(completed_at_ms);
     }
 }

@@ -1768,35 +1768,33 @@ fn pending_review_view() -> Value {
 }
 
 fn conversation_markdown(job: &crate::Job) -> String {
-    let mut turns: Vec<(String, Vec<&str>)> = Vec::new();
+    let mut turns: Vec<(String, Option<i64>, Vec<&crate::JobMessage>)> = Vec::new();
     for message in &job.conversation {
         if message.role == "user" {
             let text = crate::conversation::user_text(&message.text);
             if !text.trim().is_empty() {
-                turns.push((text.into(), Vec::new()));
+                turns.push((text.into(), message.completed_at_ms, Vec::new()));
             }
         } else if message.role == "assistant" && !message.text.trim().is_empty() {
             if turns.is_empty() {
                 turns.push((
                     crate::conversation::user_text(&job.prompt).into(),
+                    None,
                     Vec::new(),
                 ));
             }
-            turns
-                .last_mut()
-                .unwrap()
-                .1
-                .push(message.text.trim_end_matches(['\r', '\n']));
+            turns.last_mut().unwrap().2.push(message);
         }
     }
     if turns.is_empty() {
         return String::new();
     }
     let mut body = String::from("\n## Conversation\n");
-    for (index, (prompt, output)) in turns.iter().enumerate() {
+    for (index, (prompt, input_time, output)) in turns.iter().enumerate() {
         body.push_str(&format!("\n### Turn {}\n", index + 1));
         if !prompt.trim().is_empty() {
             body.push_str("\n#### User input\n\n");
+            append_completion_time(&mut body, *input_time);
             for line in prompt.split('\n') {
                 if !line.is_empty() {
                     body.push_str("    ");
@@ -1807,7 +1805,24 @@ fn conversation_markdown(job: &crate::Job) -> String {
         }
         if !output.is_empty() {
             body.push_str("\n#### Agent output\n\n");
-            for line in output.join("\n\n").split('\n') {
+            let output_time = output.last().and_then(|message| message.completed_at_ms);
+            append_completion_time(&mut body, output_time);
+            if let (Some(start), Some(end)) = (input_time, output_time)
+                && end >= *start
+            {
+                let elapsed = end - start;
+                body.push_str(&format!(
+                    "Elapsed: {}.{:03} s\n\n",
+                    elapsed / 1000,
+                    elapsed % 1000
+                ));
+            }
+            let text = output
+                .iter()
+                .map(|message| message.text.trim_end_matches(['\r', '\n']))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            for line in text.split('\n') {
                 body.push('>');
                 if !line.is_empty() {
                     body.push(' ');
@@ -1818,4 +1833,22 @@ fn conversation_markdown(job: &crate::Job) -> String {
         }
     }
     body
+}
+
+fn append_completion_time(body: &mut String, millis: Option<i64>) {
+    let Some(millis) = millis else {
+        return;
+    };
+    let Ok(instant) =
+        time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(millis) * 1_000_000)
+    else {
+        return;
+    };
+    let offset = time::UtcOffset::local_offset_at(instant).unwrap_or(time::UtcOffset::UTC);
+    if let Ok(value) = instant
+        .to_offset(offset)
+        .format(&time::format_description::well_known::Rfc3339)
+    {
+        body.push_str(&format!("Completed at: {value}\n\n"));
+    }
 }

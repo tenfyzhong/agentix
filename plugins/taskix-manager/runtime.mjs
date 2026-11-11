@@ -101,6 +101,7 @@ async function prepareMeasuredPrompt(prompt, options, runner, routing, history =
 }
 
 export async function runHook(event, runner = runTaskix, routing = {}) {
+    if (event.hook_event_name === "Stop" && event.willContinue !== true) event = { ...event, completed_at_ms: Date.now() };
     if (!event.session_id) throw new Error("Hook requires session_id");
     if (event.hook_event_name === "PostToolUseFailure" && event.is_interrupt !== true)
         return {};
@@ -284,6 +285,7 @@ export function registerExtension(
         }
     });
     api.on("agent_end", async (event, ctx) => {
+        const completedAt = Date.now();
         const state = stateFor(ctx);
         if (!state) return;
         const turn = host === "opencode" ? event.turnId ?? state.turn : state.turn;
@@ -298,6 +300,12 @@ export function registerExtension(
             const user = messages.findIndex(message => message.role === "user" && message.text === prompt.text);
             if (user >= 0) messages[user] = prompt;
             else messages.unshift(prompt);
+        }
+        const completedOutput = messages.findLast(message => message.role === "assistant");
+        if (completedOutput && event.willContinue !== true) {
+            if (state.completion?.turn !== turn || state.completion?.id !== completedOutput.id)
+                state.completion = { turn, id: completedOutput.id, time: completedAt };
+            completedOutput.completed_at_ms = state.completion.time;
         }
         const lastAssistant = event.messages?.findLast(message => message.role === "assistant");
         state.aborted = lastAssistant?.stopReason === "aborted" && event.willContinue !== true;
@@ -351,6 +359,7 @@ export function registerExtension(
         });
     }
     api.on("before_agent_start", async (event, ctx) => {
+        const submittedAt = Date.now();
         const state = stateFor(ctx);
         if (state) {
             if (state.cleanup) await state.cleanup;
@@ -365,6 +374,7 @@ export function registerExtension(
             state.turn = event.turnId || event.turn_id || (shared?.active && shared.prompt === event.prompt ? shared.id : randomUUID());
             turnRegistry.set(state.options.session, {id:state.turn,prompt:event.prompt,active:true,bridge:shared?.id===state.turn && shared.bridge});
             state.prompt = visibleMessage({id:`${state.turn}:${state.turn}:user`,role:"user",content:event.prompt});
+            if (state.prompt) state.prompt.completed_at_ms = submittedAt;
             if (state.prompt) await recordMessages([state.prompt], runner, state.options, undefined, {turn_id:state.turn,source:host});
         }
         const options = optionsFor(ctx);

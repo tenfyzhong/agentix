@@ -24,6 +24,10 @@ export async function stageTranscript(event, runner, options, directory = join(t
     const capture = await transcriptConversation(event.transcript_path,{currentOnly:true,sessionId:options.session});
     if (!capture.turn_id || !capture.messages.length) return;
     if (initial && receipt?.turn === capture.turn_id && receipt.expires > Date.now()) return;
+    const output = capture.messages.findLast(message => message.role === "assistant");
+    if (output && Number.isSafeInteger(event.completed_at_ms)) output.completed_at_ms ??= event.completed_at_ms;
+    const input = capture.messages.findLast(message => message.role === "user");
+    if (input && Number.isSafeInteger(event.submitted_at_ms)) input.completed_at_ms ??= event.submitted_at_ms;
     await recordMessages(capture.messages,runner,options,undefined,{turn_id:capture.turn_id,source:"transcript"});
     if (initial) {
         await mkdir(directory,{recursive:true,mode:0o700});

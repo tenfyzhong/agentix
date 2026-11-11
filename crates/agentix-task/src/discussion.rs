@@ -126,7 +126,15 @@ fn merge_turn_messages(messages: &mut Vec<Value>, incoming: &[Value]) -> Result<
         if text.trim().is_empty() {
             continue;
         }
-        let value = json!({"id":id,"role":role,"text":text});
+        let incoming_time = crate::conversation::completion_time(message)?;
+        let completed_at_ms = indexes
+            .get(id)
+            .and_then(|index| messages[*index]["completed_at_ms"].as_i64())
+            .or(incoming_time);
+        let mut value = json!({"id":id,"role":role,"text":text});
+        if let Some(millis) = completed_at_ms {
+            value["completed_at_ms"] = json!(millis);
+        }
         if let Some(&index) = indexes.get(id) {
             let old = &mut messages[index];
             ensure!(old["role"] == role, "conflict: message role changed");

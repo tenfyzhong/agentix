@@ -90,9 +90,10 @@ function parsed(value) {
 }
 
 function turnMessages(rows, turn) {
+    const completed = rows.find(row => row.type === "event_msg" && row.payload?.type === "task_complete" && (!row.payload.turn_id || row.payload.turn_id === turn));
     const questions = new Map();
     let nativeQuestions = [];
-    return rows.reverse().flatMap(row => {
+    const messages = rows.reverse().flatMap(row => {
         if (row.antigravity) {
             const step = row.antigravity, messages = [];
             if (step.type === "PLANNER_RESPONSE") {
@@ -148,8 +149,17 @@ function turnMessages(rows, turn) {
         if (!message) return [];
         if (codex && raw.id && turn) message.id = `${turn}:${raw.id}`;
         if (!codex && row.uuid) message.id = row.uuid;
+        if (message.role === "user") {
+            const timestamp = raw.timestamp ?? row.timestamp;
+            const millis = typeof timestamp === "number" ? timestamp : Date.parse(timestamp);
+            if (Number.isSafeInteger(millis) && millis >= 0) message.completed_at_ms = millis;
+        }
         return [message];
     });
+    const last = messages.findLast(message => message.role === "assistant");
+    const finished = Date.parse(completed?.timestamp);
+    if (last && Number.isSafeInteger(finished) && finished >= 0) last.completed_at_ms = finished;
+    return messages;
 }
 
 export async function transcriptConversation(path, options) {
