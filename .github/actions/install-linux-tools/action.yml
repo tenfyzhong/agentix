@@ -1,0 +1,29 @@
+name: Install Linux tools
+description: Install Ubuntu packages from the kernel.org mirror
+inputs:
+  packages:
+    description: Space-separated Ubuntu package names
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        source /etc/os-release
+        [[ "$ID" == ubuntu ]]
+        sources="$RUNNER_TEMP/agentix-ubuntu.sources"
+        cat > "$sources" <<EOF_SOURCES
+        Types: deb
+        URIs: https://mirrors.edge.kernel.org/ubuntu
+        Suites: $VERSION_CODENAME ${VERSION_CODENAME}-updates ${VERSION_CODENAME}-security
+        Components: main restricted universe multiverse
+        Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+        EOF_SOURCES
+        # Use only this source, including during install; retain Ubuntu signature checks.
+        options=(-o "Dir::Etc::sourcelist=$sources" -o "Dir::Etc::sourceparts=-"
+                 -o Acquire::Retries=3 -o APT::Update::Error-Mode=any)
+        read -r -a packages <<< "$PACKAGES"
+        sudo apt-get "${options[@]}" update
+        sudo apt-get "${options[@]}" install --yes "${packages[@]}"
