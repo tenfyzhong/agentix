@@ -94,6 +94,11 @@ receipts. Native trajectory files are read without modification.
   merged in native step order. Older turns outside the reader window that the
   bridge has never observed, and truncated text, cannot be recovered by this
   projection.
+  If a native turn omits its Stop hook, the next explicit user turn releases
+  the stalled synchronization queue. The previous turn's outcome stays unknown;
+  later turns and `/last` continue normally. Delayed older hooks cannot replace
+  a newer active turn. After updating the plugin, use agy's `/mcp` menu to restart
+  `agentix-bridge_bridge`, or restart agy, to load the fix and replay queued hooks.
 
 The Taskix MCP tool binds commands to the original native session and executor.
 Native hooks route each explicit user step once, capture discussion, renew

@@ -271,3 +271,31 @@ test('same_directory_hosts_keep_independent_bindings_across_repeated_new_and_res
         assert.notEqual(hosts[0].records.at(-1).session_id, hosts[1].records.at(-1).session_id);
     }
 });
+
+test('runtime_drains_later_turns_after_missing_stop_and_returns_latest_history', async t => {
+    const root = mkdtempSync(join(tmpdir(), 'agy-missing-stop-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const path = join(root, 'transcript.jsonl'), mailbox = new AntigravityMailbox(root, 'host');
+    const identity = { conversationId: 'native', workspacePaths: [root], transcriptPath: path };
+    const user = (step_index, content) => ({ step_index, content, type: 'USER_INPUT', source: 'USER_EXPLICIT' });
+    const answer = (step_index, content) => ({ step_index, content, type: 'PLANNER_RESPONSE', source: 'MODEL' });
+    const write = rows => writeFileSync(path, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const hook = (hookEventName, extra = {}) => mailbox.publish({ ...identity, hookEventName, ...extra });
+    let handlers;
+    const runtime = createRuntime({ root, mailbox, transportFactory: options => {
+        handlers = options; return { open() {}, close: async () => {}, event() {}, usage() {} };
+    } });
+    t.after(() => runtime.close());
+    write([user(0, 'first')]); hook('SessionStart'); hook('PreInvocation'); await runtime.poll();
+    // Terminal Escape may omit Stop; the next user step must still make progress.
+    write([user(0, 'first'), answer(1, 'partial'), user(9, 'second')]); hook('PreInvocation');
+    write([user(0, 'first'), answer(1, 'partial'), user(9, 'second'), answer(10, 'second answer')]); hook('Stop', { fullyIdle: true });
+    await runtime.poll();
+    const history = await handlers.handle('history', { limit: 1 });
+    assert.equal(history.turns[0].id, 'native:step:9');
+    assert.equal(history.turns[0].agent_text, 'second answer');
+    assert.equal(history.turns[0].status, 'completed');
+    assert.equal(mailbox.identity().agentix_turn_id, 'native:step:9');
+    const { readdirSync } = await import('node:fs');
+    assert.equal(readdirSync(mailbox.path).filter(name => name.endsWith('.event.json')).length, 0);
+});

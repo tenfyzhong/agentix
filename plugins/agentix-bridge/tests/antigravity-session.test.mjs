@@ -363,3 +363,41 @@ test('terminal_stop_confirmation_does_not_settle_a_newer_turn', async () => {
     assert.equal(f.session.active.id, 'native:step:9');
     assert.equal(f.events.filter(event => event.TurnCompleted).length, 1);
 });
+
+for (const restored of [false, true]) test(`new_native_turn_recovers_missing_stop_restored_${restored}`, () => {
+    const previous = { ...turn(), status: 'inProgress' };
+    const f = fixture(restored ? { saved: { turns: [previous], active_id: previous.id } } : {});
+    f.hook('SessionStart');
+    if (!restored) f.hook('PreInvocation');
+    f.transcript([turn(undefined, 'hello', 'first answer'), turn('native:step:9', 'second')]);
+    f.hook('PreInvocation', { agentix_turn_id: 'native:step:9', invocationNum: 0 });
+    assert.equal(f.session.active.id, 'native:step:9');
+    assert.equal(f.session.history().turns[0].status, 'unknown');
+    assert.equal(f.session.history().turns[0].agent_text, 'first answer');
+    assert.equal(f.session.info().session.preview, 'second');
+    assert.deepEqual(f.events.filter(e => e.TurnCompleted).map(e => e.TurnCompleted.status), ['unknown']);
+    // Delayed hooks for the abandoned invocation must not undo the recovery.
+    f.hook('PreInvocation', { agentix_turn_id: previous.id });
+    f.hook('Stop', { agentix_turn_id: previous.id, fullyIdle: true });
+    assert.equal(f.session.active.id, 'native:step:9');
+    f.transcript([turn(), turn('native:step:9', 'second', 'latest answer')]);
+    f.hook('Stop', { agentix_turn_id: 'native:step:9', fullyIdle: true });
+    assert.equal(f.session.history(null, 1).turns[0].agent_text, 'latest answer');
+    assert.equal(f.session.active, null);
+});
+
+test('missing_stop_recovery_retries_after_persistence_failure_without_emitting_events', () => {
+    let fail = false;
+    const f = fixture({ persist: () => { if (fail) throw new Error('disk full'); } });
+    f.hook('SessionStart'); f.hook('PreInvocation');
+    f.transcript([turn(), turn('native:step:9', 'second')]);
+    const before = f.events.length;
+    fail = true;
+    assert.throws(() => f.hook('PreInvocation'), /disk full/);
+    assert.equal(f.session.active.id, 'native:step:0');
+    assert.equal(f.events.length, before);
+    fail = false;
+    f.hook('PreInvocation');
+    assert.equal(f.session.active.id, 'native:step:9');
+    assert.equal(f.events.filter(e => e.TurnCompleted).length, 1);
+});

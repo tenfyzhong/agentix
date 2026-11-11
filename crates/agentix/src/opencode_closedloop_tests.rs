@@ -712,6 +712,28 @@ async fn antigravity_native_telegram_workspace_first_input_closed_loop() {
         history.turns.last().unwrap().status,
         agentix_core::TurnStatus::Interrupted
     );
+    let before = telegram.requests().await.len();
+    telegram
+        .push_updates(vec![message(
+            106,
+            "Reply exactly AGENTIXLATESTTURN. Do not use tools.",
+        )])
+        .await;
+    wait_final(&telegram, "AGENTIXLATESTTURN", before).await;
+    let latest = agent
+        .read_history(&replaced.sessions[0].id, None, 1)
+        .await
+        .unwrap();
+    assert!(
+        latest.turns[0]
+            .agent_text
+            .as_deref()
+            .unwrap()
+            .contains("AGENTIXLATESTTURN")
+    );
+    let before = telegram.requests().await.len();
+    telegram.push_updates(vec![message(107, "/last")]).await;
+    wait_body(&telegram, "AGENTIXLATESTTURN", before).await;
     shutdown.cancel();
     tokio::time::timeout(Duration::from_secs(10), engine_task)
         .await

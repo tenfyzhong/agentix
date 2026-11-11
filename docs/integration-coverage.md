@@ -915,9 +915,15 @@ The opt-in Antigravity Telegram workspace test launches an authenticated native
 agy through the production workspace adapter and drives the production Telegram
 adapter, Engine, Registry and bridge against a mock Telegram HTTP endpoint. It
 checks pre-input attachment, first-input identity handoff, lazy `/new` in the
-same pane, reuse of one message card through completion, and active `/stop`.
+same pane, reuse of one message card through completion, active `/stop`,
+and a subsequent turn followed by `/last` returning that latest response.
 It requires installed native plugins and uses real model inference. Cancellation
 is confirmed from the native interruption result and idle composer when agy
 omits its Stop hook. Set `AGENTIX_TEST_TMUX` to the real tmux executable when a
 login shell provides a tmux-compatible rmux alias. Taskix calls, bridge state and
 the terminal server are isolated; this test does not send messages to Telegram.
+
+Missing-Stop session regressions cover live and restored active turns, unknown
+prior outcomes, delayed older hooks, and persistence-failure retries without
+premature events. Runtime mailbox coverage verifies that later hooks drain and
+latest history advances, while normal queued multi-turn replay retains completion.

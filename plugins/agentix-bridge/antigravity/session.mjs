@@ -223,6 +223,10 @@ export class AntigravitySession {
         const transcript = this.readTranscript(this.identity.transcriptPath, value.conversationId);
         const native = value.agentix_turn_id ? transcript.find(turn => turn.id === value.agentix_turn_id) : transcript.at(-1);
         if (!native) return;
+        // A delayed hook must never move the active/latest turn backwards.
+        const step = id => Number(id.split(':step:').at(-1));
+        if (value.hook_event_name === 'PreInvocation' && this.turns.some(turn =>
+            (turn.status !== 'unknown' || turn.id === this.active?.id) && step(native.id) < step(turn.id))) return;
         if (value.hook_event_name === 'PreInvocation') {
             const invocation = JSON.stringify([native.id, value.invocationNum, value.initialNumSteps]);
             if (invocation !== this.invocation) {
@@ -234,8 +238,18 @@ export class AntigravitySession {
         const index = this.turns.findIndex(turn => turn.id === native.id);
         let turns = structuredClone(this.turns), turn = index < 0 ? null : turns[index];
         const events = [], session_id = value.conversationId;
-        if (value.hook_event_name === 'PreInvocation' && (!turn || (turn.status === 'unknown' && !this.active))) {
-            if (this.active) throw failure('busy', 'Previous Antigravity turn has not settled');
+        if (value.hook_event_name === 'PreInvocation' && (!turn || (turn.status === 'unknown' && this.active?.id !== turn.id))) {
+            if (this.active) {
+                // Native cancellation may omit Stop. A later explicit user step
+                // proves the old turn ended, but does not prove its outcome.
+                const previous = turns.find(value => value.id === this.active.id);
+                const refreshed = transcript.find(value => value.id === previous.id);
+                if (refreshed) Object.assign(previous, refreshed);
+                previous.status = 'unknown';
+                events.push({ ItemCompleted: { session_id, turn_id: previous.id,
+                    item: { id: `${previous.id}:assistant`, kind: 'agentMessage', text: previous.agent_text, status: 'unknown' } } });
+                events.push({ TurnCompleted: { session_id, turn_id: previous.id, status: 'unknown', error: null } });
+            }
             turn = { ...native, status: 'inProgress' };
             if (index < 0) turns.push(turn);
             else turns[index] = turn;
