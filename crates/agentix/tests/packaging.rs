@@ -80,7 +80,7 @@ mod release_archives {
     use super::*;
     use std::collections::BTreeSet;
 
-    const PLUGIN_FILES: [&str; 12] = [
+    const PLUGIN_FILES: [&str; 13] = [
         ".codex-plugin/plugin.json",
         ".claude-plugin/plugin.json",
         "package.json",
@@ -93,6 +93,7 @@ mod release_archives {
         "extensions/omp.ts",
         "skills/taskix-manager/SKILL.md",
         "skills/taskix-manager/references/commands.md",
+        "skills/taskix-manager/references/workflow.md",
     ];
 
     fn step_script(workflow: &str, name: &str) -> String {
@@ -269,7 +270,9 @@ mod release_archives {
                 .unwrap();
             assert!(
                 output.status.success(),
-                "{}",
+                "{runner}/{target}: status={} stdout={} stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
             for binary in ["agentix", "taskix"] {
