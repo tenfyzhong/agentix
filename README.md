@@ -115,3 +115,5 @@ Obsidian task boards require **Obsidian 1.14 or newer** with the built-in Bases 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, tests, and releases. Architecture, protocols, benchmarks, and implementation reviews are indexed in [Technical documentation](docs/README.md).
 
 For local Rex terminal integration, configure `[multiplexer] kind = "rex"` and start Rex before Agentix. See [Rex multiplexer](docs/rex-multiplexer.md) for executable discovery, supported operations, and validation coverage.
+
+Install OpenCode, Antigravity, and OMP plugins with [native commands](docs/plugin-installation.md), without cloning this repository.

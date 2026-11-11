@@ -70,10 +70,9 @@ jobs:
           node-version: "24.22.1"
       - name: Install protobuf compiler (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
-          sudo apt-get update
-          sudo apt-get install --yes protobuf-compiler
+        uses: ./.github/actions/install-linux-tools
+        with:
+          packages: protobuf-compiler
       - name: Install protobuf compiler (macOS)
         if: runner.os == 'macOS'
         run: brew install protobuf
@@ -184,11 +183,9 @@ jobs:
           node-version: "24.22.1"
       - name: Install test tools on Linux
         if: runner.os == 'Linux'
-        run: |
-          # Chrome is not used by CI; its third-party index can block apt updates.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
-          sudo apt-get update
-          sudo apt-get install --yes protobuf-compiler fish
+        uses: ./.github/actions/install-linux-tools
+        with:
+          packages: protobuf-compiler fish
       - name: Install test tools on macOS
         if: runner.os == 'macOS'
         run: brew install protobuf fish

@@ -40,3 +40,21 @@ test('native_plugin_install_update_remove_preserves_unrelated_plugins', {
     assert.ok(remaining.includes('unrelated-fixture'));
     for (const name of pluginNames) assert.ok(!remaining.includes(name));
 });
+
+test('direct_source_install_preserves_the_full_workflow_without_skill_truncation', {
+    skip: process.env.AGENTIX_TEST_ANTIGRAVITY_INSTALL !== '1', timeout: 60000,
+}, async t => {
+    const root = await mkdtemp(join(tmpdir(), 'agy-direct-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const source = fileURLToPath(new URL('../', import.meta.url));
+    const env = { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config'), XDG_CACHE_HOME: join(root, 'cache') };
+    const agy = async args => (await run(process.env.AGENTIX_TEST_AGY ?? 'agy', ['plugin', ...args], { env, cwd: root, timeout: 15000 })).stdout;
+    const validation = await agy(['validate', source]);
+    assert.doesNotMatch(validation, /only the first 24000|body is \d+ bytes/);
+    await agy(['install', source]);
+    const installed = JSON.parse(await agy(['list', '--json'])).find(plugin => plugin.name === 'taskix-manager');
+    assert.deepEqual(installed.skills, ['taskix-manager']);
+    const { readFile } = await import('node:fs/promises');
+    const reference = 'skills/taskix-manager/references/workflow.md';
+    assert.equal(await readFile(join(installed.path, reference), 'utf8'), await readFile(join(source, reference), 'utf8'));
+});

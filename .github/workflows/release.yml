@@ -144,7 +144,10 @@ jobs:
             if [[ "$binary" == "taskix" ]]; then
               mkdir -p "$staging/docs"
               cp docs/task-board.md docs/task-workflow-mechanisms.md "$staging/docs/"
-              git archive HEAD plugins/taskix-manager | tar -x -C "$staging"
+              # Materialize the archive so tar cannot close a pipe before git finishes.
+              git archive --output=dist/taskix-plugin.tar HEAD plugins/taskix-manager
+              tar -xf dist/taskix-plugin.tar -C "$staging"
+              rm dist/taskix-plugin.tar
             fi
             executable="$binary"
             if [[ "$RUNNER_OS" == "Windows" ]]; then

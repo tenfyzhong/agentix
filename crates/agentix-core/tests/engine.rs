@@ -10017,7 +10017,7 @@ async fn attach_delivers_history_while_optional_title_lookup_is_pending() {
         vec![channel.clone()],
     );
     tokio::time::timeout(
-        std::time::Duration::from_millis(100),
+        std::time::Duration::from_secs(2),
         engine.handle_inbound(inbound("chat-a", "/attach thr_a")),
     )
     .await

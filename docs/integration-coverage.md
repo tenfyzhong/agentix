@@ -927,3 +927,18 @@ Missing-Stop session regressions cover live and restored active turns, unknown
 prior outcomes, delayed older hooks, and persistence-failure retries without
 premature events. Runtime mailbox coverage verifies that later hooks drain and
 latest history advances, while normal queued multi-turn replay retains completion.
+
+
+## Native plugin installation without a checkout
+
+`plugins/taskix-manager/tests/native-remote-install.test.mjs` runs the documented
+OpenCode, OMP and Antigravity native commands in isolated homes outside a checkout
+when `AGENTIX_TEST_NATIVE_REMOTE_INSTALL=1`. It checks downloaded plugin
+registrations and server/TUI or MCP entrypoints against published main.
+`AGENTIX_TEST_NATIVE_REMOTE_REF` overrides the OpenCode/Antigravity ref; OMP
+marketplace installation always follows its default branch.
+
+The installer/package suites separately cover unpublished code, short skill
+entrypoints, complete workflow references, rollback, and unrelated-plugin
+preservation. Native installation does not establish authenticated model execution
+or IM round-trip acceptance.

@@ -24,14 +24,14 @@ export async function installNativePlugins({ repository, branch, run = runComman
     const stage = await mkdtemp(join(tmpdir(), 'agentix-agy-install-'));
     let preserve = false;
     try {
-        if (!repository) {
-            repository = join(stage, 'repository');
-            await run('git', ['clone', '--depth', '1', '--single-branch', '--branch', branch, '--',
-                'https://github.com/tenfyzhong/agentix.git', repository]);
-        }
         const packages = join(stage, 'packages');
-        await buildNativePlugins(repository, packages);
-        for (const name of pluginNames) await run(agy, ['plugin', 'validate', '--strict', join(packages, name)]);
+        const targets = new Map(pluginNames.map(name => [name,
+            repository ? join(packages, name)
+                : `https://github.com/tenfyzhong/agentix/tree/${encodeURIComponent(branch)}/plugins/${name}`]));
+        if (repository) {
+            await buildNativePlugins(repository, packages);
+            for (const name of pluginNames) await run(agy, ['plugin', 'validate', '--strict', targets.get(name)]);
+        }
         const previous = new Map((await installedPlugins(run, agy)).map(plugin => [plugin.name, plugin]));
         for (const plugin of previous.values()) {
             if (typeof plugin.path !== 'string' || !plugin.path) throw new Error(`Missing previous plugin path for ${plugin.name}`);
@@ -41,7 +41,7 @@ export async function installNativePlugins({ repository, branch, run = runComman
         try {
             for (const name of pluginNames) {
                 attempted.push(name);
-                await run(agy, ['plugin', 'install', join(packages, name)]);
+                await run(agy, ['plugin', 'install', targets.get(name)]);
                 if (previous.get(name)?.enabled === false) await run(agy, ['plugin', 'disable', name]);
             }
         } catch (error) {

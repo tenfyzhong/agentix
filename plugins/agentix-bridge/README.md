@@ -49,7 +49,10 @@ See the [OpenCode guide](https://github.com/tenfyzhong/agentix/wiki/OpenCode) an
 ## Antigravity
 
 The `antigravity/` native hooks and MCP sidecar attach to the original `agy`
-process. Install the filtered native packages with `make plugin HOSTS=antigravity`.
+process. Install directly with
+`agy plugin install https://github.com/tenfyzhong/agentix/tree/main/plugins/agentix-bridge`.
+Install Taskix Manager from the adjacent `plugins/taskix-manager` GitHub URL.
+No Agentix checkout is required.
 Remote delivery and controls require tmux, rmux or Rex. See the
 [Antigravity guide](https://github.com/tenfyzhong/agentix/wiki/Antigravity) and
 [wire contract](../../docs/host-protocol.md#antigravity).

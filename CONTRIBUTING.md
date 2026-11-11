@@ -187,6 +187,8 @@ overwrite arbitrary files when Homebrew reports a link conflict.
 
 ## Installing plugins
 
+For end users, use the native commands in the [plugin installation guide](docs/plugin-installation.md); no checkout is needed.
+
 Run `make plugin` to install from the GitHub branch matching the current checkout's
 branch name. The branch must already exist on `tenfyzhong/agentix`; unpushed changes
 are not installed. Detached HEAD and the removed `SOURCE` option fail before cleanup.
@@ -222,8 +224,9 @@ is 2.0.32; later API changes require compatibility testing. Reported publication
 failures roll back package/configuration changes, preserving file modes and original
 symlinks. This is not crash-atomic or safe for concurrent installer invocations.
 
+On main, OMP installs directly through `omp plugin marketplace add tenfyzhong/agentix`.
 OMP's marketplace CLI has no branch selector. The installer clones the requested
-remote branch into `$XDG_CACHE_HOME/agentix/omp-marketplace` (default:
+non-main remote branch into `$XDG_CACHE_HOME/agentix/omp-marketplace` (default:
 `~/.cache/agentix/omp-marketplace`) and registers that directory. This never uses
 the working checkout's files. Rerun `make plugin HOSTS=omp` to fetch updates;
 `make remove-plugin HOSTS=omp` unregisters the plugins and removes this cache.
