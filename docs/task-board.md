@@ -35,6 +35,28 @@ The regression test `job_pr_properties_follow_agent_replies_and_deduplicate_on_s
 covers the empty list, multiple hosts, user/issue exclusion, canonicalization,
 capture retries and sync.
 
+## Conversation timing
+
+Captured messages optionally carry `completed_at_ms` (Unix milliseconds), separate
+from the database's `recorded_at` ingestion time. User inputs use the submission
+or completed-input event; only the last visible assistant message receives the
+turn completion time. Codex transcript capture uses `task_complete`; live Stop,
+Agentix `TurnCompleted`, and extension `agent_end` handlers capture the observed
+completion time before persistence. Antigravity's first PreInvocation captures
+submission when the transcript does not provide it.
+
+Job projection adds `Completed at` beneath each input/output heading using the
+local time zone, and `Elapsed` beneath Agent output as output completion minus
+input submission, in seconds with millisecond precision. Intermediate replies
+have no completion time. Unknown legacy timestamps remain absent; ingestion
+and Job creation times are never substituted. Missing endpoints or a backwards
+clock omit elapsed duration. Replays preserve the first captured completion time,
+including when an older producer resends the same text without timing metadata.
+
+The conversation timing regressions cover transcript completion boundaries,
+metadata-only updates, discussion staging, replay, legacy records, and deterministic
+Markdown synchronization. They do not establish live host timing accuracy.
+
 ## Validation
 
 `make check` installs locked plugin dependencies, then runs Rust formatting, Clippy, workspace tests, and the Node built-in plugin tests. Install Node.js 24+ and npm. Direct Cargo invocations require `npm ci --ignore-scripts --prefix plugins/taskix-manager` first. Normal tests use temporary databases/directories and local mock services, not live accounts.

@@ -11,6 +11,9 @@ pub struct JobMessage {
     pub role: String,
     pub text: String,
     pub recorded_at: i64,
+    /// Source completion time in Unix milliseconds; absent for legacy captures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at_ms: Option<i64>,
 }
 
 /// Remove complete leading host-context wrappers without filtering requests
@@ -233,13 +236,16 @@ fn merge_messages(
         if text.trim().is_empty() {
             continue;
         }
+        let completed_at_ms = completion_time(message)?;
         if let Some(&index) = indexes.get(id) {
             let existing = &mut entries[index];
             ensure!(existing.role == role, "conflict: message role changed");
-            if existing.text == text {
+            let completed_at_ms = existing.completed_at_ms.or(completed_at_ms);
+            if existing.text == text && existing.completed_at_ms == completed_at_ms {
                 continue;
             }
             existing.text = text.into();
+            existing.completed_at_ms = completed_at_ms;
         } else {
             indexes.insert(id.into(), entries.len());
             entries.push(JobMessage {
@@ -248,6 +254,7 @@ fn merge_messages(
                 role: role.into(),
                 text: text.into(),
                 recorded_at: now,
+                completed_at_ms,
             });
             inserted.push(anchors[position]);
         }
@@ -272,4 +279,19 @@ fn merge_messages(
         job.conversation = merged;
     }
     Ok(recorded)
+}
+
+/// Validate source times before they reach either staging or Job storage.
+pub(crate) fn completion_time(message: &Value) -> Result<Option<i64>> {
+    let Some(value) = message.get("completed_at_ms").filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let millis = value
+        .as_i64()
+        .context("invalid: completed_at_ms must be Unix milliseconds")?;
+    ensure!(
+        (0..=253_402_300_799_999).contains(&millis),
+        "invalid: completed_at_ms is out of range"
+    );
+    Ok(Some(millis))
 }
