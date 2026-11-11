@@ -128,3 +128,9 @@ test('native_tool_discussion_selection_uses_the_original_user_step', async () =>
     assert.equal(response.details.status, 'selected');
     assert.deepEqual(response.details.turn_ids, ['native:step:0']);
 });
+
+test('ordinary_pre_tool_hook_delegates_to_native_permission_policy', async t => {
+    const f = await fixture(t);
+    assert.deepEqual(await f.event('PreToolUse', { toolCall: { name: 'run_command', args: { CommandLine: 'printf fixture' } } }),
+        { decision: 'allow' });
+});

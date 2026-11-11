@@ -860,7 +860,10 @@ APPROVAL or QUESTIONS. No global permission settings are changed.
 Local macOS native runs covered tmux command/file approvals and questions,
 rmux command approval plus lazy new-session identity, Rex single/multiple/write-in
 questions, and exact draft protection/clearing. Model/effort menu acceptance
-selected the current value; changing to a different model remains unverified.
+now also switches to a different available model and visits each offered effort
+level before restoring the original model and effort. Enable this additional
+check with `AGENTIX_TEST_ANTIGRAVITY_CHANGE_MODEL=1`. Menu queries wait for
+composer readiness after dismissal, so consecutive control operations are safe.
 These component and protocol tests do not establish a live Telegram, Feishu or
 Slack account closed loop, Windows/Linux terminal acceptance, every possible
 native screen layout, or provider reliability.
@@ -891,3 +894,9 @@ acknowledged prompt without another send. Native plugin acceptance allows an
 initial provisional registration and verifies its client/PID-preserving handoff
 to the hook's conversation ID. These fixtures do not constitute a full live IM
 multi-pane acceptance run.
+
+Native terminal acceptance records hooks independently of the bridge mailbox: an
+installed sidecar consumes mailbox events. Inference-free tests require the
+terminating PreInvocation witness; live scenarios require a fully idle Stop.
+Taskix PreToolUse regressions require an explicit `allow` decision for ordinary
+work (delegating to native permissions), while cancelled Issues still deny tools.

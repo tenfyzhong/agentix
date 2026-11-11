@@ -89,6 +89,11 @@ export class AntigravityControls {
             if (owned && parse(await terminal.capture())) {
                 await this.delivery.verify(terminal);
                 await terminal.sendKey('Escape');
+                for (let attempt = 0; attempt < 20; attempt++) {
+                    await this.delay(50);
+                    try { await this.delivery.check(terminal); break; }
+                    catch (error) { if (attempt === 19 || error.bridgeCode !== 'busy') throw error; }
+                }
             }
         }
     }

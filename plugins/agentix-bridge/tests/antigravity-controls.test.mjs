@@ -42,3 +42,20 @@ test('model_selection_refreshes_cached_terminal_snapshots_after_keys', async () 
     const f = fixture(true);
     assert.match((await f.controls.command('model', 'Gemini 4 Argon')).body, /Gemini 4 Argon/);
 });
+
+test('model_query_waits_for_menu_exit_before_returning', async () => {
+    let menu = false, closing = false, ready = 0;
+    const terminal = {
+        sendText: async () => {},
+        sendKey: async key => { if (key === 'Enter') menu = true; if (key === 'Escape') closing = true; },
+        capture: async () => menu ? models(0) : '>\nGemini 4 Carbon · medium',
+    };
+    const delivery = { resolve: async () => terminal, verify: async () => {}, check: async () => {
+        if (menu) throw Object.assign(new Error('Menu has not closed'), { bridgeCode: 'busy' });
+        ready++;
+    } };
+    const controls = new AntigravityControls(delivery, { delay: async () => { if (closing) menu = false; } });
+    await controls.command('model');
+    assert.equal(menu, false, 'query must finish its own menu dismissal');
+    assert.ok(ready >= 2, 'verify composer readiness after dismissal');
+});

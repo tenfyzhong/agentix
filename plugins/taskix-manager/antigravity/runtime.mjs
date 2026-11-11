@@ -70,7 +70,8 @@ export function createAntigravityHooks(options = {}) {
             delete state.previous_session;
         }
         const contexts = [];
-        let decision;
+        // Allow delegates to native permission policy; it does not auto-approve tools.
+        let decision = value.hookEventName === 'PreToolUse' ? { decision: 'allow' } : undefined;
         const collect = result => {
             const content = result?.hookSpecificOutput?.additionalContext;
             if (content) contexts.push(content);

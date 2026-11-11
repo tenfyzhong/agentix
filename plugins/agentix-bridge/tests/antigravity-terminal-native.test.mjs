@@ -34,10 +34,11 @@ test('native_antigravity_terminal_delivery_and_controls', { skip: !kind, timeout
     const hook = fileURLToPath(new URL('../antigravity/hook.mjs', import.meta.url));
     const terminate = fileURLToPath(new URL('./fixtures/antigravity-hook.mjs', import.meta.url));
     const command = `${quote(process.execPath)} ${quote(hook)}`;
+    const record = { type: 'command', command: `${quote(process.execPath)} ${quote(terminate)} Record` };
     await writeFile(join(workspace, '.agents/hooks.json'), JSON.stringify({ bridge: {
-        SessionStart: [{ type: 'command', command }],
-        PreInvocation: [{ type: 'command', command }, ...((liveApproval || liveQuestions || liveFile) ? [] : [{ type: 'command', command: `${quote(process.execPath)} ${quote(terminate)} PreInvocation` }])],
-        Stop: [{ type: 'command', command }],
+        SessionStart: [{ type: 'command', command }, record],
+        PreInvocation: [{ type: 'command', command }, record, ...((liveApproval || liveQuestions || liveFile) ? [] : [{ type: 'command', command: `${quote(process.execPath)} ${quote(terminate)} PreInvocation` }])],
+        Stop: [{ type: 'command', command }, record],
     } }));
     const settings = JSON.stringify({ toolPermission: 'strict', enableTerminalSandbox: false });
     const launch = `exec env AGENTIX_ANTIGRAVITY_DATA_DIR=${quote(data)} ANTIGRAVITY_TEST_EVENTS=${quote(join(root, 'events.jsonl'))} ${quote(process.env.AGENTIX_TEST_AGY ?? 'agy')} --settings ${quote(settings)}`;
@@ -109,7 +110,8 @@ test('native_antigravity_terminal_delivery_and_controls', { skip: !kind, timeout
         if (effort) originalEffort ??= effort.choices[effort.selected];
         return screen;
     };
-    assert.ok((await controls.command('model')).choices.length > 0);
+    const modelChoices = (await controls.command('model')).choices;
+    assert.ok(modelChoices.length > 0);
     await new Promise(resolve => setTimeout(resolve, 150));
     assert.ok(originalModel);
     assert.match((await controls.command('model', originalModel)).body, /Model:/);
@@ -117,6 +119,20 @@ test('native_antigravity_terminal_delivery_and_controls', { skip: !kind, timeout
     await new Promise(resolve => setTimeout(resolve, 150));
     assert.ok(originalEffort);
     assert.equal((await controls.command('reasoning', originalEffort)).body, `Reasoning: ${originalEffort}`);
+    if (process.env.AGENTIX_TEST_ANTIGRAVITY_CHANGE_MODEL === '1') {
+        const alternate = modelChoices.find(choice => choice.value !== originalModel)?.value;
+        assert.ok(alternate, 'Native model acceptance requires two available models');
+        try {
+            assert.equal((await controls.command('model', alternate)).body, `Model: ${alternate}`);
+            const efforts = (await controls.command('reasoning')).choices;
+            for (const effort of efforts) {
+                assert.equal((await controls.command('reasoning', effort.value)).body, `Reasoning: ${effort.value}`);
+            }
+        } finally {
+            await controls.command('model', originalModel);
+            await controls.command('reasoning', originalEffort);
+        }
+    }
     await delivery.check(terminal);
     const prompt = liveFile
         ? `For this isolated UI integration test, use your file ${editFile ? 'editing tool to replace the contents of' : 'writing tool to create'} fixture.txt ${editFile ? 'with' : 'containing'} exactly agentix-file-fixture. Do not run terminal commands or modify any other file.`
@@ -155,6 +171,7 @@ test('native_antigravity_terminal_delivery_and_controls', { skip: !kind, timeout
     if (liveApproval) {
         const interactions = new AntigravityInteractions(delivery);
         const approval = await waitFor(() => interactions.inspect());
+        if (approval.kind !== 'command_approval') t.diagnostic(JSON.stringify(approval));
         assert.equal(approval.kind, 'command_approval');
         assert.match(approval.detail, /printf agentix-approval-fixture/);
         await interactions.respond(approval, { decision: 'Yes, run command' });
@@ -174,12 +191,13 @@ test('native_antigravity_terminal_delivery_and_controls', { skip: !kind, timeout
         catch (error) { await delivery.verify(terminal); const screen = await terminal.capture(); t.diagnostic(screen.slice(screen.lastIndexOf('\nQuestion\n'))); throw error; }
     }
     const events = await waitFor(async () => {
-        const hosts = await readdir(join(data, 'hosts')).catch(() => []);
-        const values = [];
-        for (const host of hosts) for (const name of await readdir(join(data, 'hosts', host))) {
-            if (name.endsWith('.event.json')) values.push(JSON.parse(await readFile(join(data, 'hosts', host, name), 'utf8')));
-        }
-        return values.some(value => value.hookEventName === 'Stop') ? values : null;
+        // The installed sidecar consumes mailbox files; keep an independent hook witness.
+        const contents = await readFile(join(root, 'events.jsonl'), 'utf8').catch(() => '');
+        const values = contents.trim().split('\n').filter(Boolean).map(line => JSON.parse(line).event);
+        const completed = liveApproval || liveQuestions || liveFile
+            ? values.some(value => value.hookEventName === 'Stop' && value.fullyIdle)
+            : values.some(value => value.hookEventName === 'PreInvocation');
+        return completed ? values : null;
     });
     t.diagnostic(JSON.stringify(events.map(({ hookEventName, terminationReason, fullyIdle, initialNumSteps, invocationNum }) => ({ hookEventName, terminationReason, fullyIdle, initialNumSteps, invocationNum }))));
     const pre = events.find(event => event.hookEventName === 'PreInvocation');
