@@ -61,8 +61,10 @@ export class AntigravitySession {
     async pollInteraction() {
         if (this.closed || this.controlling || !this.options.interactions) return;
         if (!this.active) { this.clearInteraction(); return; }
+        const invocation = this.invocation, turnId = this.active.id;
         const prompt = await this.options.interactions.inspect();
-        if (this.closed || this.controlling || !this.active) return;
+        if (this.closed || this.retiring || this.controlling || !this.active
+            || this.invocation !== invocation || this.active.id !== turnId) return;
         if (!prompt) { this.clearInteraction(); this.answeredFingerprint = null; return; }
         if (prompt.fingerprint === this.pendingInteraction?.prompt.fingerprint || prompt.fingerprint === this.answeredFingerprint) return;
         this.clearInteraction();
@@ -104,7 +106,12 @@ export class AntigravitySession {
             catch (error) { this.receipts = new Map(previous); throw error; }
             return { message: 'Uncertain delivery cleared; no message was cancelled or resent' };
         }
-        if (method === 'stop' && this.options.delivery?.stop) return this.options.delivery.stop();
+        if (method === 'stop' && this.options.delivery?.stop) {
+            if (this.controlling) throw failure('busy', 'Antigravity is handling another terminal operation');
+            this.controlling = true;
+            try { return await this.options.delivery.stop(); }
+            finally { this.controlling = false; }
+        }
         if (method === 'interaction') {
             const pending = this.pendingInteraction;
             if (!pending || pending.request.rpc_id !== params.rpc_id) throw failure('invalid_request', 'Interaction is no longer pending');

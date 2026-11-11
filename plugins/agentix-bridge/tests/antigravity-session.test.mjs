@@ -312,3 +312,32 @@ test('restoring_bounded_native_history_keeps_saved_turns_in_chronological_order'
     assert.deepEqual(f.session.turns.map(value => value.id), turns.map(value => value.id));
     assert.ok(f.session.turns.every(value => value.status === 'completed'));
 });
+
+test('interaction_inspection_from_previous_invocation_is_discarded', async () => {
+    let finish;
+    const prompt = { kind: 'command_approval', title: 'Old approval', choices: ['Yes'], fingerprint: 'old' };
+    const f = fixture({ interactions: { inspect: () => new Promise(resolve => { finish = resolve; }) } });
+    f.hook('SessionStart'); f.hook('PreInvocation', { invocationNum: 1 });
+    const polling = f.session.pollInteraction();
+    f.hook('PreInvocation', { invocationNum: 2 });
+    finish(prompt); await polling;
+    assert.equal(f.events.filter(event => event.InteractionRequested).length, 0);
+    assert.equal(f.session.pendingInteraction ?? null, null);
+});
+
+test('stop_serializes_terminal_operations_and_releases_guard_after_failure', async () => {
+    let finish, stops = 0;
+    const f = fixture({ delivery: { stop: () => { stops++; return new Promise((resolve, reject) => { finish = reject; }); } },
+        controls: { command: async () => { throw new Error('must not reach terminal'); } } });
+    f.hook('SessionStart');
+    const stopping = f.session.request('stop');
+    const busy = error => error.bridgeCode === 'busy';
+    await assert.rejects(f.session.request('command', { name: 'model' }), busy);
+    // A second stop must not inject another Escape into the same terminal operation.
+    const duplicate = f.session.request('stop');
+    await assert.rejects(duplicate, busy);
+    finish(new Error('foreground changed'));
+    await assert.rejects(stopping, /foreground changed/);
+    assert.equal(f.session.controlling, false);
+    assert.equal(stops, 1);
+});
