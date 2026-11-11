@@ -24,6 +24,15 @@ runs:
         # Use only this source, including during install; retain Ubuntu signature checks.
         options=(-o "Dir::Etc::sourcelist=$sources" -o "Dir::Etc::sourceparts=-"
                  -o Acquire::Retries=3 -o APT::Update::Error-Mode=any)
+        # sudo drops proxy variables; pass the runner's proxy explicitly to apt.
+        http_proxy_url="${http_proxy:-${HTTP_PROXY:-}}"
+        https_proxy_url="${https_proxy:-${HTTPS_PROXY:-$http_proxy_url}}"
+        if [[ -n "$http_proxy_url" ]]; then
+          options+=(-o "Acquire::http::Proxy=$http_proxy_url")
+        fi
+        if [[ -n "$https_proxy_url" ]]; then
+          options+=(-o "Acquire::https::Proxy=$https_proxy_url")
+        fi
         read -r -a packages <<< "$PACKAGES"
         sudo apt-get "${options[@]}" update
         sudo apt-get "${options[@]}" install --yes "${packages[@]}"
