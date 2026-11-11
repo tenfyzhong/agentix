@@ -165,6 +165,7 @@ test("Codex Stop records the current turn's visible messages without tools or co
         message("assistant", "Visible reply", "a"),
     ]);
     assert.equal(batches.length, 1);
+    assert.ok(Number.isSafeInteger(batches[0].at(-1).completed_at_ms));
     assert.deepEqual(batches[0].map(message => message.id), ["current:u", "current:a"]);
     assert.deepEqual(batches[0].map(({role, text}) => ({role, text})), [
         {role:"user",text:"Exact request"}, {role:"assistant",text:"Visible reply"}
@@ -207,6 +208,8 @@ test("Pi and OMP agent_end persist prompt and visible output only", async () => 
             {role:"toolResult",content:[{type:"text",text:"private tool output"}]},
         ]},ctx);
         assert.equal(batches.length,2);
+        assert.ok(Number.isSafeInteger(batches[0].messages[0].completed_at_ms));
+        assert.ok(batches[1].messages[1].completed_at_ms >= batches[0].messages[0].completed_at_ms);
         assert.deepEqual(batches[0].messages.map(({role,text})=>({role,text})),[{role:"user",text:"User prompt"}]);
         assert.deepEqual(batches[1].messages.map(({role,text})=>({role,text})),[{role:"user",text:"User prompt"},{role:"assistant",text:"Agent reply"}]);
         await handlers.get("session_shutdown")({},ctx);
@@ -378,4 +381,25 @@ test('antigravity_user_envelopes_do_not_leak_metadata_into_discussion', async t 
     await writeFile(path, JSON.stringify({ step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', content }) + '\n');
     const capture = await transcriptConversation(path, { sessionId: 'native', currentOnly: true });
     assert.deepEqual(capture.messages, [{ id: 'native:step:0', role: 'user', text: 'hey' }]);
+});
+
+test("codex capture uses submitted input and task completion timestamps", async t => {
+    const directory = await mkdtemp(join(tmpdir(), "taskix-timing-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, "transcript.jsonl");
+    const rows = [
+        { type: "event_msg", timestamp: "2026-11-11T10:00:00.000Z", payload: { type: "task_started", turn_id: "timed" } },
+        { type: "response_item", timestamp: "2026-11-11T10:00:01.123Z", payload: { type: "message", id: "u", role: "user", content: "Request" } },
+        { type: "response_item", timestamp: "2026-11-11T10:00:02.000Z", payload: { type: "message", id: "a", role: "assistant", channel: "commentary", content: "Working" } },
+        { type: "response_item", timestamp: "2026-11-11T10:01:00.000Z", payload: { type: "message", id: "b", role: "assistant", channel: "final", content: "Done" } },
+    ];
+    await writeFile(path, rows.map(JSON.stringify).join("\n"));
+    let capture = await transcriptConversation(path);
+    assert.equal(capture.messages[0].completed_at_ms, Date.parse(rows[1].timestamp));
+    assert.equal(capture.messages[1].completed_at_ms, undefined);
+    assert.equal(capture.messages[2].completed_at_ms, undefined);
+    rows.push({ type: "event_msg", timestamp: "2026-11-11T10:01:03.456Z", payload: { type: "task_complete", turn_id: "timed" } });
+    await writeFile(path, rows.map(JSON.stringify).join("\n"));
+    capture = await transcriptConversation(path);
+    assert.equal(capture.messages[2].completed_at_ms, Date.parse(rows[4].timestamp));
 });

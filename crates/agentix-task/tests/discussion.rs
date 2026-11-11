@@ -547,3 +547,29 @@ async fn discussion_batch_scaling_benchmark() {
         assert_eq!(job["conversation"].as_array().unwrap().len(), count);
     }
 }
+
+#[tokio::test]
+async fn discussion_preserves_completion_time_when_replayed_without_timing() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("tasks.sqlite3"))
+        .await
+        .unwrap();
+    let request = json!({"command":"session.record","session":"discussion-session","turn_id":"timed","messages":[
+        {"id":"u","role":"user","text":"Request","completed_at_ms":1_794_400_000_123_i64}
+    ]});
+    store.execute(request.clone(), options()).await.unwrap();
+    let mut legacy = request;
+    legacy["messages"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("completed_at_ms");
+    store.execute(legacy, options()).await.unwrap();
+    let draft = store
+        .discussion_list("discussion-session", 0, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        draft["turns"][0]["messages"][0]["completed_at_ms"],
+        1_794_400_000_123_i64
+    );
+}

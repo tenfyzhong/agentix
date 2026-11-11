@@ -657,7 +657,8 @@ for (const owned of [false, true])
                 ctx,
             );
             assert.equal(captures.at(-1).turn_id, 'msg_original');
-            assert.deepEqual(captures.at(-1).messages, [
+            assert.ok(Number.isSafeInteger(captures.at(-1).messages[0].completed_at_ms));
+            assert.deepEqual(captures.at(-1).messages.map(({ completed_at_ms, ...message }) => message), [
                 {
                     id: 'msg_original:msg_original:assistant',
                     role: 'assistant',

@@ -1637,6 +1637,7 @@ mod tests {
             role: "assistant".into(),
             text: "Late reply".into(),
             recorded_at: 101,
+            completed_at_ms: None,
         });
         assert_eq!(
             previous_job(&state, "session", "project").await.unwrap()["id"],

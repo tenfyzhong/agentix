@@ -28,12 +28,16 @@ test('native_hooks_inject_context_and_capture_only_visible_native_messages', asy
     const first = await f.event('PreInvocation', { invocationNum: 0, initialNumSteps: 1 });
     assert.match(first.injectSteps.map(step => step.ephemeralMessage).join('\n'), /native:step:0/);
     assert.equal(f.captures[0].turn_id, 'native:step:0');
+    assert.ok(Number.isSafeInteger(f.captures[0].messages[0].completed_at_ms));
     await f.write([
         { step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', content: 'request' },
         { step_index: 1, type: 'THINKING', source: 'MODEL', content: 'private' },
         { step_index: 2, type: 'PLANNER_RESPONSE', source: 'MODEL', content: 'reply' },
     ]);
+    await f.event('Stop', { fullyIdle: false, terminationReason: 'NO_TOOL_CALL' });
+    assert.equal(f.captures.at(-1).messages.at(-1).completed_at_ms, undefined);
     assert.deepEqual(await f.event('Stop', { fullyIdle: true, terminationReason: 'NO_TOOL_CALL' }), {});
+    assert.ok(Number.isSafeInteger(f.captures.at(-1).messages.at(-1).completed_at_ms));
     assert.deepEqual(f.captures.at(-1).messages.map(message => message.text), ['request', 'reply']);
     assert.ok(f.calls.every(call => call.options.session === 'native'));
     assert.ok(f.calls.every(call => call.options.executor === 'agent:antigravity:native'));

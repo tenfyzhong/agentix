@@ -600,3 +600,82 @@ async fn job_pr_properties_follow_agent_replies_and_deduplicate_on_sync() {
         assert_eq!(read_prs(&path), expected);
     }
 }
+
+#[tokio::test]
+async fn conversation_preserves_completion_times_and_renders_elapsed_duration() {
+    let f = job_with_conversation().await;
+    let record = |messages| json!({"command":"session.record","session":"section-order","job":f.job,"messages":messages});
+    let options = || WriteOptions {
+        session_ref: Some("section-order".into()),
+        ..WriteOptions::default()
+    };
+    f.service.execute(record(json!([
+        {"id":"timed:u","role":"user","text":"Timed request","completed_at_ms":1_794_400_000_123_i64},
+        {"id":"timed:a","role":"assistant","text":"Working"}
+    ])), options()).await.unwrap();
+    f.service.execute(record(json!([
+        {"id":"timed:a","role":"assistant","text":"Working","completed_at_ms":1_794_400_062_456_i64}
+    ])), options()).await.unwrap();
+    // Older producers and replay must not erase a known source timestamp.
+    f.service
+        .execute(
+            record(json!([
+                {"id":"timed:u","role":"user","text":"Timed request"},
+                {"id":"timed:a","role":"assistant","text":"Working"}
+            ])),
+            options(),
+        )
+        .await
+        .unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    let messages = serde_json::to_value(&state.jobs[0].conversation).unwrap();
+    assert_eq!(
+        messages
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == "timed:u")
+            .unwrap()["completed_at_ms"],
+        1_794_400_000_123_i64
+    );
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(&state.jobs[0].document_path);
+    let doc = std::fs::read_to_string(&path).unwrap();
+    assert!(doc.contains("Elapsed: 62.333 s"), "{doc}");
+    assert_eq!(doc.matches("Completed at:").count(), 2);
+    f.service.sync().await.unwrap();
+    assert_eq!(doc, std::fs::read_to_string(path).unwrap());
+}
+
+#[tokio::test]
+async fn conversation_omits_elapsed_for_missing_or_backwards_times() {
+    let f = job_with_conversation().await;
+    f.service
+        .execute(
+            json!({"command":"session.record","session":"section-order","job":f.job,"messages":[
+                {"id":"back:u","role":"user","text":"Clock moved backwards","completed_at_ms":2000},
+                {"id":"back:a","role":"assistant","text":"Done","completed_at_ms":1000},
+                {"id":"pending:u","role":"user","text":"Still running","completed_at_ms":3000},
+                {"id":"pending:a","role":"assistant","text":"Working"}
+            ]}),
+            WriteOptions {
+                session_ref: Some("section-order".into()),
+                ..WriteOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    let doc = std::fs::read_to_string(
+        f.service
+            .config()
+            .output_dir()
+            .join(&state.jobs[0].document_path),
+    )
+    .unwrap();
+    assert!(!doc.contains("Elapsed:"));
+    assert_eq!(doc.matches("Completed at:").count(), 3);
+}

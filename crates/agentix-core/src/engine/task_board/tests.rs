@@ -165,6 +165,51 @@ async fn task_service_stages_discussion_before_a_job_exists() {
         .await
         .unwrap();
     assert_eq!(draft["turns"][0]["messages"][0]["text"], "Discuss capacity");
+    assert!(
+        draft["turns"][0]["messages"][0]["completed_at_ms"]
+            .as_i64()
+            .is_some()
+    );
+    tasks
+        .record_job_message(
+            &crate::AgentEvent::ItemCompleted {
+                session_id: "discussion".into(),
+                turn_id: "turn".into(),
+                item: crate::ItemSummary {
+                    id: "a".into(),
+                    kind: "agentMessage".into(),
+                    text: Some("Done".into()),
+                    status: None,
+                },
+            },
+            None,
+        )
+        .await;
+    assert!(tasks.conversations.lock().await[&("discussion".into(), "turn".into())][1]["completed_at_ms"].is_null());
+    tasks
+        .record_job_message(
+            &crate::AgentEvent::TurnCompleted {
+                session_id: "discussion".into(),
+                turn_id: "turn".into(),
+                status: crate::TurnStatus::Completed,
+                error: None,
+            },
+            None,
+        )
+        .await;
+    let complete = backend
+        .store()
+        .discussion_list("discussion", 0, 10)
+        .await
+        .unwrap();
+    assert!(
+        complete["turns"][0]["messages"][1]["completed_at_ms"]
+            .as_i64()
+            .unwrap()
+            >= draft["turns"][0]["messages"][0]["completed_at_ms"]
+                .as_i64()
+                .unwrap()
+    );
     assert!(backend.store().snapshot().await.unwrap().jobs.is_empty());
 }
 
@@ -223,6 +268,11 @@ async fn task_service_exports_unbound_discussion_for_the_session_project() {
         .await
         .unwrap();
     assert_eq!(draft["turns"][0]["messages"][0]["text"], "Discuss capacity");
+    assert!(
+        draft["turns"][0]["messages"][0]["completed_at_ms"]
+            .as_i64()
+            .is_some()
+    );
     assert!(backend.store().snapshot().await.unwrap().jobs.is_empty());
     let sources = backend.store().memory_sources(0, 100).await.unwrap();
     assert_eq!(sources.len(), 1);

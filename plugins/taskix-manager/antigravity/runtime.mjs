@@ -47,6 +47,7 @@ export function createAntigravityHooks(options = {}) {
         } finally { await rm(temporary, { force: true }); }
     }
     async function handle(value) {
+        const receivedAt = Date.now();
         if (typeof value.conversationId !== 'string' || !value.conversationId ||
             !Array.isArray(value.workspacePaths) || !value.workspacePaths.length ||
             value.workspacePaths.some(path => typeof path !== 'string' || !isAbsolute(path)) ||
@@ -81,7 +82,8 @@ export function createAntigravityHooks(options = {}) {
             const capture = await transcriptConversation(event.transcript_path, { currentOnly: true, maxBytes: 1024 * 1024, sessionId: event.session_id });
             state.turn_id = capture.turn_id;
             state.interrupted = false;
-            collect(await invoke('PreToolUse', { turn_id: state.turn_id }));
+            collect(await invoke('PreToolUse', { turn_id: state.turn_id,
+                ...(state.routed_turn !== state.turn_id ? { submitted_at_ms: receivedAt } : {}) }));
             const prompt = capture.messages.find(message => message.role === 'user')?.text;
             if (state.turn_id && prompt && state.routed_turn !== state.turn_id) {
                 collect(await invoke('UserPromptSubmit', { turn_id: state.turn_id, prompt }));
@@ -90,7 +92,7 @@ export function createAntigravityHooks(options = {}) {
         } else if (value.hookEventName === 'Stop') {
             const reason = String(value.terminationReason ?? '').toLowerCase().replace(/^terminal_/, '');
             state.interrupted = value.fullyIdle === true && ['cancelled', 'interrupted', 'user_canceled', 'user_cancelled'].includes(reason);
-            await invoke(state.interrupted ? 'Interrupt' : 'Stop', { turn_id: state.turn_id });
+            await invoke(state.interrupted ? 'Interrupt' : 'Stop', { turn_id: state.turn_id, willContinue: value.fullyIdle === false });
         } else {
             const result = await invoke(value.hookEventName === 'PostInvocation' ? 'PostToolUse' : value.hookEventName, { turn_id: state.turn_id });
             const notice = result?.hookSpecificOutput?.additionalContext;

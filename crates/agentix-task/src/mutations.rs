@@ -1068,6 +1068,7 @@ fn followup_job(
         role: "user".into(),
         text: prompt.into(),
         recorded_at: now,
+        completed_at_ms: None,
     });
     job.status = JobStatus::Active;
     job.review_reason = None;
