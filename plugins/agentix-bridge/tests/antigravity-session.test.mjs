@@ -264,3 +264,13 @@ test('persisted_wrapped_user_text_is_normalized_before_history_and_preview', () 
     assert.equal(f.session.history().turns[0].user_text, 'hey');
     assert.equal(f.session.info().session.preview, 'hey');
 });
+
+for (const error of ['', '   ', 'native failure']) {
+    test(`stop_normalizes_error_${JSON.stringify(error)}`, () => {
+        const f = fixture(); f.hook('SessionStart'); f.hook('PreInvocation');
+        f.hook('Stop', { fullyIdle: true, terminationReason: 'NO_TOOL_CALL', error });
+        const completed = f.events.find(event => event.TurnCompleted).TurnCompleted;
+        assert.equal(completed.error, error.trim() || null);
+        assert.equal(completed.status, error.trim() ? 'failed' : 'completed');
+    });
+}

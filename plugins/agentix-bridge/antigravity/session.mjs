@@ -236,12 +236,13 @@ export class AntigravitySession {
         let active = turn;
         if (value.hook_event_name === 'Stop' && value.fullyIdle === true) {
             const reason = String(value.terminationReason ?? '').toLowerCase().replace(/^terminal_/, '');
-            turn.status = value.error || ['error', 'max_steps_exceeded', 'max_invocations', 'max_forced_invocations', 'max_token_budget_exceeded'].includes(reason) ? 'failed'
+            const error = typeof value.error === 'string' ? value.error.trim() || null : null;
+            turn.status = error || ['error', 'max_steps_exceeded', 'max_invocations', 'max_forced_invocations', 'max_token_budget_exceeded'].includes(reason) ? 'failed'
                 : ['cancelled', 'interrupted', 'custom_hook', 'user_canceled', 'user_cancelled'].includes(reason) ? 'interrupted' : 'completed';
             active = null;
             events.push({ ItemCompleted: { session_id, turn_id: turn.id,
                 item: { id: `${turn.id}:assistant`, kind: 'agentMessage', text: turn.agent_text, status: turn.status } } });
-            events.push({ TurnCompleted: { session_id, turn_id: turn.id, status: turn.status, error: value.error ?? null } });
+            events.push({ TurnCompleted: { session_id, turn_id: turn.id, status: turn.status, error } });
         }
         const accepted = events.some(event => event.TurnStarted) && [...this.receipts].find(([, receipt]) =>
             ['pending', 'uncertain'].includes(receipt.state) && receipt.baseline !== turn.id && receipt.text === turn.user_text);

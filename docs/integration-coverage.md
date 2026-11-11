@@ -874,3 +874,5 @@ construction; it is not the adapter's retained-memory footprint. The test report
 measurements without machine-dependent timing assertions. The parser reads a
 16 MiB tail and returns at most 200 turns; metadata caching avoids unchanged
 content reads. These figures are a baseline, not a throughput guarantee.
+
+Telegram completion regressions verify one card across final updates, rejected edits and repeated completion after cold restore. Empty or whitespace-only native errors do not render an `Error:` line. Antigravity Stop tests distinguish blank errors from actual failures.

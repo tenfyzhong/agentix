@@ -159,7 +159,7 @@ impl Engine {
         let buffer = buffers.entry(key).or_default();
         buffer.ensure_started();
         buffer.set_status(status.clone());
-        if let Some(error) = &error {
+        if let Some(error) = error.as_deref().filter(|error| !error.trim().is_empty()) {
             buffer.record_output(None, &format!("Error: {error}"), false, false);
         }
         drop(buffers);
@@ -883,7 +883,8 @@ impl Engine {
         snapshot: &TurnBuffer,
         delivery: DeliveryClass,
     ) -> Result<Option<MessageRef>, EngineError> {
-        let fresh_final = snapshot.status == TurnStatus::Completed
+        let fresh_final = conversation.channel != crate::ChannelKind::Telegram
+            && snapshot.status == TurnStatus::Completed
             && delivery == DeliveryClass::Live
             && !snapshot.final_card_delivered;
         if let Some((message, revision)) = existing {
