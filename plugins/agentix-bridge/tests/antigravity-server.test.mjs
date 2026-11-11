@@ -9,12 +9,12 @@ import { createInterface } from 'node:readline';
 import { AntigravityMailbox } from '../antigravity/mailbox.mjs';
 import { hostKey } from '../claude/mailbox.mjs';
 
-test('antigravity_mcp_child_registers_original_session_and_serves_history', { timeout: 10000, skip: process.platform === 'win32' }, async t => {
+for (const empty of [false, true]) test(`antigravity_mcp_registers_original_process_empty_${empty}`, { timeout: 10000, skip: process.platform === 'win32' }, async t => {
     const root = mkdtempSync(join(tmpdir(), 'ax-agy-'));
     const transcript = join(root, 'transcript.jsonl');
     writeFileSync(transcript, JSON.stringify({ step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', content: 'hello' }) + '\n');
     const mailbox = new AntigravityMailbox(root, hostKey(process.pid));
-    mailbox.publish({ hookEventName: 'SessionStart', conversationId: 'native', workspacePaths: [root], transcriptPath: transcript });
+    if (!empty) mailbox.publish({ hookEventName: 'SessionStart', conversationId: 'native', workspacePaths: [root], transcriptPath: transcript });
     const frames = [], mcp = [];
     let peer;
     const server = net.createServer(socket => {
@@ -26,6 +26,7 @@ test('antigravity_mcp_child_registers_original_session_and_serves_history', { ti
     });
     await new Promise(resolve => server.listen(join(root, 'control.sock'), resolve));
     const child = spawn(process.execPath, [new URL('../antigravity/server.mjs', import.meta.url).pathname], {
+        cwd: root,
         env: { ...process.env, AGENTIX_ANTIGRAVITY_DATA_DIR: root, AGENTIX_CONTROL_ENDPOINT: `unix://${join(root, 'control.sock')}` },
         stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -52,6 +53,11 @@ test('antigravity_mcp_child_registers_original_session_and_serves_history', { ti
     assert.equal(registration.params.agent, 'antigravity');
     assert.ok(registration.params.snapshot.capabilities.includes('new'));
     assert.equal(registration.params.pid, process.pid);
+    if (empty) {
+        assert.ok(registration.params.session_id.endsWith('-pending'));
+        assert.equal(registration.params.cwd, process.cwd());
+        return;
+    }
     assert.equal(registration.params.session_id, 'native');
     send({ id: 2, method: 'tools/list', params: {} });
     assert.deepEqual((await waitFor(() => mcp.find(frame => frame.id === 2))).result.tools, []);

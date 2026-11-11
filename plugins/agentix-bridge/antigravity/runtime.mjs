@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { BridgeTransport } from '../transport.mjs';
 import { atomicJson, readJson } from '../claude/mailbox.mjs';
 import { AntigravityMailbox, dataRoot } from './mailbox.mjs';
@@ -25,7 +26,7 @@ export function createRuntime(options = {}) {
         if (session?.identity.conversationId === identity.conversationId) return;
         const previous = session?.identity.conversationId ?? identity.previous_session_id;
         const prior = session, priorTransport = transport;
-        const carry = prior?.awaitingNewInput ? [...prior.receipts].filter(([, receipt]) => ['pending', 'uncertain'].includes(receipt.state)) : [];
+        const carry = (prior?.awaitingNewInput || prior?.identity.provisional) ? [...prior.receipts].filter(([, receipt]) => ['pending', 'uncertain'].includes(receipt.state)) : [];
         let nextTransport;
         const key = createHash('sha256').update(JSON.stringify([identity.conversationId, identity.transcriptPath])).digest('hex');
         const path = join(directory, `${key}.json`);
@@ -94,6 +95,18 @@ export function createRuntime(options = {}) {
             });
             const identity = mailbox.identity();
             if (identity) await activate(identity);
+            else if (!session) {
+                // agy creates its native conversation only on the first input.
+                // Keep an attachable process identity until that hook arrives.
+                const id = `${createHash('sha256').update(clientId).digest('hex')}-pending`;
+                const cwd = options.cwd ?? options.resolveCwd?.() ?? process.cwd();
+                const sessionRoot = options.sessionRoot ?? process.env.AGENTIX_ANTIGRAVITY_SESSION_DIR
+                    ?? join(homedir(), '.gemini/antigravity-cli/brain');
+                // A virtual path within the configured native root; no trajectory is written.
+                await activate({ conversationId: id, workspacePaths: [cwd], cwd,
+                    transcriptPath: join(sessionRoot, '.agentix-pending', `${id}.jsonl`),
+                    provisional: true, name: `New session (PID ${options.pid ?? process.ppid})` });
+            }
             await session?.pollInteraction();
             await settleRetiring();
         }),

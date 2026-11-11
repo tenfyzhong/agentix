@@ -876,3 +876,5 @@ measurements without machine-dependent timing assertions. The parser reads a
 content reads. These figures are a baseline, not a throughput guarantee.
 
 Telegram completion regressions verify one card across final updates, rejected edits and repeated completion after cold restore. Empty or whitespace-only native errors do not render an `Error:` line. Antigravity Stop tests distinguish blank errors from actual failures.
+
+Antigravity empty-process regressions cover pre-input registration, stable sidecar restart identity, same-directory process separation, and first-prompt acknowledgement across the temporary-to-native handoff. Rust bridge integration verifies root admission, attach with empty history, native replacement and a single first input.

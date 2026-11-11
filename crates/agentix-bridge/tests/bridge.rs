@@ -102,6 +102,76 @@ async fn antigravity_bridge_preserves_drafts_and_acknowledges_lazy_new_identity(
 }
 
 #[tokio::test]
+async fn antigravity_empty_session_registers_and_hands_first_prompt_to_native_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = TestControl::bind(directory.path()).unwrap();
+    let adapter = BridgeAdapter::new(
+        BridgeKind::Antigravity,
+        server.hub.clone(),
+        directory.path(),
+    );
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../plugins/agentix-bridge/tests/antigravity-host.mjs");
+    let mut host = tokio::process::Command::new("node")
+        .arg(fixture)
+        .arg(&server.endpoint)
+        .arg(directory.path())
+        .args(["--unstarted", "--empty-draft"])
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    tokio::time::timeout(
+        HOST_STARTUP_TIMEOUT,
+        BufReader::new(host.stdout.take().unwrap()).read_line(&mut line),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    wait_for_session(&adapter).await;
+    let sessions = adapter.list_sessions(None, 20).await.unwrap().sessions;
+    assert_eq!(sessions.len(), 1);
+    let pending = &sessions[0].id;
+    assert!(pending.as_str().ends_with("-pending"));
+    assert!(
+        sessions[0]
+            .name
+            .as_deref()
+            .unwrap()
+            .starts_with("New session (PID ")
+    );
+    adapter.attach(pending).await.unwrap();
+    assert!(
+        adapter
+            .read_history(pending, None, 20)
+            .await
+            .unwrap()
+            .turns
+            .is_empty()
+    );
+    assert_eq!(
+        adapter.start_turn(pending, "first input").await.unwrap(),
+        "native-antigravity:step:0"
+    );
+    let native = SessionId::new("native-antigravity");
+    tokio::time::timeout(HOST_STARTUP_TIMEOUT, async {
+        loop {
+            let sessions = adapter.list_sessions(None, 20).await.unwrap().sessions;
+            if sessions.len() == 1 && sessions[0].id == native {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let history = adapter.read_history(&native, None, 20).await.unwrap();
+    assert_eq!(history.turns.len(), 1);
+    assert_eq!(history.turns[0].user_text.as_deref(), Some("first input"));
+}
+
+#[tokio::test]
 async fn bridge_controls_original_host_and_detach_does_not_kill_it() {
     let directory = tempfile::tempdir().unwrap();
     let server = TestControl::bind(directory.path()).unwrap();

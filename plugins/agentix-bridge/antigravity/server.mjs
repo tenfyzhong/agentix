@@ -1,3 +1,6 @@
+import { execFileSync } from 'node:child_process';
+import { readlinkSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { Server, StdioServerTransport, ListToolsRequestSchema } from '../claude/vendor/sdk.mjs';
 import { hostKey } from '../claude/mailbox.mjs';
 import { AntigravityMailbox } from './mailbox.mjs';
@@ -15,7 +18,15 @@ const sessionControl = new NativeSessionControl('antigravity', {
     resolve: () => delivery.resolve(), ready: terminal => delivery.check(terminal),
     stop: () => delivery.stop(),
 });
-const runtime = createRuntime({ mailbox, clientId, delivery, controls: new AntigravityControls(delivery),
+function originalWorkspace() {
+    // Native MCP children run in the plugin directory, not the agy workspace.
+    const cwd = process.platform === 'linux' ? readlinkSync(`/proc/${process.ppid}/cwd`)
+        : execFileSync('/usr/sbin/lsof', ['-a', '-p', String(process.ppid), '-d', 'cwd', '-F0n'],
+            { encoding: 'utf8', timeout: 2000, maxBuffer: 65536 }).split('\0').find(field => field.startsWith('n'))?.slice(1);
+    if (!cwd || !isAbsolute(cwd)) throw new Error('Cannot resolve original Antigravity workspace');
+    return cwd;
+}
+const runtime = createRuntime({ mailbox, clientId, delivery, resolveCwd: originalWorkspace, controls: new AntigravityControls(delivery),
     nativeNew: busy => sessionControl.newSession(busy),
     interactions: new AntigravityInteractions(delivery), onError: report });
 const mcp = new Server({ name: 'agentix-bridge', version: '0.2.0' }, { capabilities: { tools: {} } });

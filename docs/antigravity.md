@@ -46,9 +46,18 @@ session_dir = "~/.gemini/antigravity-cli/brain"
 state_dir = "~/.local/share/agentix/antigravity"
 ```
 
-Restart Agentix, run agy with the plugins enabled, and send its first message.
-Use `/sessions` in Telegram, Feishu or Slack and attach the Antigravity session.
-A conversation's native ID becomes available when its first input is submitted.
+Restart Agentix and run agy with the plugins enabled. Use `/sessions` in
+Telegram, Feishu or Slack to attach even before the first message. Empty processes
+appear as `New session (PID ...)`, with distinct temporary IDs derived from the
+process ID and start time. The session picker also shows the terminal session,
+window and pane when the configured multiplexer can resolve that process.
+Processes in the same directory remain separate; input delivery verifies the
+original process and pane before sending. When the first input creates agy's
+native conversation ID, the existing attachment and pending acknowledgement move
+to it without sending the message again. Restart agy after upgrading its plugin.
+For a custom native `session_dir`, also export the matching absolute
+`AGENTIX_ANTIGRAVITY_SESSION_DIR` in the terminal. Temporary registrations reference
+a virtual `.agentix-pending` path under that root; no native trajectory is created.
 For custom bridge storage, export `AGENTIX_ANTIGRAVITY_DATA_DIR` in the original
 terminal as well. `AGENTIX_CONTROL_ENDPOINT` selects a nondefault Agentix control
 endpoint. IM-created sessions receive these settings from the launcher.

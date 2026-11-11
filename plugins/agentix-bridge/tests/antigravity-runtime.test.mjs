@@ -8,7 +8,7 @@ import { createRuntime } from '../antigravity/runtime.mjs';
 import net from 'node:net';
 import { createInterface } from 'node:readline';
 
-test('lazy_new_flushes_prompt_acknowledgement_on_original_socket', { timeout: 10000, skip: process.platform === 'win32' }, async t => {
+for (const unstarted of [false, true]) test(`first_input_handoff_flushes_original_socket_unstarted_${unstarted}`, { timeout: 10000, skip: process.platform === 'win32' }, async t => {
     const root = mkdtempSync(join(tmpdir(), 'agy-wire-'));
     const peers = [], frames = [];
     const server = net.createServer(socket => {
@@ -38,12 +38,14 @@ test('lazy_new_flushes_prompt_acknowledgement_on_original_socket', { timeout: 10
     }
     const first = join(root, 'first.jsonl'), second = join(root, 'second.jsonl');
     writeFileSync(first, '');
-    mailbox.publish({ hookEventName: 'SessionStart', conversationId: 'first', workspacePaths: [root], transcriptPath: first });
+    if (!unstarted) mailbox.publish({ hookEventName: 'SessionStart', conversationId: 'first', workspacePaths: [root], transcriptPath: first });
     await runtime.poll();
     const old = (await waitFor(() => frames.find(item => item.frame.method === 'register'))).socket;
     const send = (socket, id, method, params) => socket.write(JSON.stringify({ id, method, params }) + '\n');
-    send(old, 'new', 'command', { name: 'new' });
-    assert.equal((await waitFor(() => frames.find(item => item.frame.id === 'new'))).frame.ok, true);
+    if (!unstarted) {
+        send(old, 'new', 'command', { name: 'new' });
+        assert.equal((await waitFor(() => frames.find(item => item.frame.id === 'new'))).frame.ok, true);
+    }
     send(old, 'prompt', 'prompt', { request_id: 'request', text: 'hello' });
     await waitFor(() => sends === 1);
     writeFileSync(second, JSON.stringify({ step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', content: 'hello' }) + '\n');
@@ -191,5 +193,34 @@ test('lazy_new_session_acknowledges_first_input_before_closing_original_transpor
     assert.deepEqual(calls, ['new', 'send']);
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(closed, [0]);
+    await runtime.close();
+});
+
+test('empty_process_registers_once_and_keeps_identity_across_sidecar_restart', async t => {
+    const root = mkdtempSync(join(tmpdir(), 'agy-empty-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const mailbox = new AntigravityMailbox(root, 'empty-host');
+    const records = [], handlers = [];
+    const options = { root, mailbox, clientId: 'empty-host', pid: 42, cwd: root, sessionRoot: root, transportFactory: settings => {
+        handlers.push(settings);
+        return { sequence: 0, open: record => records.push(record), event: () => {}, close: async () => {} };
+    } };
+    let runtime = createRuntime(options);
+    await runtime.poll(); await runtime.poll();
+    assert.equal(records.length, 1);
+    assert.match(records[0].session_id, /^[a-f0-9]{64}-pending$/);
+    assert.ok(records[0].session_file.startsWith(join(root, '.agentix-pending')));
+    assert.equal(handlers[0].snapshot().session.name, 'New session (PID 42)');
+    assert.equal(records[0].cwd, root);
+    assert.equal(handlers[0].snapshot().session.status, 'idle');
+    assert.deepEqual((await handlers[0].handle('history')).turns, []);
+    await runtime.close();
+    runtime = createRuntime(options); await runtime.poll();
+    assert.equal(records[1].session_id, records[0].session_id);
+    await runtime.close();
+    runtime = createRuntime({ ...options, clientId: 'another-process', pid: 43, mailbox: new AntigravityMailbox(root, 'another-process') });
+    await runtime.poll();
+    assert.notEqual(records[2].session_id.slice(0, 8), records[0].session_id.slice(0, 8));
+    assert.equal(handlers[2].snapshot().session.name, 'New session (PID 43)');
     await runtime.close();
 });

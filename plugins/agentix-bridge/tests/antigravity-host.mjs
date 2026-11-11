@@ -10,9 +10,9 @@ let conversationId = 'native-antigravity', draft = process.argv.includes('--empt
 const identity = () => ({ conversationId, workspacePaths: [root], transcriptPath: join(root, `${conversationId}.jsonl`) });
 const publish = (hookEventName, extra = {}) => mailbox.publish({ ...identity(), hookEventName, ...extra });
 writeFileSync(identity().transcriptPath, '');
-publish('SessionStart');
+if (!process.argv.includes('--unstarted')) publish('SessionStart');
 let next = false;
-const runtime = createRuntime({ root, mailbox, endpoint, clientId: 'fixture-host',
+const runtime = createRuntime({ root, sessionRoot: root, mailbox, endpoint, clientId: 'fixture-host',
     nativeNew: async () => { next = true; },
     delivery: {
         draft: async expected => { if (expected === draft) draft = null; return draft; },

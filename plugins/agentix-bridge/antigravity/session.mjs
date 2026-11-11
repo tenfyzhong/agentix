@@ -30,7 +30,7 @@ export class AntigravitySession {
     info() {
         if (!this.identity) throw failure('session_changed', 'Antigravity session has not registered');
         return { instance: this.instance, seq: this.options.sequence?.() ?? 0,
-            session: { id: this.identity.conversationId, cwd: this.identity.workspacePaths[0], name: null,
+            session: { id: this.identity.conversationId, cwd: this.identity.workspacePaths[0], name: this.identity.provisional ? this.identity.name : null,
                 preview: this.turns.at(-1)?.user_text ?? null, updatedAt: this.updatedAt,
                 status: this.active ? 'active' : 'idle', terminal: null }, capabilities: ['history', 'status',
                     ...(this.options.delivery ? ['prompt'] : []), ...(this.options.delivery?.stop ? ['stop'] : []),
