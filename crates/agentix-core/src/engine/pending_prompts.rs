@@ -238,6 +238,45 @@ impl PendingPrompts {
         Ok(())
     }
 
+    // agy assigns its conversation ID after accepting the first input. The
+    // in-flight request and its card still belong to that same input.
+    pub(super) fn handoff_input(
+        &self,
+        old: &SessionId,
+        new: &SessionId,
+        conversation: &ConversationRef,
+        epoch: u64,
+    ) {
+        let mut state = self.state.lock().unwrap();
+        if state.pending.contains_key(new)
+            || state.pending.get(old).is_none_or(|pending| {
+                !pending.valid
+                    || pending.observed_turn.is_some()
+                    || pending.input.conversation != *conversation
+                    || pending.input.epoch.checked_add(1) != Some(epoch)
+            })
+        {
+            return;
+        }
+        let mut pending = state.pending.remove(old).unwrap();
+        pending.input.session = new.clone();
+        pending.input.epoch = epoch;
+        if let Some(card) = state.cards.get_mut(&pending.id)
+            && card.valid
+        {
+            card.input.session = new.clone();
+            card.input.epoch = epoch;
+        }
+        if let Some(input) = state
+            .owned
+            .get_mut(&(conversation.channel, pending.input.event_id.clone()))
+        {
+            input.session = new.clone();
+            input.epoch = epoch;
+        }
+        state.pending.insert(new.clone(), pending);
+    }
+
     pub(super) fn invalidate(&self, session: &SessionId) {
         self.cancel_queued_matching(|input| &input.session == session);
         let mut state = self.state.lock().unwrap();
@@ -633,14 +672,16 @@ impl Engine {
     ) -> Result<(), EngineError> {
         let mut pending = {
             let mut state = self.turns.pending_prompts.state.lock().unwrap();
-            if state
-                .pending
-                .get(&acknowledged.session)
-                .is_none_or(|pending| pending.id != acknowledged.id)
-            {
+            // The request future retains its original session ID across agy's
+            // first-input handoff; the monotonically allocated ID owns the reply.
+            let Some(session) = state.pending.iter().find_map(|(session, pending)| {
+                (pending.id == acknowledged.id
+                    && pending.input.conversation == acknowledged.conversation)
+                    .then(|| session.clone())
+            }) else {
                 return Ok(());
-            }
-            state.pending.remove(&acknowledged.session).unwrap()
+            };
+            state.pending.remove(&session).unwrap()
         };
         let input = pending.input.clone();
         let current = pending.valid

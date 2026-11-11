@@ -109,7 +109,17 @@ impl Engine {
                 ..TurnBuffer::from_summary(turn, self.output)
             },
         );
-        self.turns.views.lock().await.remove(&key);
+        // A reconnect (including agy's first-input handoff) must retain the
+        // live card just adopted by record_turn_started. A different IM chat
+        // needs its own card when attachment moves the session.
+        let mut views = self.turns.views.lock().await;
+        if views
+            .get(&key)
+            .is_some_and(|message| message.conversation != *conversation)
+        {
+            views.remove(&key);
+        }
+        drop(views);
         self.turns.last_renders.lock().await.remove(&key);
         self.render_turn(
             conversation,

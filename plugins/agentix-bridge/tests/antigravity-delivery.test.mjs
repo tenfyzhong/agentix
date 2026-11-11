@@ -70,3 +70,49 @@ test('antigravity_draft_clear_requires_matching_contents_and_verifies_empty_comp
     assert.equal(await f.delivery.draft('local draft'), null);
     assert.deepEqual(keys, ['C-e', 'C-u']);
 });
+
+test('antigravity_draft_waits_for_post_turn_composer_redraw_without_mutating_input', async () => {
+    const f = fixture();
+    const ready = await f.terminal.capture();
+    let captures = 0;
+    f.terminal.capture = async () => ++captures < 3 ? 'redrawing after completed turn' : ready;
+    assert.equal(await f.delivery.draft(), null);
+    assert.equal(captures, 3);
+    assert.deepEqual(f.calls, []);
+});
+
+test('antigravity_draft_redraw_wait_is_bounded_and_keeps_the_returned_draft', async () => {
+    const f = fixture();
+    let captures = 0;
+    f.terminal.capture = async () => { captures++; return 'initializing'; };
+    await assert.rejects(f.delivery.draft(), /ready/);
+    assert.equal(captures, 20);
+    assert.deepEqual(f.calls, []);
+    const g = fixture({
+        inspect: async () => ['42', 'agy', '7', '2', '0', '0'],
+        capture: async () => 'Antigravity CLI\n────────────────\n> draft\n────────────────\n-- INSERT --    Gemini 4 Carbon · medium',
+    });
+    assert.equal(await g.delivery.draft(), 'draft');
+    assert.deepEqual(g.calls, []);
+});
+
+test('antigravity_stop_retries_escape_only_while_native_cancel_prompt_remains', async () => {
+    const f = fixture();
+    f.terminal.capture = async () => 'esc to cancel    Gemini 4 Carbon · medium';
+    await f.delivery.stop();
+    assert.deepEqual(f.calls, [['key', 'Escape'], ['key', 'Escape']]);
+});
+
+test('antigravity_stop_confirms_native_interruption_only_after_idle_redraw', async () => {
+    const f = fixture();
+    let reads = 0;
+    f.terminal.capture = async () => ++reads < 3 ? 'esc to cancel    Gemini 4 Carbon · medium'
+        : '  ⎿  Interrupted · What should Antigravity CLI do instead?\n────────────────\n> \n────────────────\n? for shortcuts    Gemini 4 Carbon · medium';
+    assert.deepEqual(await f.delivery.stop(), { interrupted: true });
+});
+
+test('antigravity_stop_does_not_confirm_old_interruption_above_a_running_turn', async () => {
+    const f = fixture();
+    f.terminal.capture = async () => '  ⎿  Interrupted · What should Antigravity CLI do instead?\n> another prompt\nWorking...\nesc to cancel    Gemini 4 Carbon · medium';
+    assert.equal(await f.delivery.stop(), null);
+});

@@ -290,6 +290,16 @@ impl Engine {
                     switch.epoch,
                 )
                 .await;
+            if agentix_domain::SessionKey::decode(&switch.old_session)
+                .is_some_and(|key| key.agent == agentix_domain::AgentKind::Antigravity)
+            {
+                self.turns.pending_prompts.handoff_input(
+                    &switch.old_session,
+                    &target,
+                    &switch.conversation,
+                    switch.epoch,
+                );
+            }
             self.apply_binding_effects(&switch.conversation, &target, false, outcome)
                 .await;
             self.switch_notice(&switch, "Attached to the new session.")

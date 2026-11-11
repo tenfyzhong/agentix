@@ -42,7 +42,16 @@ export class AntigravityDelivery {
     }
     async draft(expected) {
         const terminal = await this.resolve();
-        const current = await this.check(terminal, undefined, true);
+        // Stop hooks can precede the TUI's idle composer redraw. Only inspect
+        // during this bounded wait; never dismiss a dialog or alter a draft.
+        let current;
+        for (let attempt = 0; ; attempt++) {
+            try { current = await this.check(terminal, undefined, true); break; }
+            catch (error) {
+                if (attempt === 19 || error.bridgeCode !== 'busy') throw error;
+                await this.delay(50);
+            }
+        }
         if (expected == null || current !== expected) return current;
         if (await this.check(terminal, undefined, true) !== expected) throw failure('busy', 'Antigravity draft changed before clearing');
         if (current.includes('\n')) throw failure('busy', 'Clear the multiline Antigravity draft in the terminal before sending');
@@ -59,6 +68,22 @@ export class AntigravityDelivery {
         const terminal = await this.resolve();
         await this.verify(terminal);
         await terminal.sendKey('Escape');
+        await this.delay(150);
+        await this.verify(terminal);
+        if (/^(?:-- INSERT -- )?esc to cancel\b/m.test(await terminal.capture())) {
+            await terminal.sendKey('Escape');
+        }
+        // Native cancellation can omit Stop hooks. Confirm the current terminal
+        // result and idle composer before reporting an interruption to the bridge.
+        for (let attempt = 0; attempt < 20; attempt++) {
+            await this.delay(100);
+            await this.verify(terminal);
+            const screen = await terminal.capture();
+            if (/\n?\s*⎿\s+Interrupted · What should Antigravity CLI do instead\?\n─{3,}\n>[^\n]*\n─{3,}\n(?:-- INSERT -- )?\? for shortcuts[^\S\n]{2,}\S[^\n]*\s*$/.test(screen)) {
+                return { interrupted: true };
+            }
+            if (/^(?:-- INSERT -- )?\? for shortcuts[^\S\n]{2,}\S/m.test(screen)) break;
+        }
         return null;
     }
     async send({ text, signal }) {

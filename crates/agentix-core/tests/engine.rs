@@ -70,6 +70,110 @@ async fn antigravity_new_waits_for_first_input_before_starting_handoff() {
 }
 
 #[tokio::test]
+async fn antigravity_first_input_handoff_preserves_pending_card() {
+    use agentix_core::{AgentKind, AgentRegistry, EngineWork};
+    for deliver_card_first in [false, true] {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let mut adapter = FakeAgent::new();
+        adapter.start_gate = Some(gate.clone());
+        let history_turns = adapter.history_turns.clone();
+        let registry = AgentRegistry::new(vec![(
+            AgentKind::Antigravity,
+            Arc::new(adapter) as Arc<dyn AgentAdapter>,
+        )])
+        .unwrap();
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            Arc::new(registry),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound("chat-a", "/attach antigravity:thr_a"))
+            .await
+            .unwrap();
+        let release = tokio_util::sync::CancellationToken::new();
+        *channel.next_send_gate.lock().unwrap() =
+            Some((tokio_util::sync::CancellationToken::new(), release.clone()));
+        engine
+            .execute_work(EngineWork::Inbound(inbound("chat-a", "handoff prompt")))
+            .await
+            .unwrap();
+        if deliver_card_first {
+            release.cancel();
+            apply_next_pending_input(&engine).await;
+        }
+        *history_turns.lock().unwrap() = vec![TurnSummary {
+            id: "turn_new".into(),
+            status: TurnStatus::InProgress,
+            user_text: Some("handoff prompt".into()),
+            agent_text: None,
+            tools: Vec::new(),
+            items: Vec::new(),
+        }];
+        for event in [
+            AgentEvent::SessionSwitchStarted {
+                session_id: "antigravity:thr_a".into(),
+                client_id: "host".into(),
+            },
+            AgentEvent::SessionReplaced {
+                session_id: "antigravity:thr_a".into(),
+                replacement_session_id: "antigravity:thr_b".into(),
+                client_id: "host".into(),
+            },
+            AgentEvent::SessionResumed {
+                session_id: "antigravity:thr_b".into(),
+            },
+            AgentEvent::TurnStarted {
+                session_id: "antigravity:thr_b".into(),
+                turn_id: "turn_new".into(),
+            },
+        ] {
+            engine.handle_agent_event(event).await.unwrap();
+        }
+        if !deliver_card_first {
+            release.cancel();
+            apply_next_pending_input(&engine).await;
+        }
+        engine
+            .handle_agent_event(AgentEvent::AgentMessageDelta {
+                session_id: "antigravity:thr_b".into(),
+                turn_id: "turn_new".into(),
+                item_id: "answer".into(),
+                delta: "handoff answer".into(),
+            })
+            .await
+            .unwrap();
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "antigravity:thr_b".into(),
+                turn_id: "turn_new".into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        gate.notify_one();
+        apply_next_pending_input(&engine).await;
+        let prompt_cards = channel
+            .messages
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|view| view.body.contains("handoff prompt"))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            prompt_cards.len(),
+            1,
+            "first input must keep one card across native identity handoff"
+        );
+        assert!(prompt_cards[0].body.contains("handoff answer"));
+        assert!(engine.working_turns().await.is_empty());
+    }
+}
+
+#[tokio::test]
 async fn native_terminal_interaction_can_be_cancelled_without_a_session_switch() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());

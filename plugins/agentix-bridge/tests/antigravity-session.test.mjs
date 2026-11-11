@@ -341,3 +341,25 @@ test('stop_serializes_terminal_operations_and_releases_guard_after_failure', asy
     assert.equal(f.session.controlling, false);
     assert.equal(stops, 1);
 });
+
+test('confirmed_terminal_interruption_settles_active_turn_without_native_stop_hook', async () => {
+    const f = fixture({ delivery: { stop: async () => ({ interrupted: true }) } });
+    f.hook('SessionStart'); f.hook('PreInvocation');
+    await f.session.request('stop');
+    assert.equal(f.session.active, null);
+    assert.equal(f.session.history().turns[0].status, 'interrupted');
+    f.hook('Stop', { fullyIdle: true });
+    assert.equal(f.events.filter(event => event.TurnCompleted).length, 1);
+});
+
+test('terminal_stop_confirmation_does_not_settle_a_newer_turn', async () => {
+    let finish;
+    const f = fixture({ delivery: { stop: () => new Promise(resolve => { finish = resolve; }) } });
+    f.hook('SessionStart'); f.hook('PreInvocation');
+    const stopping = f.session.request('stop');
+    f.hook('Stop', { fullyIdle: true });
+    f.transcript([turn(), turn('native:step:9')]); f.hook('PreInvocation');
+    finish({ interrupted: true }); await stopping;
+    assert.equal(f.session.active.id, 'native:step:9');
+    assert.equal(f.events.filter(event => event.TurnCompleted).length, 1);
+});

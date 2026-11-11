@@ -109,7 +109,15 @@ export class AntigravitySession {
         if (method === 'stop' && this.options.delivery?.stop) {
             if (this.controlling) throw failure('busy', 'Antigravity is handling another terminal operation');
             this.controlling = true;
-            try { return await this.options.delivery.stop(); }
+            const turnId = this.active?.id, invocation = this.invocation;
+            try {
+                const result = await this.options.delivery.stop();
+                if (result?.interrupted && turnId && this.active?.id === turnId && this.invocation === invocation) {
+                    this.hook({ conversationId: this.identity.conversationId, agentix_turn_id: turnId,
+                        hook_event_name: 'Stop', fullyIdle: true, terminationReason: 'interrupted' });
+                }
+                return null;
+            }
             finally { this.controlling = false; }
         }
         if (method === 'interaction') {

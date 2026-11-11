@@ -845,6 +845,7 @@ AGENTIX_TEST_ANTIGRAVITY_INSTALL=1 node --test plugins/taskix-manager/tests/anti
 AGENTIX_ANTIGRAVITY_PERFORMANCE=1 node --test plugins/agentix-bridge/tests/antigravity-performance.test.mjs
 AGENTIX_TEST_ANTIGRAVITY_TERMINAL=tmux node --test plugins/agentix-bridge/tests/antigravity-terminal-native.test.mjs
 AGENTIX_TEST_ANTIGRAVITY_MULTIPANE=1 node --test plugins/agentix-bridge/tests/antigravity-multipane-native.test.mjs
+AGENTIX_TEST_TMUX=/absolute/path/to/tmux cargo test -p agentix --bin agentix antigravity_native_telegram_workspace_first_input_closed_loop -- --ignored --nocapture
 ```
 
 Native installation/headless tests use an isolated HOME and terminate before
@@ -909,3 +910,14 @@ installed sidecar consumes mailbox events. Inference-free tests require the
 terminating PreInvocation witness; live scenarios require a fully idle Stop.
 Taskix PreToolUse regressions require an explicit `allow` decision for ordinary
 work (delegating to native permissions), while cancelled Issues still deny tools.
+
+The opt-in Antigravity Telegram workspace test launches an authenticated native
+agy through the production workspace adapter and drives the production Telegram
+adapter, Engine, Registry and bridge against a mock Telegram HTTP endpoint. It
+checks pre-input attachment, first-input identity handoff, lazy `/new` in the
+same pane, reuse of one message card through completion, and active `/stop`.
+It requires installed native plugins and uses real model inference. Cancellation
+is confirmed from the native interruption result and idle composer when agy
+omits its Stop hook. Set `AGENTIX_TEST_TMUX` to the real tmux executable when a
+login shell provides a tmux-compatible rmux alias. Taskix calls, bridge state and
+the terminal server are isolated; this test does not send messages to Telegram.
