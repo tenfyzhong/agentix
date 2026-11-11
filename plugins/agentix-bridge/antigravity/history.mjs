@@ -1,5 +1,11 @@
 import { openSync, closeSync, fstatSync, readSync } from 'node:fs';
 
+/** Unwrap native user input without treating ordinary inline tags as an envelope. */
+export function nativeUserText(text) {
+    const envelope = /^\s*<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>(?:\s*<(ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>[\s\S]*?<\/\2>)*\s*$/.exec(text);
+    return envelope ? envelope[1].trim() : text;
+}
+
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_TEXT = 100000;
 function tail(path, cached) {
@@ -39,7 +45,7 @@ export function createTranscriptReader() {
         const turns = [];
         for (const [index, step] of [...steps].sort((a, b) => a[0] - b[0])) {
             if (step.type === 'USER_INPUT' && step.source === 'USER_EXPLICIT' && typeof step.content === 'string') {
-                turns.push({ id: `${sessionId}:step:${index}`, status: 'unknown', user_text: step.content.slice(-MAX_TEXT), agent_text: '', tools: [], items: [] });
+                turns.push({ id: `${sessionId}:step:${index}`, status: 'unknown', user_text: nativeUserText(step.content).slice(-MAX_TEXT), agent_text: '', tools: [], items: [] });
                 continue;
             }
             const turn = turns.at(-1);

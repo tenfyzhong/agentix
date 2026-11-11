@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createTranscriptReader } from './history.mjs';
+import { createTranscriptReader, nativeUserText } from './history.mjs';
 import { failure } from '../protocol/errors.mjs';
 
 /** Native trajectory identity, separate from invocation and terminal process identity. */
@@ -8,7 +8,9 @@ export class AntigravitySession {
         this.options = options;
         this.instance = randomUUID();
         this.readTranscript = options.readTranscript ?? createTranscriptReader();
-        this.turns = structuredClone(options.saved?.turns ?? []);
+        this.turns = structuredClone(options.saved?.turns ?? []).map(turn => ({
+            ...turn, user_text: nativeUserText(turn.user_text),
+        }));
         this.receipts = new Map(options.saved?.receipts ?? []);
         this.waiters = new Map();
         this.active = this.turns.find(turn => turn.id === options.saved?.active_id || turn.status === 'inProgress') ?? null;

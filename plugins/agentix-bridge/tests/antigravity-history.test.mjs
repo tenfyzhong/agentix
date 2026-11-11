@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, appendFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTranscriptReader } from '../antigravity/history.mjs';
+import { AntigravitySession } from '../antigravity/session.mjs';
 
 const row = (step_index, type, content, extra = {}) => JSON.stringify({ step_index, type,
     source: type === 'USER_INPUT' ? 'USER_EXPLICIT' : 'MODEL', status: 'DONE', content, ...extra }) + '\n';
@@ -78,4 +79,32 @@ test('native_usage_keeps_only_observed_counters_and_deduplicates_steps', t => {
     assert.deepEqual(createTranscriptReader()(path, 'native')[0].token_usage, [
         { id: 'native:step:1', input: 8357, cached: 0, output: 280 },
     ]);
+});
+
+test('native_user_request_envelope_excludes_metadata_and_preserves_plain_text', t => {
+    const path = fixture(t);
+    const wrapped = '<USER_REQUEST>\n hey\n </USER_REQUEST>\n <ADDITIONAL_METADATA>\nThe current local time is: 2026-11-11T10:36:29+08:00.\n</ADDITIONAL_METADATA>\n<USER_SETTINGS_CHANGE>\nModel Selection changed.\n</USER_SETTINGS_CHANGE>';
+    writeFileSync(path, row(0, 'USER_INPUT', wrapped)
+        + row(1, 'USER_INPUT', '<USER_REQUEST>\r\nfirst\r\n  second\r\n</USER_REQUEST>')
+        + row(2, 'USER_INPUT', 'Explain <USER_REQUEST> literally')
+        + row(3, 'USER_INPUT', '<USER_REQUEST>unfinished'));
+    assert.deepEqual(createTranscriptReader()(path, 'native').map(turn => turn.user_text),
+        ['hey', 'first\r\n  second', 'Explain <USER_REQUEST> literally', '<USER_REQUEST>unfinished']);
+});
+
+test('wrapped_native_input_acknowledges_plain_im_prompt_and_emits_only_user_body', async t => {
+    const path = fixture(t), events = [];
+    writeFileSync(path, '');
+    const identity = { conversationId: 'native', workspacePaths: [tmpdir()], transcriptPath: path };
+    const session = new AntigravitySession({ event: event => events.push(event), delivery: {
+        send: async ({ text }) => {
+            writeFileSync(path, row(0, 'USER_INPUT', `<USER_REQUEST>\n${text}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>time</ADDITIONAL_METADATA>`));
+            session.hook({ ...identity, hook_event_name: 'PreInvocation' });
+        },
+    } });
+    t.after(() => session.close());
+    session.hook({ ...identity, hook_event_name: 'SessionStart' });
+    assert.deepEqual(await session.request('prompt', { request_id: 'im-prompt', text: 'hey' }), { turn_id: 'native:step:0' });
+    assert.equal(events.find(event => event.ItemCompleted?.item.kind === 'userMessage').ItemCompleted.item.text, 'hey');
+    assert.equal(session.history().turns[0].user_text, 'hey');
 });

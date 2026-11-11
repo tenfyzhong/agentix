@@ -3,6 +3,12 @@ import { mkdtemp, open, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+/** Unwrap native user input without treating ordinary inline tags as an envelope. */
+function nativeUserText(text) {
+    const envelope = /^\s*<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>(?:\s*<(ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>[\s\S]*?<\/\2>)*\s*$/.exec(text);
+    return envelope ? envelope[1].trim() : text;
+}
+
 function userText(text) {
     // Hosts may put their context in user-role messages. Match complete leading
     // wrappers, not mentions of AGENTS.md in an actual request.
@@ -169,7 +175,7 @@ export async function transcriptConversation(path, options) {
                 if (user) {
                     if (typeof row.content !== "string") continue;
                     turn = id;
-                    row = { uuid: id, message: { role: "user", content: row.content } };
+                    row = { uuid: id, message: { role: "user", content: nativeUserText(row.content) } };
                 } else row = { uuid: id, antigravity: row };
             }
             if (row.type === "turn_context") {

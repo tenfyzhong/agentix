@@ -369,3 +369,13 @@ test("routing_preserves_complete_messages_from_an_older_turn_cut_off_by_budget",
     assert.equal(recent.history_truncated, true);
     await assert.rejects(transcriptConversation(path, { currentOnly: true, maxBytes: 1024 }), /budget/);
 });
+
+test('antigravity_user_envelopes_do_not_leak_metadata_into_discussion', async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'taskix-agy-envelope-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, 'transcript.jsonl');
+    const content = '<USER_REQUEST>\n hey\n </USER_REQUEST>\n<ADDITIONAL_METADATA>time</ADDITIONAL_METADATA>\n<USER_SETTINGS_CHANGE>model</USER_SETTINGS_CHANGE>';
+    await writeFile(path, JSON.stringify({ step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', content }) + '\n');
+    const capture = await transcriptConversation(path, { sessionId: 'native', currentOnly: true });
+    assert.deepEqual(capture.messages, [{ id: 'native:step:0', role: 'user', text: 'hey' }]);
+});

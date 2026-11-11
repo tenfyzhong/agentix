@@ -256,3 +256,11 @@ test('usage_is_observed_only_on_active_live_invocations', () => {
     f.hook('Stop', { fullyIdle: true });
     assert.equal(observed.length, count);
 });
+
+test('persisted_wrapped_user_text_is_normalized_before_history_and_preview', () => {
+    const f = fixture({ saved: { turns: [{ ...turn(undefined, '<USER_REQUEST>\nhey\n</USER_REQUEST>\n<ADDITIONAL_METADATA>time</ADDITIONAL_METADATA>'), status: 'completed' }] } });
+    f.transcript([turn(undefined, 'hey')]);
+    f.hook('SessionStart');
+    assert.equal(f.session.history().turns[0].user_text, 'hey');
+    assert.equal(f.session.info().session.preview, 'hey');
+});
