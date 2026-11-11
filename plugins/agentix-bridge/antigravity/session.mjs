@@ -108,9 +108,17 @@ export class AntigravitySession {
         if (method === 'interaction') {
             const pending = this.pendingInteraction;
             if (!pending || pending.request.rpc_id !== params.rpc_id) throw failure('invalid_request', 'Interaction is no longer pending');
-            this.answeredFingerprint = pending.prompt.fingerprint;
-            this.clearInteraction();
-            return this.options.interactions.respond(pending.prompt, params.response);
+            if (this.controlling) throw failure('busy', 'Antigravity is handling another terminal operation');
+            this.controlling = true;
+            try {
+                const result = await this.options.interactions.respond(pending.prompt, params.response);
+                // Hooks may have ended this interaction while terminal submission was in flight.
+                if (this.pendingInteraction === pending) {
+                    this.answeredFingerprint = pending.prompt.fingerprint;
+                    this.clearInteraction();
+                }
+                return result;
+            } finally { this.controlling = false; }
         }
         if (method === 'command' && params.name === 'status') return { body: `Session: ${this.identity.conversationId}\nWorkspace: ${this.identity.cwd ?? this.identity.workspacePaths[0]}\nState: ${this.active ? 'active' : 'idle'}`, choices: [] };
         if (method === 'command' && params.name === 'new' && this.options.nativeNew) {
@@ -192,6 +200,8 @@ export class AntigravitySession {
             const native = this.readTranscript(value.transcriptPath, value.conversationId);
             this.turns = native.map(turn => saved.get(turn.id) ?? turn);
             for (const turn of saved.values()) if (!this.turns.some(value => value.id === turn.id)) this.turns.push(turn);
+            // Native step indices are chronological; omitted saved turns may predate the bounded tail.
+            this.turns.sort((a, b) => Number(a.id.split(':step:').at(-1)) - Number(b.id.split(':step:').at(-1)));
             return;
         }
         if (value.conversationId !== this.identity.conversationId) return;

@@ -274,3 +274,41 @@ for (const error of ['', '   ', 'native failure']) {
         assert.equal(completed.status, error.trim() ? 'failed' : 'completed');
     });
 }
+
+for (const kind of ['command_approval', 'user_input']) test(`failed_${kind}_response_preserves_pending_interaction_for_retry`, async () => {
+    const prompt = { kind, title: 'Confirm', choices: ['Yes', 'No'], fingerprint: 'pending',
+        questionId: 'q', checked: [], multiple: false, custom: false };
+    let attempts = 0, finish;
+    const f = fixture({ interactions: { inspect: async () => prompt, respond: async () => {
+        if (++attempts === 1) throw new Error('foreground or draft check failed');
+        return new Promise(resolve => { finish = resolve; });
+    } } });
+    f.hook('SessionStart'); f.hook('PreInvocation'); await f.session.pollInteraction();
+    const request = f.events.find(event => event.InteractionRequested).InteractionRequested;
+    const params = { rpc_id: request.rpc_id, response: { decision: 'Yes', answers: { q: { answers: ['Yes'] } } } };
+    await assert.rejects(f.session.request('interaction', params), /check failed/);
+    await f.session.pollInteraction();
+    assert.equal(f.events.filter(event => event.InteractionResolved).length, 0);
+    assert.equal(f.session.pendingInteraction.request.rpc_id, request.rpc_id);
+    const retry = f.session.request('interaction', params);
+    await assert.rejects(f.session.request('interaction', params), error => error.bridgeCode === 'busy');
+    assert.equal(attempts, 2, 'concurrent replies must not submit twice');
+    assert.equal(f.events.filter(event => event.InteractionResolved).length, 0);
+    finish(null); await retry;
+    await f.session.pollInteraction();
+    assert.equal(f.events.filter(event => event.InteractionRequested).length, 1);
+    assert.equal(f.events.filter(event => event.InteractionResolved).length, 1);
+});
+
+test('restoring_bounded_native_history_keeps_saved_turns_in_chronological_order', () => {
+    const turns = Array.from({ length: 201 }, (_, step) => ({
+        ...turn(`native:step:${step}`, `prompt ${step}`, `answer ${step}`), status: 'completed',
+    }));
+    const f = fixture({ saved: { turns } });
+    f.transcript(turns.slice(1).map(value => ({ ...value, status: 'unknown' })));
+    f.hook('SessionStart');
+    assert.equal(f.session.info().session.preview, 'prompt 200');
+    assert.deepEqual(f.session.history().turns.map(value => value.id), turns.slice(-20).map(value => value.id));
+    assert.deepEqual(f.session.turns.map(value => value.id), turns.map(value => value.id));
+    assert.ok(f.session.turns.every(value => value.status === 'completed'));
+});
