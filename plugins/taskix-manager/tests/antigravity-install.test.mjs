@@ -45,12 +45,26 @@ for (const fail of [false, true]) test(`native_install_${fail ? 'rolls_back_part
     assert.deepEqual([...installed.keys()], ['unrelated']);
 });
 
-test('remote_clone_failure_never_changes_installed_plugins', async () => {
+test('remote_list_failure_never_changes_installed_plugins', async () => {
     const calls = [];
     await assert.rejects(installNativePlugins({ branch: 'feature/agy', run: async (binary, args) => {
-        calls.push({ binary, args }); throw new Error('clone failed');
-    } }), /clone failed/);
+        calls.push({ binary, args }); throw new Error('list failed');
+    } }), /list failed/);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].binary, 'git');
-    assert.deepEqual(calls[0].args.slice(0, 8), ['clone', '--depth', '1', '--single-branch', '--branch', 'feature/agy', '--', 'https://github.com/tenfyzhong/agentix.git']);
+    assert.equal(calls[0].binary, 'agy');
+    assert.deepEqual(calls[0].args, ['plugin', 'list', '--json']);
+});
+
+test('remote_install_uses_native_github_subdirectory_urls_without_cloning', async () => {
+    const calls = [];
+    await installNativePlugins({ branch: 'feature/agy', run: async (binary, args) => {
+        calls.push({ binary, args });
+        if (args[1] === 'list') return '[]';
+        return '';
+    } });
+    assert.ok(calls.every(call => call.binary === 'agy'));
+    assert.deepEqual(calls.filter(call => call.args[1] === 'install').map(call => call.args[2]), [
+        'https://github.com/tenfyzhong/agentix/tree/feature%2Fagy/plugins/taskix-manager',
+        'https://github.com/tenfyzhong/agentix/tree/feature%2Fagy/plugins/agentix-bridge',
+    ]);
 });

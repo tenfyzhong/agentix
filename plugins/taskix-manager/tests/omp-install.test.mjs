@@ -46,3 +46,19 @@ fi
         }
     });
 }
+
+test('omp_main_uses_native_remote_marketplace_without_checkout', { skip: process.platform === 'win32' }, async t => {
+    const dir = await mkdtemp(join(tmpdir(), 'omp-native-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const binary = join(dir, 'omp');
+    await writeFile(binary, '#!/bin/sh\nprintf "%s\\n" "$@" >> "$TEST_CALLS"\n');
+    await chmod(binary, 0o755);
+    const result = spawnSync(process.execPath, ['scripts/omp-plugin.mjs', 'install', 'main'], {
+        cwd: new URL('../../../', import.meta.url),
+        env: { ...process.env, PATH: dir, OMP: binary, XDG_CACHE_HOME: dir, TEST_CALLS: join(dir, 'calls') },
+        encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(await readFile(join(dir, 'calls'), 'utf8'),
+        'plugin\nmarketplace\nadd\ntenfyzhong/agentix\nplugin\ninstall\ntaskix-manager@agentix\nplugin\ninstall\nagentix-bridge@agentix\n');
+});

@@ -69,3 +69,12 @@ test('native_packaging_preserves_workflow_from_a_crlf_checkout', async t => {
     assert.equal(full, original.replace(/^---\r\n[\s\S]*?\r\n---\r\n/, '').replaceAll('(references/', '('));
     assert.match(await readFile(join(target, 'taskix-manager/skills/taskix-manager/SKILL.md'), 'utf8'), /^---\r\nname:/);
 });
+
+test('direct_github_taskix_skill_fits_native_limit_and_references_complete_workflow', async () => {
+    const directory = join(root, 'plugins/taskix-manager/skills/taskix-manager');
+    const entry = await readFile(join(directory, 'SKILL.md'), 'utf8');
+    assert.ok(Buffer.byteLength(entry) < 24000, 'GitHub installs must not truncate the workflow');
+    assert.match(entry, /references\/workflow\.md/);
+    const workflow = await readFile(join(directory, 'references/workflow.md'), 'utf8');
+    for (const heading of ['## Begin or resume', '## Job verification', '## Project memory']) assert.ok(workflow.includes(heading));
+});

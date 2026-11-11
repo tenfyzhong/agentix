@@ -87,20 +87,45 @@ Dispatch allows sixteen outstanding event jobs globally and four per session,
 with native-stream backpressure and per-session ordering. Active work, leases and
 dispatcher work pin wrappers against the inactive-session LRU limit.
 
-Use `make plugin HOSTS=opencode` to install native GitHub package references from
-the remote branch matching the current checkout. Push the branch before installing;
-`SOURCE` overrides and detached HEAD are unsupported for installation. The server
-and TUI packages have no third-party runtime npm dependencies or Zod. Installation
-replaces Agentix registrations from previous branches and removes legacy local
-copies after both packages install. Use `opencode plugin update` for remote updates
-and `make remove-plugin HOSTS=opencode` to remove all installer-owned branch references
-and legacy local registrations. Earlier 2.0 patches and OpenCode 1.x are unsupported;
+Install directly without cloning Agentix:
+
+```sh
+opencode plugin add 'github:tenfyzhong/agentix#main::path:plugins/taskix-manager'
+opencode plugin add 'github:tenfyzhong/agentix#main::path:plugins/agentix-bridge'
+```
+
+OpenCode manages both package caches and the server/TUI configuration.
+Use `opencode plugin update` for updates. Developers can still use
+`make plugin HOSTS=opencode` to install the current published branch and migrate
+legacy local registrations. Earlier 2.0 patches and OpenCode 1.x are unsupported;
 2.0.32 is the validated baseline.
-See the [OpenCode guide](https://github.com/tenfyzhong/agentix/wiki/OpenCode) for installation.
+See the [OpenCode guide](https://github.com/tenfyzhong/agentix/wiki/OpenCode).
+
+## OMP installation
+
+Install directly without an Agentix checkout:
+
+```sh
+omp plugin marketplace add tenfyzhong/agentix
+omp plugin install taskix-manager@agentix
+omp plugin install agentix-bridge@agentix
+```
+
+OMP downloads and manages the marketplace and plugin caches. Restart OMP to load
+the extensions. Use `omp plugin marketplace update agentix` and reinstall with
+`--force` to refresh an existing installation.
 
 ## Antigravity native host
 
-`make plugin HOSTS=antigravity` installs independently loadable native packages.
+Install independently loadable native packages directly:
+
+```sh
+agy plugin install https://github.com/tenfyzhong/agentix/tree/main/plugins/taskix-manager
+agy plugin install https://github.com/tenfyzhong/agentix/tree/main/plugins/agentix-bridge
+```
+
+The skill entrypoint requires the complete `references/workflow.md` for all hosts,
+so direct Antigravity installs do not truncate its lifecycle instructions.
 The Taskix MCP tool binds session/executor/lease options itself. Hooks map native
 invocations to stable user steps, distinguish invocation completion from idle
 Stop, and preserve shared memory, discussion, routing and lifecycle behavior.

@@ -12,30 +12,33 @@ Install `agy`, Node.js, Agentix and Taskix, then complete agy's normal sign-in a
 initial setup in your own terminal. Start `agy` in tmux, rmux or Rex for remote
 input and controls. Existing login and theme settings remain in your home.
 
-From an Agentix checkout whose current branch exists on origin:
+Install both plugins directly from GitHub; no Agentix checkout or Make is required:
 
 ```sh
-make plugin HOSTS=antigravity
-```
-
-This installs both `agentix-bridge` and `taskix-manager`. The installer fetches
-the current remote branch, builds native-only packages and runs
-`agy plugin validate --strict` before replacing either plugin. It preserves each
-plugin's enabled state and leaves unrelated plugins alone. Reported partial
-failures restore the previous packages; this is not crash-atomic or safe for
-concurrent installers. Restart agy after installation or update.
-
-```sh
+agy plugin install https://github.com/tenfyzhong/agentix/tree/main/plugins/taskix-manager
+agy plugin install https://github.com/tenfyzhong/agentix/tree/main/plugins/agentix-bridge
 agy plugin list --json
-make remove-plugin HOSTS=antigravity
 ```
 
-Removal is idempotent and only removes these two named plugins. For development
-against unpushed local changes, use
+Restart agy after installation or update. Repeat the install commands to update.
+Antigravity manages its own downloaded copy. The shared Taskix skill has a short
+entrypoint that requires reading the complete workflow reference, avoiding agy's
+24 KB skill-body limit. Multi-host directories also contain Claude configuration
+files; agy ignores those files and uses the native root hooks and MCP config.
+
+Remove the plugins with:
+
+```sh
+agy plugin uninstall taskix-manager
+agy plugin uninstall agentix-bridge
+```
+
+For developers, `make plugin HOSTS=antigravity` installs GitHub URLs for the
+current published branch. Its wrapper preserves disabled states and restores
+previous packages after reported partial failures; separate direct native commands
+do not provide that two-plugin transaction. For unpushed local changes, use
 `node scripts/antigravity-plugin.mjs install --local /absolute/checkout`.
-The raw multi-host plugin directories are not native install targets: the
-packager filters foreign host manifests and preserves the full Taskix workflow
-as a referenced skill document.
+The local packager filters foreign manifests and validates native packages strictly.
 
 ## Configure and attach
 

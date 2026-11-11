@@ -8,6 +8,12 @@ const parent = join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "ag
 const destination = join(parent, "omp-marketplace");
 if (action === "remove") {
     await rm(destination, { recursive: true, force: true });
+} else if (action === "install" && branch === "main") {
+    for (const args of [
+        ["plugin", "marketplace", "add", "tenfyzhong/agentix"],
+        ["plugin", "install", "taskix-manager@agentix"],
+        ["plugin", "install", "agentix-bridge@agentix"],
+    ]) execFileSync(process.env.OMP || "omp", args, { stdio: "inherit", timeout: 180000 });
 } else if (action === "install" && branch) {
     await mkdir(parent, { recursive: true });
     const stage = await mkdtemp(join(parent, "omp-install-"));
