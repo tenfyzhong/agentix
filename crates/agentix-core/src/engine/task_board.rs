@@ -651,7 +651,13 @@ impl TaskBoardService {
                 let messages = conversations
                     .entry((session_id.clone(), turn_id.clone()))
                     .or_default();
-                let id = format!("{turn_id}:{}", item.id);
+                // Native Antigravity step IDs are already session-scoped and must
+                // match the Taskix transcript hook's IDs for dual-source capture.
+                let id = if session_id.starts_with("antigravity:") {
+                    item.id.clone()
+                } else {
+                    format!("{turn_id}:{}", item.id)
+                };
                 let mut message = json!({"id":id,"role":role,"text":text});
                 if role == "user" {
                     message["completed_at_ms"] = json!(observed_at_ms);

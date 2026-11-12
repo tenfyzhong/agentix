@@ -108,3 +108,32 @@ test('wrapped_native_input_acknowledges_plain_im_prompt_and_emits_only_user_body
     assert.equal(events.find(event => event.ItemCompleted?.item.kind === 'userMessage').ItemCompleted.item.text, 'hey');
     assert.equal(session.history().turns[0].user_text, 'hey');
 });
+
+test('bridge_messages_share_native_transcript_ids_across_replays_and_identical_turns', async t => {
+    const { transcriptConversation } = await import('../../taskix-manager/conversation.mjs');
+    const path = fixture(t), events = [];
+    writeFileSync(path, '');
+    const identity = { conversationId: 'native', workspacePaths: [tmpdir()], transcriptPath: path };
+    const session = new AntigravitySession({ event: event => events.push(event) });
+    t.after(() => session.close());
+    session.hook({ ...identity, hook_event_name: 'SessionStart' });
+    for (const start of [0, 3]) {
+        appendFileSync(path, row(start, 'USER_INPUT', 'same prompt'));
+        session.hook({ ...identity, hook_event_name: 'PreInvocation' });
+        appendFileSync(path, row(start + 1, 'PLANNER_RESPONSE', 'progress'));
+        session.hook({ ...identity, hook_event_name: 'PostInvocation' });
+        appendFileSync(path, row(start + 2, 'PLANNER_RESPONSE', 'partial'));
+        session.hook({ ...identity, hook_event_name: 'PostInvocation' });
+        appendFileSync(path, row(start + 2, 'PLANNER_RESPONSE', 'done'));
+        session.hook({ ...identity, hook_event_name: 'Stop', fullyIdle: true });
+        session.hook({ ...identity, hook_event_name: 'Stop', fullyIdle: true });
+    }
+    const actual = new Map(events.flatMap(event => {
+        const item = event.ItemCompleted?.item;
+        return item && ['userMessage', 'agentMessage'].includes(item.kind)
+            ? [[item.id, { id: item.id, role: item.kind === 'userMessage' ? 'user' : 'assistant', text: item.text }]] : [];
+    }));
+    const expected = await transcriptConversation(path, { sessionId: 'native', recentTurns: 2 });
+    assert.deepEqual([...actual.values()], expected.messages);
+    assert.equal(session.history().turns[0].agent_text, 'progress\ndone');
+});
