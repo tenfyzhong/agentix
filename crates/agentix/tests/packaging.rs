@@ -57,8 +57,8 @@ fn release_workflow_builds_tag_aligned_native_archives() {
 }
 
 #[test]
-fn workspace_uses_a_development_version_until_release_packaging() {
-    assert_eq!(env!("CARGO_PKG_VERSION"), "0.0.0-dev");
+fn workspace_version_matches_the_committed_release_version() {
+    assert_eq!(env!("CARGO_PKG_VERSION"), repository_file("VERSION").trim());
 }
 
 #[test]

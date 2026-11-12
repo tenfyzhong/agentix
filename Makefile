@@ -13,7 +13,10 @@ NODE ?= node
 HOSTS ?= codex pi omp claude opencode antigravity
 VERSION ?= stable
 FORMULAE ?= agentix taskix
-override PLUGIN_BRANCH := $(shell git symbolic-ref --quiet --short HEAD)
+PLUGIN_TAG ?=
+PLUGIN_PATH ?=
+override PLUGIN_BRANCH := $(if $(PLUGIN_TAG),$(PLUGIN_TAG),$(shell git symbolic-ref --quiet --short HEAD))
+export PLUGIN_TAG
 export PLUGIN_BRANCH
 PROFILE ?= release
 BREW_FORMULAE = $(addprefix tenfyzhong/tap/,$(FORMULAE))
@@ -21,7 +24,7 @@ DEBUG_TARGET_DIR = $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 
 .DEFAULT_GOAL := build
 
-.PHONY: build release completions check fmt clippy test test-backup clean help remove-plugin install update switch plugin
+.PHONY: prepare-release check-versions plugin-status plugin-stable build release completions check fmt clippy test test-backup clean help remove-plugin install update switch plugin
 
 build:
 	$(CARGO) build --workspace --all-features
@@ -173,10 +176,26 @@ remove-plugin:
 		esac; \
 	done
 
+prepare-release:
+	$(NODE) scripts/plugin-version.mjs prepare "$(VERSION)"
+
+check-versions:
+	$(NODE) scripts/plugin-version.mjs check
+
+plugin-status:
+	@test -n "$(PLUGIN_PATH)" || { echo 'Set PLUGIN_PATH to the installed plugin directory reported by your host'; exit 2; }
+	$(NODE) plugins/taskix-manager/version.mjs --path "$(PLUGIN_PATH)" --check
+
+plugin-stable:
+	@set -eu; tag="$$($(NODE) scripts/plugin-version.mjs latest)"; \
+	$(MAKE) plugin PLUGIN_TAG="$$tag"
+
 plugin:
 	@test "$(origin SOURCE)" = undefined || { echo 'SOURCE is no longer supported; plugins use the current remote branch' >&2; exit 2; }
+	@if [ -n "$$PLUGIN_TAG" ]; then printf '%s\n' "$$PLUGIN_TAG" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { echo 'PLUGIN_TAG must be X.Y.Z'; exit 2; }; fi
 	@test -n "$$PLUGIN_BRANCH" || { echo 'Plugin installation requires a checked-out Git branch' >&2; exit 2; }
-	@git ls-remote --exit-code --heads https://github.com/tenfyzhong/agentix.git "refs/heads/$$PLUGIN_BRANCH" >/dev/null || { echo 'Current branch is unavailable on the plugin remote' >&2; exit 2; }
+	@kind=heads; if [ -n "$$PLUGIN_TAG" ]; then kind=tags; fi; \
+	git ls-remote --exit-code "--$$kind" https://github.com/tenfyzhong/agentix.git "refs/$$kind/$$PLUGIN_BRANCH" >/dev/null || { echo 'Requested ref is unavailable on the plugin remote' >&2; exit 2; }
 	$(check-plugin-hosts)
 	$(if $(filter-out opencode antigravity,$(HOSTS)),$(MAKE) remove-plugin HOSTS="$(filter-out opencode antigravity,$(HOSTS))",@:)
 	@set -eu; \
@@ -213,7 +232,11 @@ help:
 		'  VERSION=local builds the selected profile before installing local binaries' \
 		'  PROFILE=release|debug (default: release), CARGO_TARGET_DIR selects build output' \
 		'  FORMULAE=agentix or FORMULAE=taskix selects one CLI (default: both)' \
-		'make plugin         Install remote plugins from the current Git branch for all five hosts' \
+		'make plugin [PLUGIN_TAG=X.Y.Z]  Install current remote branch or a fixed release tag' \
+		'make plugin-stable  Resolve latest release once and install its fixed tag' \
+		'make plugin-status PLUGIN_PATH=/installed/plugin  Check version, source and updates' \
+		'make prepare-release VERSION=X.Y.Z  Prepare all component versions before tagging' \
+		'make check-versions  Verify all committed component versions' \
 		'  HOSTS="codex pi omp claude opencode antigravity" selects plugin hosts (default: all six)' \
 		'  HOSTS=antigravity selects the native agy Taskix and Agentix plugins' \
 		'  HOSTS=opencode selects only the OpenCode 2.0.32+ server and TUI plugins' \

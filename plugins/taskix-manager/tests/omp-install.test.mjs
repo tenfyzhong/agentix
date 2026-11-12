@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-for (const failure of [false, true]) {
-    test(`omp_remote_branch_clone_${failure ? "failure_preserves_cache" : "install_and_remove"}`, { skip: process.platform === "win32" }, async t => {
+for (const [failure, ref] of [[false, "feature/plugin-test"], [true, "feature/plugin-test"], [false, "1.2.3"]]) {
+    test(`omp_remote_ref_${ref}_clone_${failure ? "failure_preserves_cache" : "install_and_remove"}`, { skip: process.platform === "win32" }, async t => {
         const dir = await mkdtemp(join(tmpdir(), "omp-install-"));
         t.after(() => rm(dir, { recursive: true, force: true }));
         const bin = join(dir, "bin");
@@ -29,7 +29,7 @@ fi
             env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OMP: join(bin, "omp"), XDG_CACHE_HOME: dir, TEST_CALLS: join(dir, "calls") },
             encoding: "utf8",
         });
-        const result = run("install", "feature/plugin-test");
+        const result = run("install", ref);
         if (failure) {
             assert.notEqual(result.status, 0);
             assert.equal(await readFile(join(cache, "old"), "utf8"), "previous");
@@ -38,7 +38,7 @@ fi
             assert.equal(result.status, 0, result.stderr);
             assert.equal(await readFile(join(cache, "new"), "utf8"), "");
             const calls = await readFile(join(dir, "calls"), "utf8");
-            assert.match(calls, /git\nclone\n--depth\n1\n--single-branch\n--branch\nfeature\/plugin-test\n--\nhttps:\/\/github.com\/tenfyzhong\/agentix.git\n/);
+            assert.ok(calls.includes(`git\nclone\n--depth\n1\n--single-branch\n--branch\n${ref}\n--\nhttps://github.com/tenfyzhong/agentix.git\n`));
             assert.ok(calls.includes(`omp\nplugin\nmarketplace\nadd\n${cache}\n`));
             assert.match(calls, /omp\nplugin\ninstall\ntaskix-manager@agentix\nomp\nplugin\ninstall\nagentix-bridge@agentix\n/);
             assert.equal(run("remove").status, 0);

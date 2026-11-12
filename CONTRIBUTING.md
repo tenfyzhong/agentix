@@ -191,7 +191,10 @@ For end users, use the native commands in the [plugin installation guide](docs/p
 
 Run `make plugin` to install from the GitHub branch matching the current checkout's
 branch name. The branch must already exist on `tenfyzhong/agentix`; unpushed changes
-are not installed. Detached HEAD and the removed `SOURCE` option fail before cleanup.
+are not installed. Detached HEAD requires an explicit `PLUGIN_TAG`; the removed `SOURCE` option fails before cleanup.
+Use `make plugin PLUGIN_TAG=X.Y.Z` for a fixed release or `make plugin-stable`
+to resolve the latest stable release once. `make plugin-status PLUGIN_PATH=/installed/plugin`
+reports the actual plugin version, Git identity and remote update status.
 The default hosts are Codex, Pi, OMP, Claude Code, and OpenCode. Select with `HOSTS`:
 
 ```sh
@@ -404,6 +407,15 @@ For a release blocked by packaging automation, merge the fix and dispatch `Relea
 Run the focused packaging regressions with `cargo test -p agentix --all-features --test packaging` and `node --test plugins/taskix-manager/tests/homebrew.test.mjs plugins/taskix-manager/tests/release-bottles.test.mjs plugins/taskix-manager/tests/release-backup.test.mjs`. On a machine with Homebrew and a C compiler, `AGENTIX_TEST_HOMEBREW=1 node --test plugins/taskix-manager/tests/release-bottles.test.mjs` also exercises a real bottle install/export/pour using a uniquely named disposable formula. It does not replace installed Agentix or Taskix packages. In the tap worktree, run `AGENTIX_TEST_HOMEBREW=1 AGENTIX_TEST_SOURCE=/absolute/path/to/agentix node --test tests/backup.test.mjs` to install, export and pour the actual backup Formula recipe with an isolated SQLite/rclone round trip. It leaves installed production commands and services alone.
 
 When the source URL changes for a new tag, the Homebrew workflow also removes the formula's old `revision` so the new upstream version starts at revision zero. Re-running the same tag preserves its revision while rebuilding the bottle.
+
+All CLI and plugin release versions are driven by the committed `VERSION` file.
+Run `make prepare-release VERSION=X.Y.Z` on the release branch, verify with
+`make check-versions`, and commit all generated manifest/lockfile changes before
+tagging that commit. The tag must match exactly (numeric, without `v`). Release
+CI rejects mismatches before publication; historical tags without `VERSION` keep
+the legacy packaging path. Do not rely on CI-only version stamping for plugins
+installed directly from Git. After releasing, use the same prepare command with
+`VERSION=0.0.0-dev` to reset every component together for development.
 
 Before tagging a release:
 

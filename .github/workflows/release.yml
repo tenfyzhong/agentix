@@ -30,6 +30,9 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
       - name: Resolve release version
         id: release
         env:
@@ -50,6 +53,11 @@ jobs:
           fi
 
           version="$(.github/scripts/release-version.sh "$release_tag")"
+          if [[ -f VERSION ]]; then
+            node scripts/plugin-version.mjs check "$release_tag"
+          else
+            echo "Legacy tag: unified plugin version metadata predates this release"
+          fi
           echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 

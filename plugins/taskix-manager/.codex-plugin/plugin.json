@@ -1,12 +1,17 @@
 {
   "name": "taskix-manager",
-  "version": "0.2.2",
+  "version": "0.0.0-dev",
   "description": "Coordinate tracked work with taskix and read-only Markdown boards.",
-  "author": { "name": "tenfyzhong" },
+  "author": {
+    "name": "tenfyzhong"
+  },
   "repository": "https://github.com/tenfyzhong/agentix",
   "license": "MIT",
   "skills": "./skills/",
-  "hooks": ["./hooks/hooks.json", "./hooks/codex.json"],
+  "hooks": [
+    "./hooks/hooks.json",
+    "./hooks/codex.json"
+  ],
   "interface": {
     "displayName": "Taskix Manager",
     "shortDescription": "Track jobs, claim tasks, and preserve execution context.",

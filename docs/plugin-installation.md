@@ -157,3 +157,82 @@ AGENTIX_TEST_NATIVE_REMOTE_INSTALL=1 node --test plugins/taskix-manager/tests/na
 It verifies native downloads and registrations from published main. Local package
 and installer regression tests verify unpublished changes; remote tests do not
 claim that those changes have been published or that model conversations passed.
+
+## Unified release versions
+
+The tooling in this section is introduced by the unified-version change; use a
+checkout containing it until the first release with this policy is published.
+
+Agentix, Taskix, both host plugins, and Taskix Sync share one release version.
+The commands above use `main`, a development channel. To install a stable release,
+select a published numeric tag from [Releases](https://github.com/tenfyzhong/agentix/releases)
+and replace `main` in the Codex, Claude, Pi, OpenCode and agy source references
+with that exact tag. Upgrade the two CLIs and plugins together. Releases before
+this policy was introduced retain their historical independent plugin versions.
+
+A tag is pinned: refreshing it does not move to the next release. To upgrade,
+remove the old marketplace/source registration using the commands above, then
+install the new tag. For Pi, remove the exact old `git:...@TAG` source before
+installing the new one to avoid duplicate extensions. Keep unrelated plugins.
+OMP's native marketplace command follows main; use the checkout helper below
+for a fixed tag, since OMP has no native marketplace ref selector.
+
+With a checkout containing the unified-version tooling:
+
+```sh
+make plugin-stable HOSTS=codex
+make plugin PLUGIN_TAG=1.2.3 HOSTS="pi claude"
+make remove-plugin PLUGIN_TAG=1.2.3 HOSTS=pi
+```
+
+`1.2.3` is an example, not a claim that this tag exists. `plugin-stable` resolves
+GitHub's latest stable release once, then passes the same numeric tag to every
+selected host. An unavailable tag fails before cleanup. With no `PLUGIN_TAG`,
+`make plugin` retains its current remote branch behavior. OMP uses its existing
+managed remote cache for fixed tags as well as non-main branches.
+
+### Inspect the installed version
+
+Use your host's plugin listing to locate its installed Taskix Manager directory:
+
+```sh
+node /path/to/installed/taskix-manager/version.mjs --check
+```
+
+The command reads that directory, not the current working checkout. It reports
+version, source URL, branch/tag, full commit SHA, dirty state, latest release, and
+update status. Without `--check` it works offline; `--json` returns structured
+output. To inspect an older plugin without this script, or Agentix Bridge or
+Taskix Sync, use the new script with `--path /actual/plugin/directory`. From a
+checkout the equivalent is:
+
+```sh
+make plugin-status PLUGIN_PATH=/path/to/installed/taskix-manager
+```
+
+A source checkout is not proof of an installed or active host plugin. Choose the
+actual directory reported by the host, and restart that host after updating.
+Caches without Git metadata report an unknown source/commit; equal manifest
+versions alone do not prove current code. Branch checks compare its local SHA
+with the same remote branch; stable tag checks compare release versions. Dirty
+sources report `modified`. Missing metadata, deleted branches, API rate limits
+and network failures report `unknown`, never `current`. This command is read-only
+and does not refresh caches or change host registrations.
+
+### Preparing a release
+
+Maintainers use `VERSION` as the single source of truth. On a release branch:
+
+```sh
+make prepare-release VERSION=1.2.3
+make check-versions
+```
+
+Review and commit the generated Cargo, package, lockfile and plugin manifest
+changes before creating the matching numeric tag. Release CI verifies the
+committed versions before building or publishing. PR CI catches partial version
+changes. `prepare-release` does not commit, tag, push or publish. After a release,
+reset all development versions together with `make prepare-release VERSION=0.0.0-dev`;
+development identity comes from its branch and commit, not this placeholder.
+Obsidian stable releases use the same numeric version. Protocol/schema versions
+and third-party dependency versions remain independent.
