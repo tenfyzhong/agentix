@@ -131,3 +131,11 @@ invocations to stable user steps, distinguish invocation completion from idle
 Stop, and preserve shared memory, discussion, routing and lifecycle behavior.
 MCP EOF supplies SessionEnd; native user cancellation releases the lease.
 See the [Antigravity guide](https://github.com/tenfyzhong/agentix/wiki/Antigravity) for setup and boundaries.
+
+## Version and update status
+
+All Agentix components share the repository release version. From the installed
+plugin directory, run `node version.mjs --check` to read its version, Git source,
+branch/commit and latest release. Use `--json` for structured output or omit
+`--check` for offline inspection. Missing Git metadata and network failures are
+reported explicitly. See [plugin installation](https://github.com/tenfyzhong/agentix/wiki/Plugin-Installation#unified-release-versions).

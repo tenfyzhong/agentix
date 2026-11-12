@@ -46,6 +46,11 @@ if [ "${command}" = "git" ]; then
     esac
 fi
 echo "${command} $*" >> "$INSTALL_FIXTURE_DIR/calls"
+if [ "${command}" = "node" ] && [ "$*" = "scripts/plugin-version.mjs latest" ]; then
+    [ "$INSTALL_LATEST_FAIL" != "1" ] || exit 8
+    echo "1.2.3"
+    exit 0
+fi
 if [ "${command}" = "$INSTALL_FAIL_HOST" ] || { [ "${command}" = "node" ] && [ "$INSTALL_FAIL_HOST" = "opencode" -o "$INSTALL_FAIL_HOST" = "omp" -o "$INSTALL_FAIL_HOST" = "antigravity" ]; }; then
     case "$*" in
         "plugin add "*|"plugin install "*|"install "*|"scripts/opencode-plugin.mjs install "*|"scripts/omp-plugin.mjs install "*|"scripts/antigravity-plugin.mjs install "*) [ "$INSTALL_FAIL" != "install" ] || exit 8 ;;
@@ -172,4 +177,42 @@ test("npm_node_environment_cannot_bypass_installation_fixture", { skip: process.
     const result = f.run("remove-plugin", "", "codex", { NODE: process.execPath });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(await f.calls(), hosts.flatMap(host => removals[host]));
+});
+
+test("explicit_tag_installs_all_hosts_from_same_tag_even_on_detached_head", { skip: process.platform === "win32" }, async t => {
+    const f = await fixture(t);
+    const result = f.run(["plugin", "PLUGIN_TAG=1.2.3"], "", "codex", { INSTALL_DETACHED: "1" });
+    assert.equal(result.status, 0, result.stderr);
+    const calls = await f.calls();
+    for (const expected of hosts.flatMap(installs).map(call => call.replaceAll(branch, "1.2.3"))) assert.ok(calls.includes(expected), expected);
+});
+
+for (const tag of ["main", "v1.2.3", "1.2", "01.2.3"]) {
+    test(`invalid_tag_rejected_before_cleanup_${tag}`, { skip: process.platform === "win32" }, async t => {
+        const f = await fixture(t);
+        assert.notEqual(f.run(["plugin", `PLUGIN_TAG=${tag}`]).status, 0);
+        await assert.rejects(f.calls(), { code: "ENOENT" });
+    });
+}
+
+
+test("stable_resolution_pins_one_tag_for_every_selected_host", { skip: process.platform === "win32" }, async t => {
+    const f = await fixture(t);
+    const result = f.run(["plugin-stable", "HOSTS=codex claude"]);
+    assert.equal(result.status, 0, result.stderr);
+    const calls = await f.calls();
+    assert.equal(calls.filter(call => call === "node scripts/plugin-version.mjs latest").length, 1);
+    for (const expected of ["codex", "claude"].flatMap(installs).map(call => call.replaceAll(branch, "1.2.3"))) assert.ok(calls.includes(expected), expected);
+});
+
+test("stable_resolution_failure_does_not_remove_existing_plugins", { skip: process.platform === "win32" }, async t => {
+    const f = await fixture(t);
+    assert.notEqual(f.run("plugin-stable", "", "codex", { INSTALL_LATEST_FAIL: "1" }).status, 0);
+    assert.deepEqual(await f.calls(), ["node scripts/plugin-version.mjs latest"]);
+});
+
+test("missing_tag_fails_before_cleanup", { skip: process.platform === "win32" }, async t => {
+    const f = await fixture(t);
+    assert.notEqual(f.run(["plugin", "PLUGIN_TAG=1.2.3"], "", "codex", { INSTALL_MISSING_BRANCH: "1" }).status, 0);
+    await assert.rejects(f.calls(), { code: "ENOENT" });
 });

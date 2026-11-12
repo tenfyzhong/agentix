@@ -1,7 +1,7 @@
 {
   "id": "taskix-sync",
   "name": "Taskix Sync",
-  "version": "0.3.0",
+  "version": "0.0.0-dev",
   "minAppVersion": "1.14.0",
   "description": "Synchronize Taskix states and Issue documents, restoring rejected changes.",
   "author": "tenfyzhong",

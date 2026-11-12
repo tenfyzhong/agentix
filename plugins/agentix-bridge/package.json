@@ -1,6 +1,6 @@
 {
   "name": "agentix-bridge",
-  "version": "0.2.0",
+  "version": "0.0.0-dev",
   "description": "Connect live Pi, OMP, Claude Code, and OpenCode terminals to Agentix",
   "type": "module",
   "license": "MIT",
