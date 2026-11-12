@@ -246,8 +246,8 @@ export class AntigravitySession {
                 const refreshed = transcript.find(value => value.id === previous.id);
                 if (refreshed) Object.assign(previous, refreshed);
                 previous.status = 'unknown';
-                events.push({ ItemCompleted: { session_id, turn_id: previous.id,
-                    item: { id: `${previous.id}:assistant`, kind: 'agentMessage', text: previous.agent_text, status: 'unknown' } } });
+                for (const message of previous.messages ?? []) events.push({ ItemCompleted: { session_id, turn_id: previous.id,
+                    item: { ...message, kind: 'agentMessage', status: 'unknown' } } });
                 events.push({ TurnCompleted: { session_id, turn_id: previous.id, status: 'unknown', error: null } });
             }
             turn = { ...native, status: 'inProgress' };
@@ -255,13 +255,13 @@ export class AntigravitySession {
             else turns[index] = turn;
             events.push({ TurnStarted: { session_id, turn_id: turn.id } });
             events.push({ ItemCompleted: { session_id, turn_id: turn.id,
-                item: { id: `${turn.id}:user`, kind: 'userMessage', text: turn.user_text, status: 'completed' } } });
+                item: { id: turn.id, kind: 'userMessage', text: turn.user_text, status: 'completed' } } });
         }
         if (!turn || (this.active?.id !== turn.id && !events.length)) return;
         if (['PostInvocation', 'Stop'].includes(value.hook_event_name)) {
             for (const usage of native.token_usage ?? []) this.options.usage?.(usage.id, usage);
         }
-        const oldText = turn.agent_text;
+        const oldMessages = new Map((turn.messages ?? []).map(message => [message.id, message.text]));
         for (const item of native.items) {
             if (!turn.items.some(previous => previous.id === item.id && JSON.stringify(previous) === JSON.stringify(item))) {
                 events.push({ ItemCompleted: { session_id, turn_id: turn.id, item } });
@@ -270,8 +270,11 @@ export class AntigravitySession {
         turn.agent_text = native.agent_text;
         turn.items = native.items;
         turn.tools = native.tools;
-        if (oldText !== turn.agent_text) events.push({ ItemCompleted: { session_id, turn_id: turn.id,
-            item: { id: `${turn.id}:assistant`, kind: 'agentMessage', text: turn.agent_text, status: 'inProgress' } } });
+        turn.messages = native.messages ?? [];
+        for (const message of turn.messages) {
+            if (oldMessages.get(message.id) !== message.text) events.push({ ItemCompleted: { session_id, turn_id: turn.id,
+                item: { ...message, kind: 'agentMessage', status: 'inProgress' } } });
+        }
         let active = turn;
         if (value.hook_event_name === 'Stop' && value.fullyIdle === true) {
             const reason = String(value.terminationReason ?? '').toLowerCase().replace(/^terminal_/, '');
@@ -279,8 +282,8 @@ export class AntigravitySession {
             turn.status = error || ['error', 'max_steps_exceeded', 'max_invocations', 'max_forced_invocations', 'max_token_budget_exceeded'].includes(reason) ? 'failed'
                 : ['cancelled', 'interrupted', 'custom_hook', 'user_canceled', 'user_cancelled'].includes(reason) ? 'interrupted' : 'completed';
             active = null;
-            events.push({ ItemCompleted: { session_id, turn_id: turn.id,
-                item: { id: `${turn.id}:assistant`, kind: 'agentMessage', text: turn.agent_text, status: turn.status } } });
+            for (const message of turn.messages) events.push({ ItemCompleted: { session_id, turn_id: turn.id,
+                item: { ...message, kind: 'agentMessage', status: turn.status } } });
             events.push({ TurnCompleted: { session_id, turn_id: turn.id, status: turn.status, error } });
         }
         const accepted = events.some(event => event.TurnStarted) && [...this.receipts].find(([, receipt]) =>

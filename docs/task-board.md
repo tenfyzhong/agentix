@@ -57,6 +57,20 @@ The conversation timing regressions cover transcript completion boundaries,
 metadata-only updates, discussion staging, replay, legacy records, and deterministic
 Markdown synchronization. They do not establish live host timing accuracy.
 
+## Antigravity dual-source capture
+
+Antigravity bridge events and Taskix transcript hooks use the same native
+`<conversation>:step:<index>` message IDs. The bridge emits each visible planner
+response separately, while history retains its aggregated `agent_text` preview.
+The Taskix event collector preserves these IDs without adding the turn ID again.
+This allows either arrival order and repeated captures to update one input and
+one copy of each reply, preserving the first observed completion timestamps.
+Identical prompts in different native steps remain separate turns.
+
+Deploy the updated Agentix collector and bridge together. Existing stored duplicate
+messages are not automatically rewritten; this change fixes future capture, not
+historical data migration.
+
 ## Validation
 
 `make check` installs locked plugin dependencies, then runs Rust formatting, Clippy, workspace tests, and the Node built-in plugin tests. Install Node.js 24+ and npm. Direct Cargo invocations require `npm ci --ignore-scripts --prefix plugins/taskix-manager` first. Normal tests use temporary databases/directories and local mock services, not live accounts.

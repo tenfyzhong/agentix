@@ -45,7 +45,7 @@ export function createTranscriptReader() {
         const turns = [];
         for (const [index, step] of [...steps].sort((a, b) => a[0] - b[0])) {
             if (step.type === 'USER_INPUT' && step.source === 'USER_EXPLICIT' && typeof step.content === 'string') {
-                turns.push({ id: `${sessionId}:step:${index}`, status: 'unknown', user_text: nativeUserText(step.content).slice(-MAX_TEXT), agent_text: '', tools: [], items: [] });
+                turns.push({ id: `${sessionId}:step:${index}`, status: 'unknown', user_text: nativeUserText(step.content).slice(-MAX_TEXT), agent_text: '', tools: [], items: [], messages: [] });
                 continue;
             }
             const turn = turns.at(-1);
@@ -58,6 +58,7 @@ export function createTranscriptReader() {
                 if (Object.keys(usage).length > 1) (turn.token_usage ??= []).push(usage);
             }
             if (typeof step.content === 'string' && step.type === 'PLANNER_RESPONSE') {
+                if (step.content.trim()) turn.messages.push({ id: `${sessionId}:step:${index}`, text: step.content });
                 turn.agent_text = [turn.agent_text, step.content].filter(Boolean).join('\n').slice(-MAX_TEXT);
             }
             for (const [i, tool] of (Array.isArray(step.tool_calls) ? step.tool_calls : []).entries()) {
