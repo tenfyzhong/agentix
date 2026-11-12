@@ -328,38 +328,7 @@ async fn antigravity_bridge_and_hooks_merge_native_messages_with_timing() {
                     .await
                     .unwrap();
             } else {
-                for (offset, kind, text) in [
-                    (0, "userMessage", "same prompt"),
-                    (1, "agentMessage", "progress"),
-                    (2, "agentMessage", "done"),
-                ] {
-                    tasks
-                        .record_job_message(
-                            &crate::AgentEvent::ItemCompleted {
-                                session_id: "antigravity:native".into(),
-                                turn_id: turn.clone(),
-                                item: crate::ItemSummary {
-                                    id: format!("native:step:{}", start + offset),
-                                    kind: kind.into(),
-                                    text: Some(text.into()),
-                                    status: None,
-                                },
-                            },
-                            None,
-                        )
-                        .await;
-                }
-                tasks
-                    .record_job_message(
-                        &crate::AgentEvent::TurnCompleted {
-                            session_id: "antigravity:native".into(),
-                            turn_id: turn.clone(),
-                            status: crate::TurnStatus::Completed,
-                            error: None,
-                        },
-                        None,
-                    )
-                    .await;
+                record_antigravity_bridge_turn(&tasks, start, &turn).await;
             }
         }
     }
@@ -412,4 +381,39 @@ async fn antigravity_bridge_and_hooks_merge_native_messages_with_timing() {
     assert_eq!(document.matches("#### User input").count(), 2);
     assert_eq!(document.matches("#### Agent output").count(), 2);
     assert!(document.contains("Elapsed: 61.333 s"));
+}
+
+async fn record_antigravity_bridge_turn(tasks: &TaskBoardService, start: i32, turn: &str) {
+    for (offset, kind, text) in [
+        (0, "userMessage", "same prompt"),
+        (1, "agentMessage", "progress"),
+        (2, "agentMessage", "done"),
+    ] {
+        tasks
+            .record_job_message(
+                &crate::AgentEvent::ItemCompleted {
+                    session_id: "antigravity:native".into(),
+                    turn_id: turn.into(),
+                    item: crate::ItemSummary {
+                        id: format!("native:step:{}", start + offset),
+                        kind: kind.into(),
+                        text: Some(text.into()),
+                        status: None,
+                    },
+                },
+                None,
+            )
+            .await;
+    }
+    tasks
+        .record_job_message(
+            &crate::AgentEvent::TurnCompleted {
+                session_id: "antigravity:native".into(),
+                turn_id: turn.into(),
+                status: crate::TurnStatus::Completed,
+                error: None,
+            },
+            None,
+        )
+        .await;
 }
