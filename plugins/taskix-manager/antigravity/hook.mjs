@@ -10,6 +10,12 @@ try {
         chunks.push(chunk);
     }
     event = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const configuredEvent = process.argv[2];
+    if (configuredEvent !== undefined && event.hookEventName !== undefined && event.hookEventName !== configuredEvent) {
+        throw new Error('Conflicting Antigravity hook event');
+    }
+    // Desktop App payloads omit the event name; CLI payloads include it.
+    event.hookEventName = configuredEvent ?? event.hookEventName;
     process.stdout.write(JSON.stringify(await createAntigravityHooks().handle(event)) + '\n');
 } catch (error) {
     process.exitCode = 1;

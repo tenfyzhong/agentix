@@ -1,10 +1,10 @@
 {
   "taskix-manager": {
-    "SessionStart": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }],
-    "PreInvocation": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }],
-    "PostInvocation": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }],
-    "PreToolUse": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }] }],
-    "PostToolUse": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }] }],
-    "Stop": [{ "type": "command", "command": "node antigravity/hook.mjs", "timeout": 60 }]
+    "SessionStart": [{ "type": "command", "command": "node antigravity/hook.mjs SessionStart", "timeout": 60 }],
+    "PreInvocation": [{ "type": "command", "command": "node antigravity/hook.mjs PreInvocation", "timeout": 60 }],
+    "PostInvocation": [{ "type": "command", "command": "node antigravity/hook.mjs PostInvocation", "timeout": 60 }],
+    "PreToolUse": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "node antigravity/hook.mjs PreToolUse", "timeout": 60 }] }],
+    "PostToolUse": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "node antigravity/hook.mjs PostToolUse", "timeout": 60 }] }],
+    "Stop": [{ "type": "command", "command": "node antigravity/hook.mjs Stop", "timeout": 60 }]
   }
 }

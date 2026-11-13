@@ -21,7 +21,7 @@ for (const name of ['taskix-manager', 'agentix-bridge']) {
         assert.deepEqual(servers[0].args, ['${PLUGIN_ROOT}/antigravity/server.mjs']);
         const hooks = (await json('hooks.json'))[name];
         for (const event of ['SessionStart', 'PreInvocation', 'Stop']) {
-            assert.equal(hooks[event][0].command, 'node antigravity/hook.mjs');
+            assert.equal(hooks[event][0].command, `node antigravity/hook.mjs${name === 'taskix-manager' ? ` ${event}` : ''}`);
         }
         await access(join(directory, 'antigravity/server.mjs'));
         const files = (await json('package.json')).files;

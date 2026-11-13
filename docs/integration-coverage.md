@@ -826,6 +826,21 @@ The Rex adapter and Node bridge share the existing native control parsers throug
 
 ## Antigravity
 
+Taskix App hook compatibility is covered by `antigravity-app-hooks.test.mjs`.
+It executes the commands selected from the real manifest for all six events,
+using App 2.31.2 documented inputs without `hookEventName` and CLI inputs with
+that field. The manifest supplies the event as an argument; conflicting sources
+are rejected, and identity failures retain the event in diagnostics. These are
+contract fixtures with an isolated Taskix stub, not captured live App traffic
+or proof of desktop acceptance. The existing CLI-only entrypoint test remains.
+Other hosts keep their own manifests and entrypoints unchanged.
+
+Local desktop acceptance on 2026-11-13 used App 2.31.2 with Taskix enabled and
+the updated manifest visible in its plugin panel. A fresh conversation received
+Taskix context, read five README lines, and ran `printf AGY_APP_HOOK_OK` with
+exit code 0. No hook error was recorded for that session. This is a local smoke
+check, not an automated GUI CI test or full desktop lifecycle acceptance.
+
 The agy 1.5.5 adapter has reusable tests for native identity, bounded transcript
 projection, hook-time turn attribution, invocations and idle Stop, prompt
 receipts, uncertain delivery/recovery, original socket acknowledgements across
