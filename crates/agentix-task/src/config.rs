@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub tracking: crate::TrackingConfig,
     pub schema_version: u32,
     pub storage: StorageConfig,
     pub documents: DocumentConfig,
@@ -139,6 +141,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.tracking.validate()?;
         ensure!(
             self.schema_version == 1,
             "unsupported task config schema_version"

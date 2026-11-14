@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { runHook, registerExtension } from '../runtime.mjs';
+import { runHook, registerExtension, trackingEnabled } from '../runtime.mjs';
 import { runTaskix, buildArgs } from '../taskix-cli.mjs';
 import { transcriptConversation } from '../conversation.mjs';
 
@@ -77,6 +77,15 @@ export function createAntigravityHooks(options = {}) {
             const content = result?.hookSpecificOutput?.additionalContext;
             if (content) contexts.push(content);
         };
+        if (!await trackingEnabled({cwd:event.cwd,session:event.session_id}, scopedRunner)) {
+            const reason = String(value.terminationReason ?? '').toLowerCase().replace(/^terminal_/, '');
+            const interrupted = value.fullyIdle === true && ['cancelled', 'interrupted', 'user_canceled', 'user_cancelled'].includes(reason);
+            const lifecycle = value.hookEventName === 'Stop' ? (interrupted ? 'Interrupt' : 'Stop') : value.hookEventName === 'SessionStart' ? 'SessionStart' : 'PostToolUse';
+            await invoke(lifecycle, { willContinue: value.fullyIdle === false });
+            state.ready = true;
+            await save(state);
+            return decision ?? {};
+        }
         if (value.hookEventName === 'SessionStart') collect(await invoke('SessionStart'));
         else if (value.hookEventName === 'PreInvocation') {
             const capture = await transcriptConversation(event.transcript_path, { currentOnly: true, maxBytes: 1024 * 1024, sessionId: event.session_id });

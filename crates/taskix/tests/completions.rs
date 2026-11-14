@@ -10,6 +10,7 @@ fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
     let configured = directory.path().join("configured.toml");
     let database = directory.path().join("tasks.sqlite3");
     let config = agentix_task::Config {
+        tracking: agentix_task::TrackingConfig::default(),
         schema_version: 1,
         storage: agentix_task::StorageConfig {
             path: database.clone(),
@@ -177,6 +178,7 @@ fn memory_commands_load_configuration_on_supported_platforms() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join("config.toml");
     let task_config = agentix_task::Config {
+        tracking: agentix_task::TrackingConfig::default(),
         schema_version: 1,
         storage: agentix_task::StorageConfig {
             path: directory.path().join("tasks.sqlite3"),

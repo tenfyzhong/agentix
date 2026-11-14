@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runHook, registerExtension } from "../runtime.mjs";
+import { runHook, registerExtension } from "./support/runtime.mjs";
 const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://jev.test", TASKIX_JEV_API_KEY: "secret" };
 const job = { id: "job_a", project_id: "p", status: "PENDING_REVIEW", revision: 3, title: "Login", prompt: "Fix login", review_policy: "required", completed_tasks_complete: true };
 const task = { id: "task_a", job_id: job.id, project_id: "p", revision: 2, status: "WAITING_USER", title: "Fix login", reason: "Need region" };

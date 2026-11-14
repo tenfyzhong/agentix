@@ -139,3 +139,11 @@ plugin directory, run `node version.mjs --check` to read its version, Git source
 branch/commit and latest release. Use `--json` for structured output or omit
 `--check` for offline inspection. Missing Git metadata and network failures are
 reported explicitly. See [plugin installation](https://github.com/tenfyzhong/agentix/wiki/Plugin-Installation#unified-release-versions).
+
+## Exclude test directories
+
+Set `[tracking].exclude_paths` in `~/.config/taskix/config.toml` to absolute or `~/` directory paths. Each rule excludes the directory and all descendants, including non-Git directories and nested repositories. For example, `exclude_paths = ["/private"]` excludes `/private/tmp/demo`, but not `/private-other`.
+
+Run `taskix project check --path /private/tmp/demo --json` to inspect the matching rule without opening storage or generating documents. A main repository rule covers all its worktrees; a worktree-only rule leaves other worktrees enabled. Symlinks resolve to their physical paths. Glob and negation syntax are not supported.
+
+Upgrade Taskix, Agentix, and host plugins together, then restart hosts and Agentix. Excluded directories skip automatic routing, conversation capture and memory context. Explicit CLI management remains available; existing records and task lifecycle maintenance are preserved. Archive historical projects separately after closing their Issues and Jobs. Removing a rule resumes future capture without backfilling excluded turns.

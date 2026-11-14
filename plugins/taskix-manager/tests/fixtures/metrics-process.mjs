@@ -1,5 +1,5 @@
 // A real independent hook process for concurrent metrics and latency tests.
-import { runHook } from "../../runtime.mjs";
+import { runHook } from "../support/runtime.mjs";
 const [directory, mode, session, clock] = process.argv.slice(2);
 // Concurrent persistence checks must not depend on CI worker startup speed.
 // Latency samples retain the real production deadline.

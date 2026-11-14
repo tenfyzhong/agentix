@@ -47,6 +47,7 @@ pub(super) struct TaskBoardService {
     pub(super) backend: Option<Arc<Service>>,
     pub(super) output: crate::OutputConfig,
     conversations: ConversationCache,
+    tracking: Mutex<HashMap<String, bool>>,
     inputs: Arc<Mutex<HashMap<ConversationRef, PendingTaskInput>>>,
     issue_inputs: Arc<Mutex<HashMap<ConversationRef, PendingIssueInput>>>,
     pub(super) issue_executions: Arc<Mutex<HashMap<ConversationRef, PendingIssueExecution>>>,
@@ -96,6 +97,7 @@ impl TaskBoardService {
             output: crate::OutputConfig::default(),
             state,
             conversations: Arc::default(),
+            tracking: Mutex::default(),
             inputs: Arc::default(),
             issue_inputs: Arc::default(),
             issue_executions: Arc::default(),
@@ -603,6 +605,56 @@ impl TaskBoardView<'_> {
 }
 
 impl TaskBoardService {
+    async fn automatic_tracking_enabled(
+        &self,
+        service: &agentix_task::Service,
+        event: &crate::AgentEvent,
+        cwd: Option<&str>,
+    ) -> bool {
+        let (crate::AgentEvent::ItemCompleted {
+            session_id: session,
+            ..
+        }
+        | crate::AgentEvent::TurnCompleted {
+            session_id: session,
+            ..
+        }) = event
+        else {
+            return false;
+        };
+        let mut tracking = self.tracking.lock().await;
+        if let Some(cwd) = cwd {
+            let enabled = match service.config().tracking.check(std::path::Path::new(cwd)) {
+                Ok(status) => status.enabled,
+                Err(error) => {
+                    tracing::warn!(%error, "Cannot determine automatic tracking policy");
+                    false
+                }
+            };
+            tracking.insert(session.to_owned(), enabled);
+        }
+        let enabled = tracking.get(session).copied().unwrap_or(true);
+        drop(tracking);
+        if !enabled {
+            self.conversations
+                .lock()
+                .await
+                .retain(|(id, _), _| id != session);
+        }
+        enabled
+    }
+
+    async fn message_project(service: &agentix_task::Service, cwd: Option<&str>) -> Option<String> {
+        let directory =
+            agentix_task::ProjectDirectory::discover(std::path::Path::new(cwd?)).ok()?;
+        service
+            .project_for_directory(&directory)
+            .await
+            .ok()
+            .flatten()
+            .map(|p| p.id)
+    }
+
     pub(in crate::engine) async fn record_job_message(
         &self,
         event: &crate::AgentEvent,
@@ -611,22 +663,13 @@ impl TaskBoardService {
         let Some(service) = &self.backend else {
             return;
         };
+        if !self.automatic_tracking_enabled(service, event, cwd).await {
+            return;
+        }
         let observed_at_ms = wall_clock_millis();
         let needs_source = matches!(event, crate::AgentEvent::TurnCompleted { .. })
             || matches!(event, crate::AgentEvent::ItemCompleted { item, .. } if item.kind == "userMessage");
-        let project = if let Some(cwd) = cwd.filter(|_| needs_source) {
-            match agentix_task::ProjectDirectory::discover(std::path::Path::new(cwd)) {
-                Ok(directory) => service
-                    .project_for_directory(&directory)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|p| p.id),
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
+        let project = Self::message_project(service, cwd.filter(|_| needs_source)).await;
         match event {
             crate::AgentEvent::ItemCompleted {
                 session_id,

@@ -51,6 +51,7 @@ Outside Git, `context` and implicit Job/Issue selection register or reuse the cu
 Configuration defaults to `~/.config/taskix/config.toml`; `TASKIX_CONFIG` or `--config` selects another file. Run `taskix <command> --help` for arguments. `--json` always has `schema_version`, `ok`, and `result` or `error`. Exit codes: 0 success, 1 business/runtime failure, 2 argument error.
 
 ```sh
+taskix project check --path /private/tmp/demo --json
 taskix project register --json
 taskix project mv PROJECT_ID --root /new/workspace --json
 taskix job list --active --json

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { registerExtension, runHook } from "../runtime.mjs";
+import { registerExtension, runHook } from "./support/runtime.mjs";
 
 const claimed = { claimed: true, entry: { id: "issue_one", job_id: "job_one", revision: 2 }, job: { id: "job_one" } };
 

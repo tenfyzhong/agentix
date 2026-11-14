@@ -100,6 +100,11 @@ async function prepareMeasuredPrompt(prompt, options, runner, routing, history =
     }
 }
 
+export async function trackingEnabled(options, runner = runTaskix) {
+    const result = await runner(["project", "check"], options);
+    return result.result?.tracking?.enabled !== false;
+}
+
 export async function runHook(event, runner = runTaskix, routing = {}) {
     if (event.hook_event_name === "Stop" && event.willContinue !== true) event = { ...event, completed_at_ms: Date.now() };
     if (!event.session_id) throw new Error("Hook requires session_id");
@@ -114,6 +119,11 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
                 ? "interrupt"
                 : "heartbeat";
     const options = { cwd: event.cwd, session: event.session_id };
+    if (!await trackingEnabled(options, runner)) {
+        // Preserve lifecycle maintenance for pre-existing leases, without intake.
+        await runner(["hook", operation], options);
+        return {};
+    }
     const enabled = !!decisionConfig(routing.env);
     if (event.hook_event_name === "UserPromptSubmit") {
         const memory = memoryContext(event.prompt, event.turn_id, options, runner, { ...routing, requireEnabled: true });
@@ -219,7 +229,7 @@ export function registerExtension(
                         );
                         state.cancellationNotice = notice;
                     }
-                    if (host === "opencode" && state.idle) {
+                    if (host === "opencode" && state.tracking && state.idle) {
                         const context = await runner(["context"], {
                             ...state.options,
                             signal: controller.signal,
@@ -265,10 +275,10 @@ export function registerExtension(
                 await release(active, "session-end");
             else if (active.cleanup) await active.cleanup;
         }
-        const state = { options };
+        const state = { options, tracking: await trackingEnabled(options, runner) };
         active = state;
         await runner(["hook", "session-start"], state.options);
-        if (active === state && host !== "opencode") renew(state, ctx);
+        if (active === state && (host !== "opencode" || !state.tracking)) renew(state, ctx);
     });
     api.on("session_shutdown", async (_event, ctx) => {
         const state = stateFor(ctx);
@@ -288,6 +298,11 @@ export function registerExtension(
         const completedAt = Date.now();
         const state = stateFor(ctx);
         if (!state) return;
+        if (state.tracking === false) {
+            state.aborted = event.messages?.findLast(message => message.role === "assistant")?.stopReason === "aborted" && event.willContinue !== true;
+            if (["omp", "opencode"].includes(host) && state.aborted) await release(state, "interrupt");
+            return;
+        }
         const turn = host === "opencode" ? event.turnId ?? state.turn : state.turn;
         const prompt = host === "opencode" ? event.prompt ?? state.prompt : state.prompt;
         let messages = (event.messages || []).map((message, index) => visibleMessage(message, `${turn}:${index}`)).filter(Boolean);
@@ -321,9 +336,10 @@ export function registerExtension(
         }
     });
     if (host === "opencode") {
+        api.on("tracking_enabled", (_event, ctx) => stateFor(ctx)?.tracking !== false);
         api.on("agent_restored", async (event, ctx) => {
             const state = stateFor(ctx);
-            if (!state || !event.turnId) return;
+            if (!state || state.tracking === false || !event.turnId) return;
             state.turn = event.turnId;
             state.idle = false;
             state.prompt = undefined;
@@ -339,7 +355,7 @@ export function registerExtension(
         api.on("lease_owned", (_event, ctx) => Boolean(stateFor(ctx)?.ownedLease));
         api.on("agent_settled", async (_event, ctx) => {
             const state = stateFor(ctx);
-            if (!state) return false;
+            if (!state || state.tracking === false) return false;
             state.idle = true;
             // Heartbeat returns changed tasks only, so an empty heartbeat is not
             // evidence that a session owns no lease. Read scoped context once.
@@ -361,6 +377,7 @@ export function registerExtension(
     api.on("before_agent_start", async (event, ctx) => {
         const submittedAt = Date.now();
         const state = stateFor(ctx);
+        if (state ? !state.tracking : !await trackingEnabled(optionsFor(ctx), runner)) return;
         if (state) {
             if (state.cleanup) await state.cleanup;
             if (active === state && !state.ended) {
