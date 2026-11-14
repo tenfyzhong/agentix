@@ -1147,3 +1147,18 @@ test('opencode2 cleanup aborts a capacity wait without admitting the held native
     );
     assert.equal(f.timers.size, 0);
 });
+
+test('excluded_native_session_does_not_stage_persist_or_inject_prompts', async () => {
+    const f=fixture({runner:async args=>({result:args[0]==='project'?{tracking:{enabled:false}}:{}})});
+    const cleanup=await f.start();
+    try {
+        await f.prompt('excluded','turn',{text:'Private test'});
+        const request={sessionID:'excluded',system:[],messages:[],options:{}};
+        await f.hooks.get('context')(request);
+        assert.deepEqual(request.system,[]);
+        assert.deepEqual(f.errors,[]);
+        assert.equal(f.store.size,0);
+        assert.equal(f.contextReads(),0);
+        assert.equal(f.captures.length,0);
+    } finally { await cleanup(); }
+});

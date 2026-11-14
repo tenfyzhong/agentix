@@ -70,7 +70,7 @@ test("metrics_storage_failure_does_not_change_routing", async t => {
 
 test("metrics_hook_preparation_failure_is_recorded_once_without_calling_jev", async t => {
     const f = await fixture(t);
-    const { runHook } = await import("../runtime.mjs");
+    const { runHook } = await import("./support/runtime.mjs");
     await runHook({ hook_event_name: "UserPromptSubmit", session_id: "s", turn_id: "turn_a", cwd: f.args.options.cwd, prompt: "private prompt" }, async () => { throw new Error("private CLI error"); }, { env: f.args.env, cacheDir: f.args.options.cwd });
     const requests = await rows(f.path, "SELECT * FROM requests");
     assert.equal(requests.length, 1);
@@ -101,7 +101,7 @@ test("metrics_lock_contention_is_best_effort_and_preserves_route", async t => {
 
 test("metrics_successful_hook_writes_once", async t => {
     const f = await fixture(t);
-    const { runHook } = await import("../runtime.mjs");
+    const { runHook } = await import("./support/runtime.mjs");
     await runHook({ hook_event_name: "UserPromptSubmit", session_id: "s", cwd: f.args.options.cwd, prompt: f.args.prompt }, async args => {
         assert.deepEqual(args, ["routing", "snapshot"]);
         return { result: f.args.context };

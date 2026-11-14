@@ -11,6 +11,10 @@ Use `AGENT_TASK_LANG` from the host environment to choose the language for task 
 
 This is a skill setting. Do not write language settings into taskix configuration or translate its generated sections. taskix stores supplied text as-is and uses fixed English template labels.
 
+## Local tracking policy
+
+Before automatically creating or resuming tracked work, run `taskix project check --json` for the current directory. If `result.tracking.enabled` is false, answer and work without automatic Taskix tracking. Do not register a Project, route a Job, capture discussion, or inject task memory to bypass the exclusion. Explicit user requests to manage Taskix records remain allowed. Existing records and lease cleanup are preserved. See the plugin README for `[tracking].exclude_paths` configuration.
+
 ## Begin or resume
 
 When the host supplies a `Taskix route`, use its selected Job and single Issue ID instead

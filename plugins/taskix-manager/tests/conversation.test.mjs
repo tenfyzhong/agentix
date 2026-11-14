@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runHook, registerExtension } from "../runtime.mjs";
+import { runHook, registerExtension } from "./support/runtime.mjs";
 import { visibleMessage, transcriptMessages, transcriptConversation } from "../conversation.mjs";
 
 test("antigravity transcripts preserve explicit native turn identity and exclude internal steps", async t => {

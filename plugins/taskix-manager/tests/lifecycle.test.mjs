@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { registerExtension, runHook } from "../runtime.mjs";
+import { registerExtension, runHook } from "./support/runtime.mjs";
 
 function fixture(host, runner = async () => ({ result: {} })) {
     const handlers = new Map(), timers = new Map(), calls = [];

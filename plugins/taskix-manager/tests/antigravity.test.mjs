@@ -82,7 +82,7 @@ test('native_conversation_switch_releases_only_previous_session_and_persisted_re
     const f = await fixture(t, { hookRunner });
     await f.event('SessionStart');
     await f.event('PreInvocation');
-    const resumed = createAntigravityHooks({ root: f.root, key: 'host', hookRunner });
+    const resumed = createAntigravityHooks({ root: f.root, key: 'host', runner: async () => ({result:{tracking:{enabled:true}}}), hookRunner });
     const identity = await resumed.identity();
     await resumed.handle({ hookEventName: 'PreInvocation', conversationId: 'native', workspacePaths: [f.root], transcriptPath: identity.transcript_path });
     assert.equal(events.filter(event => event.hook_event_name === 'UserPromptSubmit').length, 1);
@@ -96,7 +96,7 @@ test('failed_switch_initialization_never_leaves_the_tool_bound_to_the_old_identi
     const f = await fixture(t);
     await f.event('SessionStart');
     const old = await f.hooks.identity();
-    const broken = createAntigravityHooks({ root: f.root, key: 'host', hookRunner: async () => { throw new Error('storage unavailable'); } });
+    const broken = createAntigravityHooks({ root: f.root, key: 'host', runner: async () => ({result:{tracking:{enabled:true}}}), hookRunner: async () => { throw new Error('storage unavailable'); } });
     await assert.rejects(broken.handle({ hookEventName: 'SessionStart', conversationId: 'next', workspacePaths: [f.root], transcriptPath: old.transcript_path }), /storage unavailable/);
     const current = await broken.identity();
     assert.equal(current.session_id, 'next');

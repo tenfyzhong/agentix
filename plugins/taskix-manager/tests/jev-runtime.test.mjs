@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtemp, rm, readFile, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runHook, registerExtension } from "../runtime.mjs";
+import { runHook, registerExtension } from "./support/runtime.mjs";
 import { choiceAnswers } from "./support/jev.mjs";
 
 for (const host of ["codex","claude","pi","omp"]) test(`${host}_explicit_im_issue_is_reread_even_when_not_in_candidate_page`,async t=>{

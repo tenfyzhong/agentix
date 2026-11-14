@@ -1523,7 +1523,24 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-project-command-$line[1]:"
         case $line[1] in
-            (delete)
+            (check)
+_arguments "${_arguments_options[@]}" : \
+'--path=[]:PATH:_files' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(delete)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -1657,7 +1674,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-project-help-command-$line[1]:"
         case $line[1] in
-            (delete)
+            (check)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3459,7 +3480,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-help-project-command-$line[1]:"
         case $line[1] in
-            (delete)
+            (check)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -4513,6 +4538,7 @@ _taskix__subcmd__help__subcmd__plan__subcmd__show_commands() {
 (( $+functions[_taskix__subcmd__help__subcmd__project_commands] )) ||
 _taskix__subcmd__help__subcmd__project_commands() {
     local commands; commands=(
+'check:Check automatic tracking policy without opening storage' \
 'delete:Delete the Project, its work, and its entire generated document directory' \
 'register:Register a Project using its root directory and Git identity when available' \
 'mv:Rebind an existing Project after moving its workspace; preserve its ID and work' \
@@ -4527,6 +4553,11 @@ _taskix__subcmd__help__subcmd__project_commands() {
 _taskix__subcmd__help__subcmd__project__subcmd__archive_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help project archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__project__subcmd__check_commands] )) ||
+_taskix__subcmd__help__subcmd__project__subcmd__check_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help project check commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__project__subcmd__delete_commands] )) ||
 _taskix__subcmd__help__subcmd__project__subcmd__delete_commands() {
@@ -5692,6 +5723,7 @@ _taskix__subcmd__plan__subcmd__show_commands() {
 (( $+functions[_taskix__subcmd__project_commands] )) ||
 _taskix__subcmd__project_commands() {
     local commands; commands=(
+'check:Check automatic tracking policy without opening storage' \
 'delete:Delete the Project, its work, and its entire generated document directory' \
 'register:Register a Project using its root directory and Git identity when available' \
 'mv:Rebind an existing Project after moving its workspace; preserve its ID and work' \
@@ -5708,6 +5740,11 @@ _taskix__subcmd__project__subcmd__archive_commands() {
     local commands; commands=()
     _describe -t commands 'taskix project archive commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__project__subcmd__check_commands] )) ||
+_taskix__subcmd__project__subcmd__check_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project check commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__project__subcmd__delete_commands] )) ||
 _taskix__subcmd__project__subcmd__delete_commands() {
     local commands; commands=()
@@ -5716,6 +5753,7 @@ _taskix__subcmd__project__subcmd__delete_commands() {
 (( $+functions[_taskix__subcmd__project__subcmd__help_commands] )) ||
 _taskix__subcmd__project__subcmd__help_commands() {
     local commands; commands=(
+'check:Check automatic tracking policy without opening storage' \
 'delete:Delete the Project, its work, and its entire generated document directory' \
 'register:Register a Project using its root directory and Git identity when available' \
 'mv:Rebind an existing Project after moving its workspace; preserve its ID and work' \
@@ -5731,6 +5769,11 @@ _taskix__subcmd__project__subcmd__help_commands() {
 _taskix__subcmd__project__subcmd__help__subcmd__archive_commands() {
     local commands; commands=()
     _describe -t commands 'taskix project help archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__check_commands] )) ||
+_taskix__subcmd__project__subcmd__help__subcmd__check_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project help check commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__delete_commands] )) ||
 _taskix__subcmd__project__subcmd__help__subcmd__delete_commands() {
