@@ -176,16 +176,19 @@ export async function transcriptConversation(path, options) {
             let row = parsed(line);
             if (!row) continue;
             if (Number.isSafeInteger(row.step_index) && row.step_index >= 0) {
-                if (nativeSteps.has(row.step_index)) continue;
-                nativeSteps.add(row.step_index);
+                // Match bridge identities even after native step counters restart.
+                const created = Date.parse(row.created_at);
+                const epoch = Number.isSafeInteger(created) && created >= 0 ? `:at:${created}` : "";
+                const id = `${options?.sessionId ?? "antigravity"}${epoch}:step:${row.step_index}`;
+                if (nativeSteps.has(id)) continue;
+                nativeSteps.add(id);
                 const user = row.type === "USER_INPUT" && row.source === "USER_EXPLICIT";
                 const assistant = ["PLANNER_RESPONSE", "GENERIC"].includes(row.type) && row.source === "MODEL";
                 if (!user && !assistant) continue;
-                const id = `${options?.sessionId ?? "antigravity"}:step:${row.step_index}`;
                 if (user) {
                     if (typeof row.content !== "string") continue;
                     turn = id;
-                    row = { uuid: id, message: { role: "user", content: nativeUserText(row.content) } };
+                    row = { uuid: id, timestamp: row.created_at, message: { role: "user", content: nativeUserText(row.content) } };
                 } else row = { uuid: id, antigravity: row };
             }
             if (row.type === "turn_context") {

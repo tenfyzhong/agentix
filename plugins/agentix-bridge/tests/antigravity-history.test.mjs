@@ -137,3 +137,60 @@ test('bridge_messages_share_native_transcript_ids_across_replays_and_identical_t
     assert.deepEqual([...actual.values()], expected.messages);
     assert.equal(session.history().turns[0].agent_text, 'progress\ndone');
 });
+
+test('resumed_transcripts_keep_reset_step_indices_in_source_order_and_share_capture_ids', async t => {
+    const { transcriptConversation } = await import('../../taskix-manager/conversation.mjs');
+    const path = fixture(t), read = createTranscriptReader();
+    const stamp = created_at => ({ created_at });
+    writeFileSync(path, row(0, 'USER_INPUT', 'old', stamp('2026-11-13T09:42:40Z'))
+        + row(100, 'PLANNER_RESPONSE', 'old answer', stamp('2026-11-13T09:50:00Z'))
+        + row(0, 'USER_INPUT', 'resumed', stamp('2026-11-15T05:49:01Z'))
+        + row(1, 'PLANNER_RESPONSE', 'partial', stamp('2026-11-15T06:01:27Z'))
+        + row(1, 'PLANNER_RESPONSE', 'new answer', stamp('2026-11-15T06:01:27Z')));
+    const turns = read(path, 'native');
+    assert.deepEqual(turns.map(turn => [turn.user_text, turn.agent_text]), [['old', 'old answer'], ['resumed', 'new answer']]);
+    assert.notEqual(turns[0].id, turns[1].id);
+    const capture = await transcriptConversation(path, { sessionId: 'native', recentTurns: 2 });
+    assert.deepEqual(capture.messages.map(message => message.id), turns.flatMap(turn => [turn.id, ...turn.messages.map(message => message.id)]));
+    assert.deepEqual(capture.messages.filter(message => message.role === 'user').map(message => message.completed_at_ms),
+        [Date.parse('2026-11-13T09:42:40Z'), Date.parse('2026-11-15T05:49:01Z')]);
+    assert.ok(capture.messages.filter(message => message.role === 'assistant').every(message => message.completed_at_ms === undefined));
+});
+
+test('resumed_session_accepts_reset_indices_and_rejects_delayed_previous_turn_hooks', t => {
+    const path = fixture(t), events = [];
+    writeFileSync(path, '');
+    const identity = { conversationId: 'native', workspacePaths: [tmpdir()], transcriptPath: path };
+    const session = new AntigravitySession({ event: event => events.push(event) });
+    t.after(() => session.close());
+    session.hook({ ...identity, hook_event_name: 'SessionStart' });
+    appendFileSync(path, row(100, 'USER_INPUT', 'old', { created_at: '2026-11-13T09:42:40Z' }));
+    session.hook({ ...identity, hook_event_name: 'PreInvocation' });
+    const oldId = events.find(event => event.TurnStarted).TurnStarted.turn_id;
+    session.hook({ ...identity, hook_event_name: 'Stop', fullyIdle: true });
+    appendFileSync(path, row(0, 'USER_INPUT', 'resumed', { created_at: '2026-11-15T05:49:01Z' }));
+    session.hook({ ...identity, hook_event_name: 'PreInvocation' });
+    appendFileSync(path, row(1, 'PLANNER_RESPONSE', 'new answer', { created_at: '2026-11-15T06:01:27Z' }));
+    session.hook({ ...identity, hook_event_name: 'Stop', fullyIdle: true });
+    assert.equal(events.filter(event => event.TurnStarted).length, 2);
+    assert.equal(events.filter(event => event.TurnCompleted).length, 2);
+    assert.ok(events.some(event => event.ItemCompleted?.item.text === 'new answer'));
+    session.hook({ ...identity, hook_event_name: 'PreInvocation', agentix_turn_id: oldId });
+    assert.equal(events.filter(event => event.TurnStarted).length, 2);
+});
+
+test('timestamp_identity_upgrade_preserves_saved_turn_status_without_duplicate_history', t => {
+    const path = fixture(t);
+    writeFileSync(path, row(0, 'USER_INPUT', 'same request', { created_at: '2026-11-15T05:49:01Z' })
+        + row(1, 'PLANNER_RESPONSE', 'answer', { created_at: '2026-11-15T06:01:27Z' }));
+    const legacy = { id: 'native:step:0', status: 'completed', user_text: 'same request', agent_text: 'answer', tools: [], items: [], messages: [{ id: 'native:step:1', text: 'answer' }] };
+    const session = new AntigravitySession({ saved: { turns: [legacy], receipts: [['request', { state: 'accepted', turn_id: legacy.id, baseline: legacy.id, text: 'same request' }]] } });
+    t.after(() => session.close());
+    session.hook({ conversationId: 'native', workspacePaths: [tmpdir()], transcriptPath: path, hook_event_name: 'SessionStart' });
+    const turns = session.history().turns;
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0].status, 'completed');
+    assert.equal(turns[0].id, createTranscriptReader()(path, 'native')[0].id);
+    assert.equal(session.receipts.get('request').turn_id, turns[0].id);
+    assert.equal(session.receipts.get('request').baseline, turns[0].id);
+});

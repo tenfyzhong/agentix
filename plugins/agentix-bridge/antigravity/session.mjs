@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createTranscriptReader, nativeUserText } from './history.mjs';
+import { compareNativeTurns, createTranscriptReader, nativeUserText } from './history.mjs';
 import { failure } from '../protocol/errors.mjs';
 
 /** Native trajectory identity, separate from invocation and terminal process identity. */
@@ -213,10 +213,26 @@ export class AntigravitySession {
             this.identity = structuredClone(value);
             const saved = new Map(this.turns.map(turn => [turn.id, turn]));
             const native = this.readTranscript(value.transcriptPath, value.conversationId);
+            // Upgrade only unambiguous legacy snapshots. A reused index alone
+            // cannot identify the old turn after a native counter reset.
+            for (const [id, previous] of saved) {
+                if (/:at:\d+:step:/.test(id)) continue;
+                const matches = native.filter(turn => turn.id.replace(/:at:\d+(?=:step:)/, '') === id
+                    && turn.user_text === previous.user_text);
+                if (matches.length !== 1 || matches[0].id === id) continue;
+                const turn = { ...matches[0], status: previous.status };
+                saved.delete(id);
+                saved.set(turn.id, turn);
+                if (this.active?.id === id) this.active = turn;
+                for (const receipt of this.receipts.values()) {
+                    if (receipt.turn_id === id) receipt.turn_id = turn.id;
+                    if (receipt.baseline === id) receipt.baseline = turn.id;
+                }
+            }
             this.turns = native.map(turn => saved.get(turn.id) ?? turn);
             for (const turn of saved.values()) if (!this.turns.some(value => value.id === turn.id)) this.turns.push(turn);
-            // Native step indices are chronological; omitted saved turns may predate the bounded tail.
-            this.turns.sort((a, b) => Number(a.id.split(':step:').at(-1)) - Number(b.id.split(':step:').at(-1)));
+            // Creation time orders resumed counters; legacy rows retain step ordering.
+            this.turns.sort(compareNativeTurns);
             return;
         }
         if (value.conversationId !== this.identity.conversationId) return;
@@ -224,9 +240,8 @@ export class AntigravitySession {
         const native = value.agentix_turn_id ? transcript.find(turn => turn.id === value.agentix_turn_id) : transcript.at(-1);
         if (!native) return;
         // A delayed hook must never move the active/latest turn backwards.
-        const step = id => Number(id.split(':step:').at(-1));
         if (value.hook_event_name === 'PreInvocation' && this.turns.some(turn =>
-            (turn.status !== 'unknown' || turn.id === this.active?.id) && step(native.id) < step(turn.id))) return;
+            (turn.status !== 'unknown' || turn.id === this.active?.id) && compareNativeTurns(native, turn) < 0)) return;
         if (value.hook_event_name === 'PreInvocation') {
             const invocation = JSON.stringify([native.id, value.invocationNum, value.initialNumSteps]);
             if (invocation !== this.invocation) {
