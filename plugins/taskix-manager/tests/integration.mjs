@@ -1289,3 +1289,31 @@ for (const host of ['codex','claude','pi','omp','opencode','antigravity']) test(
     assert.ok(recovered.result.project_id);
     assert.deepEqual((await f.run(['conversation','list'],options)).turns,[]);
 });
+
+test('antigravity_resumed_steps_keep_job_outputs_and_elapsed_times_in_separate_turns', async t => {
+    const { stageTranscript } = await import('../discussion.mjs');
+    const session = 'native-resumed', f = await fixture(t, session);
+    const options = { cwd: f.dir, session, executor: 'agent:antigravity' };
+    const transcript = join(f.dir, 'transcript.jsonl'), rows = [];
+    const times = [Date.parse('2026-11-13T09:42:40Z'), Date.parse('2026-11-15T05:49:01Z')];
+    for (const [index, start] of times.entries()) {
+        rows.push({ step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: new Date(start).toISOString(), content: `Request ${index}` });
+        await writeFile(transcript, rows.map(JSON.stringify).join('\n') + '\n');
+        await stageTranscript({ hook_event_name: 'PreToolUse', transcript_path: transcript }, runTaskix, options, f.dir);
+        const pending = await f.run(['conversation', 'list', '--full'], options);
+        assert.equal(pending.turns.length, 1, 'a resumed input must not update the previously bound turn');
+        const job = await f.run(['job', 'show', f.job.id]);
+        await f.run(['conversation', 'attach', '--job', f.job.id, '--turn', pending.turns[0].turn_id,
+            '--conversation-revision', String(pending.revision), '--expect-revision', String(job.revision)], options);
+        rows.push({ step_index: 1, type: 'PLANNER_RESPONSE', source: 'MODEL', created_at: new Date(start + 1000).toISOString(), content: `Answer ${index}` });
+        await writeFile(transcript, rows.map(JSON.stringify).join('\n') + '\n');
+        const stop = { hook_event_name: 'Stop', transcript_path: transcript, completed_at_ms: start + 10000 };
+        await stageTranscript(stop, runTaskix, options, f.dir);
+        await stageTranscript({ ...stop, completed_at_ms: start + 20000 }, runTaskix, options, f.dir);
+    }
+    const job = await f.run(['job', 'show', f.job.id]);
+    assert.deepEqual(job.conversation.map(m => m.text), ['Request 0', 'Answer 0', 'Request 1', 'Answer 1']);
+    assert.deepEqual(job.conversation.map(m => m.completed_at_ms), times.flatMap(start => [start, start + 10000]));
+    const note = await readFile(join(f.root, 'Tasks ☃', job.document_path), 'utf8');
+    assert.equal((note.match(/Elapsed: 10\.000 s/g) ?? []).length, 2);
+});

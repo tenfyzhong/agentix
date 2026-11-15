@@ -842,7 +842,11 @@ exit code 0. No hook error was recorded for that session. This is a local smoke
 check, not an automated GUI CI test or full desktop lifecycle acceptance.
 
 The agy 1.5.5 adapter has reusable tests for native identity, bounded transcript
-projection, hook-time turn attribution, invocations and idle Stop, prompt
+projection, resumed step-counter resets, timestamp-qualified bridge/hook identity,
+delayed-hook rejection across resumes, and original input submission times. Real
+Taskix SQLite/projection tests verify separate resumed turns, output ownership,
+replay deduplication, and elapsed time from idle Stop rather than response creation.
+The adapter also covers hook-time turn attribution, invocations and idle Stop, prompt
 receipts, uncertain delivery/recovery, original socket acknowledgements across
 lazy `/new`, conditional draft clearing, model/effort menus, stale approval and
 question cards, Taskix routing/discussion/lease binding, native MCP shutdown,

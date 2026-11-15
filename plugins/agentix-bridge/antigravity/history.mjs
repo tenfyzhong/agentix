@@ -6,6 +6,19 @@ export function nativeUserText(text) {
     return envelope ? envelope[1].trim() : text;
 }
 
+// Native counters restart when a conversation resumes. Creation time is stable
+// across incremental updates and keeps identities independent of the bounded tail.
+function nativeStepId(sessionId, step) {
+    const created = Date.parse(step.created_at);
+    const epoch = Number.isSafeInteger(created) && created >= 0 ? `:at:${created}` : '';
+    return `${sessionId}${epoch}:step:${step.step_index}`;
+}
+
+export function compareNativeTurns(a, b) {
+    const time = id => Number(/:at:(\d+):step:/.exec(id)?.[1] ?? 0);
+    return time(a.id) - time(b.id) || Number(a.id.split(':step:').at(-1)) - Number(b.id.split(':step:').at(-1));
+}
+
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_TEXT = 100000;
 function tail(path, cached) {
@@ -40,32 +53,32 @@ export function createTranscriptReader() {
             let step;
             try { step = JSON.parse(line); } catch { continue; }
             if (!Number.isSafeInteger(step.step_index) || step.step_index < 0) continue;
-            steps.set(step.step_index, step);
+            steps.set(nativeStepId(sessionId, step), step);
         }
         const turns = [];
-        for (const [index, step] of [...steps].sort((a, b) => a[0] - b[0])) {
+        for (const [id, step] of steps) {
             if (step.type === 'USER_INPUT' && step.source === 'USER_EXPLICIT' && typeof step.content === 'string') {
-                turns.push({ id: `${sessionId}:step:${index}`, status: 'unknown', user_text: nativeUserText(step.content).slice(-MAX_TEXT), agent_text: '', tools: [], items: [], messages: [] });
+                turns.push({ id, status: 'unknown', user_text: nativeUserText(step.content).slice(-MAX_TEXT), agent_text: '', tools: [], items: [], messages: [] });
                 continue;
             }
             const turn = turns.at(-1);
             if (!turn || step.source !== 'MODEL') continue;
             if (step.type === 'PLANNER_RESPONSE') {
-                const usage = { id: `${sessionId}:step:${index}` };
+                const usage = { id };
                 for (const [native, kind] of [['input_tokens', 'input'], ['output_tokens', 'output'], ['cache_read_tokens', 'cached']]) {
                     if (Number.isSafeInteger(step[native]) && step[native] >= 0) usage[kind] = step[native];
                 }
                 if (Object.keys(usage).length > 1) (turn.token_usage ??= []).push(usage);
             }
             if (typeof step.content === 'string' && step.type === 'PLANNER_RESPONSE') {
-                if (step.content.trim()) turn.messages.push({ id: `${sessionId}:step:${index}`, text: step.content });
+                if (step.content.trim()) turn.messages.push({ id, text: step.content });
                 turn.agent_text = [turn.agent_text, step.content].filter(Boolean).join('\n').slice(-MAX_TEXT);
             }
             for (const [i, tool] of (Array.isArray(step.tool_calls) ? step.tool_calls : []).entries()) {
                 if (typeof tool.name !== 'string') continue;
-                const id = `${sessionId}:step:${index}:tool:${i}`;
-                turn.tools.push({ id, kind: tool.name, label: tool.name, status: 'unknown' });
-                turn.items.push({ id, kind: tool.name, text: JSON.stringify(tool.args ?? {}).slice(0, 65536), status: 'unknown' });
+                const toolId = `${id}:tool:${i}`;
+                turn.tools.push({ id: toolId, kind: tool.name, label: tool.name, status: 'unknown' });
+                turn.items.push({ id: toolId, kind: tool.name, text: JSON.stringify(tool.args ?? {}).slice(0, 65536), status: 'unknown' });
             }
             turn.tools = turn.tools.slice(-20);
             turn.items = turn.items.slice(-20);
