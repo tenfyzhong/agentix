@@ -697,3 +697,24 @@ async fn legacy_auxiliary_backfill_is_atomic_and_preserves_existing_progress() {
         assert_eq!(count, 2);
     }
 }
+
+#[tokio::test]
+async fn source_completion_timestamps_survive_ingestion_and_legacy_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&dir.path().join("memory.sqlite3"))
+        .await
+        .unwrap();
+    for (receipt, completion) in [("timed", Some(1_794_400_000_123_i64)), ("legacy", None)] {
+        let mut value = serde_json::to_value(source("p1", receipt)).unwrap();
+        value["turn_id"] = json!(receipt);
+        value["sequence"] = json!(if completion.is_some() { 1 } else { 2 });
+        if let Some(completion) = completion {
+            value["messages"][0]["completed_at_ms"] = json!(completion);
+        }
+        let original: Source = serde_json::from_value(value.clone()).unwrap();
+        assert!(store.ingest(&original).await.unwrap());
+        assert!(!store.ingest(&original).await.unwrap());
+        let restored = store.source("p1", receipt).await.unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), value);
+    }
+}
