@@ -91,3 +91,15 @@ fn source_storage_configuration_is_independent_of_documents_and_models() {
     .unwrap();
     assert!(agentix_task::StorageConfig::load(&path).is_err());
 }
+
+#[test]
+fn environment_export_table_does_not_change_board_loading() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir(dir.path().join(".obsidian")).unwrap();
+    let path = config_file(&dir, "");
+    let mut contents = std::fs::read_to_string(&path).unwrap();
+    contents.push_str("\n[environment]\nTASKIX_ENV_TEST='literal'\nENABLED=true\n");
+    std::fs::write(&path, contents).unwrap();
+    assert!(Config::load(&path).is_ok());
+    assert!(std::env::var_os("TASKIX_ENV_TEST").is_none());
+}

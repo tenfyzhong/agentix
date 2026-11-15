@@ -9,6 +9,9 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ConfigFile {
+    // Applied explicitly by `agentix env` in the caller's shell.
+    #[serde(default, rename = "environment")]
+    _environment: serde::de::IgnoredAny,
     #[serde(default)]
     pub(super) metrics: agentix_metrics::Config,
     #[serde(default)]

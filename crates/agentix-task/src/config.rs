@@ -83,6 +83,8 @@ impl Config {
             table.remove("logging");
             // Application metrics belong to the resident service.
             table.remove("metrics");
+            // Shell exports are applied explicitly by the caller, not board operations.
+            table.remove("environment");
         }
         // Older releases stored a template locale and output format here.
         // Tolerate obsolete keys without exposing them; all output is Obsidian.

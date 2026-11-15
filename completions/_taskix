@@ -38,7 +38,24 @@ _taskix() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-command-$line[1]:"
         case $line[1] in
-            (issue)
+            (env)
+_arguments "${_arguments_options[@]}" : \
+'--shell=[Override automatic shell detection]:SHELL:(sh bash zsh fish powershell pwsh)' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(issue)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -3160,7 +3177,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-help-command-$line[1]:"
         case $line[1] in
-            (issue)
+            (env)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(issue)
 _arguments "${_arguments_options[@]}" : \
 ":: :_taskix__subcmd__help__subcmd__issue_commands" \
 "*::: :->issue" \
@@ -3836,6 +3857,7 @@ esac
 (( $+functions[_taskix_commands] )) ||
 _taskix_commands() {
     local commands; commands=(
+'env:Print configured environment exports for the calling shell' \
 'issue:Manage Project deliverables across multiple execution Jobs' \
 'milestone:Organize Issues into basic Project Milestones' \
 'serve:Run Taskix services until interrupted' \
@@ -3930,6 +3952,11 @@ _taskix__subcmd__doctor_commands() {
     local commands; commands=()
     _describe -t commands 'taskix doctor commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__env_commands] )) ||
+_taskix__subcmd__env_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix env commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__event_commands] )) ||
 _taskix__subcmd__event_commands() {
     local commands; commands=(
@@ -3988,6 +4015,7 @@ _taskix__subcmd__event__subcmd__policy_commands() {
 (( $+functions[_taskix__subcmd__help_commands] )) ||
 _taskix__subcmd__help_commands() {
     local commands; commands=(
+'env:Print configured environment exports for the calling shell' \
 'issue:Manage Project deliverables across multiple execution Jobs' \
 'milestone:Organize Issues into basic Project Milestones' \
 'serve:Run Taskix services until interrupted' \
@@ -4050,6 +4078,11 @@ _taskix__subcmd__help__subcmd__conversation__subcmd__show_commands() {
 _taskix__subcmd__help__subcmd__doctor_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help doctor commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__env_commands] )) ||
+_taskix__subcmd__help__subcmd__env_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help env commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__event_commands] )) ||
 _taskix__subcmd__help__subcmd__event_commands() {

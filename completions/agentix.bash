@@ -25,6 +25,9 @@ _agentix() {
             agentix,doctor)
                 cmd="agentix__subcmd__doctor"
                 ;;
+            agentix,env)
+                cmd="agentix__subcmd__env"
+                ;;
             agentix,help)
                 cmd="agentix__subcmd__help"
                 ;;
@@ -97,6 +100,9 @@ _agentix() {
             agentix__subcmd__help,doctor)
                 cmd="agentix__subcmd__help__subcmd__doctor"
                 ;;
+            agentix__subcmd__help,env)
+                cmd="agentix__subcmd__help__subcmd__env"
+                ;;
             agentix__subcmd__help,help)
                 cmd="agentix__subcmd__help__subcmd__help"
                 ;;
@@ -140,7 +146,7 @@ _agentix() {
 
     case "${cmd}" in
         agentix)
-            opts="-c -h -V --config --help --version launch-antigravity launch-open-code serve reload doctor client completions help"
+            opts="-c -h -V --config --help --version env launch-antigravity launch-open-code serve reload doctor client completions help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -477,8 +483,26 @@ _agentix() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        agentix__subcmd__env)
+            opts="-h --shell --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --shell)
+                    COMPREPLY=($(compgen -W "sh bash zsh fish powershell pwsh" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         agentix__subcmd__help)
-            opts="launch-antigravity launch-open-code serve reload doctor client completions help"
+            opts="env launch-antigravity launch-open-code serve reload doctor client completions help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -618,6 +642,20 @@ _agentix() {
             return 0
             ;;
         agentix__subcmd__help__subcmd__doctor)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agentix__subcmd__help__subcmd__env)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

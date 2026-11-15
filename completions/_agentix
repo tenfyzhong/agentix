@@ -30,7 +30,14 @@ _agentix() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:agentix-command-$line[1]:"
         case $line[1] in
-            (launch-antigravity)
+            (env)
+_arguments "${_arguments_options[@]}" : \
+'--shell=[Override automatic shell detection]:SHELL:(sh bash zsh fish powershell pwsh)' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(launch-antigravity)
 _arguments "${_arguments_options[@]}" : \
 '--command=[]:COMMAND:_files' \
 '--state-dir=[]:STATE_DIR:_files' \
@@ -216,7 +223,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:agentix-help-command-$line[1]:"
         case $line[1] in
-            (launch-antigravity)
+            (env)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(launch-antigravity)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -300,6 +311,7 @@ esac
 (( $+functions[_agentix_commands] )) ||
 _agentix_commands() {
     local commands; commands=(
+'env:Print configured environment exports for the calling shell' \
 'launch-antigravity:' \
 'launch-open-code:' \
 'serve:Run the Agentix bridge until interrupted' \
@@ -424,9 +436,15 @@ _agentix__subcmd__doctor_commands() {
     local commands; commands=()
     _describe -t commands 'agentix doctor commands' commands "$@"
 }
+(( $+functions[_agentix__subcmd__env_commands] )) ||
+_agentix__subcmd__env_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix env commands' commands "$@"
+}
 (( $+functions[_agentix__subcmd__help_commands] )) ||
 _agentix__subcmd__help_commands() {
     local commands; commands=(
+'env:Print configured environment exports for the calling shell' \
 'launch-antigravity:' \
 'launch-open-code:' \
 'serve:Run the Agentix bridge until interrupted' \
@@ -495,6 +513,11 @@ _agentix__subcmd__help__subcmd__completions_commands() {
 _agentix__subcmd__help__subcmd__doctor_commands() {
     local commands; commands=()
     _describe -t commands 'agentix help doctor commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__env_commands] )) ||
+_agentix__subcmd__help__subcmd__env_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help env commands' commands "$@"
 }
 (( $+functions[_agentix__subcmd__help__subcmd__help_commands] )) ||
 _agentix__subcmd__help__subcmd__help_commands() {

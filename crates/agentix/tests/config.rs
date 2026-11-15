@@ -958,3 +958,14 @@ fn application_metrics_are_opt_in_and_loopback_only() {
         .is_err()
     );
 }
+
+#[test]
+fn environment_export_table_is_accepted_without_applying_it() {
+    let base = credential_config("telegram", "[channel.telegram]\ntoken='token'");
+    let config = Config::from_toml(&format!(
+        "{base}\n[environment]\nAGENTIX_ENV_TEST='literal'\nENABLED=true\n"
+    ))
+    .unwrap();
+    assert_eq!(config.selected_agents().len(), 1);
+    assert!(std::env::var_os("AGENTIX_ENV_TEST").is_none());
+}
