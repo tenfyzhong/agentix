@@ -11,6 +11,9 @@ pub struct SourceMessage {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recorded_at: Option<i64>,
+    /// Source completion time in Unix milliseconds; absent for legacy captures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
