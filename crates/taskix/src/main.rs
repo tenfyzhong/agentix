@@ -56,6 +56,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print configured environment exports for the calling shell.
+    Env {
+        /// Override automatic shell detection.
+        #[arg(long, value_parser = ["sh", "bash", "zsh", "fish", "powershell", "pwsh"])]
+        shell: Option<String>,
+    },
     /// Manage Project deliverables across multiple execution Jobs.
     Issue {
         #[command(subcommand)]
@@ -581,6 +587,25 @@ async fn main() -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
+    if let Command::Env { shell } = &cli.command {
+        let result = (|| -> Result<String> {
+            ensure!(
+                !cli.json,
+                "env emits a shell script and cannot be used with --json"
+            );
+            agentix_task::environment::export(&cli.config_path()?, shell.as_deref())
+        })();
+        return match result {
+            Ok(script) => {
+                print!("{script}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("taskix: {error:#}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     match run(&cli).await {
         Ok(value) => {
             if cli.json {
@@ -896,6 +921,7 @@ async fn dispatch_task_command(cli: &Cli, service: &Service) -> Result<Value> {
                 EventCommand::Maintain(_) | EventCommand::Policy(_) | EventCommand::Worker { .. },
         }
         | Command::Init(_)
+        | Command::Env { .. }
         | Command::Completions { .. }
         | Command::Obsidian { .. } => unreachable!(),
     }

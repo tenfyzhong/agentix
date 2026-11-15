@@ -65,6 +65,12 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
+    /// Print configured environment exports for the calling shell.
+    Env {
+        /// Override automatic shell detection.
+        #[arg(long, value_parser = ["sh", "bash", "zsh", "fish", "powershell", "pwsh"])]
+        shell: Option<String>,
+    },
     #[command(hide = true)]
     LaunchAntigravity {
         #[arg(long)]
@@ -200,6 +206,13 @@ async fn run(cli: Cli) -> Result<()> {
         config: config_path,
         command,
     } = cli;
+    if let CliCommand::Env { shell } = &command {
+        print!(
+            "{}",
+            agentix_task::environment::export(&config_path, shell.as_deref())?
+        );
+        return Ok(());
+    }
     if let CliCommand::Completions { shell } = command {
         clap_complete::generate(
             shell,
@@ -225,7 +238,8 @@ async fn run(cli: Cli) -> Result<()> {
         }
         CliCommand::Doctor => doctor(&config).await,
         CliCommand::Client { command } => client(&config.server.endpoint, command).await,
-        CliCommand::Completions { .. }
+        CliCommand::Env { .. }
+        | CliCommand::Completions { .. }
         | CliCommand::Reload { .. }
         | CliCommand::LaunchOpenCode { .. }
         | CliCommand::LaunchAntigravity { .. } => {

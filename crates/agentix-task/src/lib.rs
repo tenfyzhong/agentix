@@ -4,6 +4,7 @@ mod browse;
 mod browse_page;
 pub use browse_page::{JobBrowsePage, JobListItem, TaskBrowsePage, TaskListItem};
 mod config;
+pub mod environment;
 mod tracking;
 pub use tracking::{TrackingConfig, TrackingStatus};
 mod context;

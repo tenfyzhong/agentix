@@ -74,9 +74,14 @@ pub(crate) async fn recover(path: &Path) -> io::Result<()> {
                 loop {
                     match connect(path).await {
                         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-                        Err(error) if error.kind() == ErrorKind::ConnectionRefused => break,
-                        Ok(stream) if crate::proxy::unix_pid(&stream) == Some(pid) => {}
-                        _ => return Err(occupied("socket peer changed while stopping app-server")),
+                        probe => {
+                            if !shutdown_probe_pending(
+                                probe.map(|stream| crate::proxy::unix_pid(&stream)),
+                                pid,
+                            )? {
+                                break;
+                            }
+                        }
                     }
                     if tokio::time::Instant::now() >= deadline {
                         break;
@@ -101,6 +106,27 @@ pub(crate) async fn recover(path: &Path) -> io::Result<()> {
         }
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         _ => Err(occupied("socket still has a listener after recovery")),
+    }
+}
+
+// A peer can disappear between connect and credential lookup during shutdown.
+// Unknown credentials and reset connections only permit another bounded probe:
+// they never authorize a signal or unlink. Those paths still verify ownership.
+fn shutdown_probe_pending(probe: io::Result<Option<u32>>, pid: u32) -> io::Result<bool> {
+    match probe {
+        Ok(None | Some(0)) => Ok(true),
+        Ok(Some(peer)) if peer == pid => Ok(true),
+        Ok(Some(_)) => Err(occupied("socket peer changed while stopping app-server")),
+        Err(error) if error.kind() == ErrorKind::ConnectionRefused => Ok(false),
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+            ) =>
+        {
+            Ok(true)
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -150,6 +176,24 @@ fn codex_app_server_command(executable: &str, args: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::codex_app_server_command;
+
+    #[test]
+    fn shutdown_probe_waits_for_disconnect_without_trusting_unknown_peers() {
+        use super::shutdown_probe_pending;
+        use std::io::{Error, ErrorKind};
+
+        assert!(shutdown_probe_pending(Ok(Some(42)), 42).unwrap());
+        assert!(shutdown_probe_pending(Ok(None), 42).unwrap());
+        assert!(shutdown_probe_pending(Ok(Some(0)), 42).unwrap());
+        for kind in [ErrorKind::ConnectionReset, ErrorKind::ConnectionAborted] {
+            assert!(shutdown_probe_pending(Err(Error::from(kind)), 42).unwrap());
+        }
+        assert!(
+            !shutdown_probe_pending(Err(Error::from(ErrorKind::ConnectionRefused)), 42).unwrap()
+        );
+        assert!(shutdown_probe_pending(Ok(Some(43)), 42).is_err());
+        assert!(shutdown_probe_pending(Err(Error::from(ErrorKind::PermissionDenied)), 42).is_err());
+    }
 
     #[test]
     fn identifies_app_server_without_matching_client_arguments_or_other_executables() {

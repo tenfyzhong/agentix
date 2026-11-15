@@ -32,30 +32,30 @@ automatic cross-provider retry or switching.
 
 ```fish
 # Typesafe / Jev
-set -gx TASKIX_DECISION_ENABLED true
-set -gx TASKIX_DECISION_PROVIDER typesafe
-set -gx TASKIX_DECISION_PROTOCOL typesafe
-set -gx TASKIX_DECISION_URL https://api.typesafe.ai/v1/systemone
-set -gx TASKIX_DECISION_API_KEY YOUR_API_KEY
-set -gx TASKIX_DECISION_MODEL jev-latest
+set -Ux TASKIX_DECISION_ENABLED true
+set -Ux TASKIX_DECISION_PROVIDER typesafe
+set -Ux TASKIX_DECISION_PROTOCOL typesafe
+set -Ux TASKIX_DECISION_URL https://api.typesafe.ai/v1/systemone
+set -Ux TASKIX_DECISION_API_KEY YOUR_API_KEY
+set -Ux TASKIX_DECISION_MODEL jev-latest
 ```
 
 ```fish
 # OpenAI Decisions; URL and model have built-in defaults.
-set -gx TASKIX_DECISION_ENABLED true
-set -gx TASKIX_DECISION_PROVIDER openai
-set -gx TASKIX_DECISION_PROTOCOL openai_decisions
-set -gx TASKIX_DECISION_API_KEY YOUR_OPENAI_API_KEY
+set -Ux TASKIX_DECISION_ENABLED true
+set -Ux TASKIX_DECISION_PROVIDER openai
+set -Ux TASKIX_DECISION_PROTOCOL openai_decisions
+set -Ux TASKIX_DECISION_API_KEY YOUR_OPENAI_API_KEY
 ```
 
 ```fish
 # A third party reusing the OpenAI Decisions protocol.
-set -gx TASKIX_DECISION_ENABLED true
-set -gx TASKIX_DECISION_PROVIDER acme
-set -gx TASKIX_DECISION_PROTOCOL openai_decisions
-set -gx TASKIX_DECISION_URL https://api.example.com/v1/decisions
-set -gx TASKIX_DECISION_API_KEY YOUR_API_KEY
-set -gx TASKIX_DECISION_MODEL acme-decision-model
+set -Ux TASKIX_DECISION_ENABLED true
+set -Ux TASKIX_DECISION_PROVIDER acme
+set -Ux TASKIX_DECISION_PROTOCOL openai_decisions
+set -Ux TASKIX_DECISION_URL https://api.example.com/v1/decisions
+set -Ux TASKIX_DECISION_API_KEY YOUR_API_KEY
+set -Ux TASKIX_DECISION_MODEL acme-decision-model
 ```
 
 ## Existing installations
@@ -128,3 +128,7 @@ Collection remains best-effort and default-off. The exporter does not replay
 historical counters on startup, and HTTP scrapes do not query SQLite. Local mock
 and interoperability tests establish protocol behavior, not live model quality,
 account access or remote Grafana deployment.
+
+Store these variables in `[environment]` in the Taskix configuration and run
+`taskix env | source` in fish to apply them together. See
+[Environment export](environment-export.md).
