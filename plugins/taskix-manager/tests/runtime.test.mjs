@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildArgs, runHook, registerExtension } from "../runtime.mjs";
+import { buildArgs, runHook, registerExtension } from "./support/runtime.mjs";
 
 test("host_instructions_preserve_one_issue_and_require_full_reread_guards", async () => {
     const result=await runHook({hook_event_name:"SessionStart",session_id:"s",cwd:"/work"},async()=>({result:{issue_id:"issue_one",issue_candidates:[{id:"issue_one"}]}}));

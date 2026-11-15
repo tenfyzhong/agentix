@@ -291,6 +291,7 @@ async fn draft_capture_does_not_load_a_previous_jobs_body() {
     let path = dir.path().join("tasks.sqlite3");
     std::fs::create_dir(dir.path().join(".obsidian")).unwrap();
     let service = Service::open(Config {
+        tracking: agentix_task::TrackingConfig::default(),
         schema_version: 1,
         storage: StorageConfig { path: path.clone() },
         documents: DocumentConfig {

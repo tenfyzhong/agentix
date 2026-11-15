@@ -216,6 +216,11 @@ struct Init {
 
 #[derive(Subcommand)]
 enum ProjectCommand {
+    /// Check automatic tracking policy without opening storage.
+    Check {
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+    },
     /// Delete the Project, its work, and its entire generated document directory.
     Delete { id: String },
     /// Register a Project using its root directory and Git identity when available.
@@ -672,6 +677,31 @@ async fn setup_obsidian(cli: &Cli, no_reload: bool) -> Result<Value> {
 }
 
 async fn run(cli: &Cli) -> Result<Value> {
+    if let Command::Project {
+        action: ProjectCommand::Check { path },
+    } = &cli.command
+    {
+        let tracking = agentix_task::TrackingConfig::load(&cli.config_path()?)?.check(path)?;
+        return Ok(response(json!({"tracking": tracking})));
+    }
+    let automatic = matches!(&cli.command, Command::Context { task: None, job: None } if cli.project.is_none())
+        || matches!(
+            &cli.command,
+            Command::Routing {
+                action: RoutingCommand::Snapshot
+            } | Command::Hook {
+                action: HookCommand::Record { .. }
+            }
+        );
+    if automatic {
+        let tracking = agentix_task::TrackingConfig::load(&cli.config_path()?)?
+            .check(&std::env::current_dir()?)?;
+        if !tracking.enabled {
+            return Ok(response(
+                json!({"tracking":tracking,"project_id":null,"job_id":null,"task_id":null,"lease":null}),
+            ));
+        }
+    }
     if matches!(cli.command, Command::Serve | Command::Reload) {
         #[cfg(any(unix, windows))]
         return Ok(response(match cli.command {
@@ -967,6 +997,7 @@ async fn initialize(cli: &Cli, init: &Init) -> Result<Value> {
     let path = cli.config_path()?;
     ensure!(!path.exists(), "config already exists: {}", path.display());
     let config = Config {
+        tracking: agentix_task::TrackingConfig::default(),
         schema_version: 1,
         storage: StorageConfig {
             path: expand_home(
@@ -1007,6 +1038,7 @@ async fn mutate(cli: &Cli, service: &Service, request: Value) -> Result<Value> {
 
 async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Result<Value> {
     match action {
+        ProjectCommand::Check { .. } => unreachable!("policy check is handled before storage"),
         ProjectCommand::Delete { id } => {
             mutate(
                 cli,

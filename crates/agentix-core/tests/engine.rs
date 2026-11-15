@@ -1419,6 +1419,7 @@ async fn task_fixture() -> (tempfile::TempDir, Arc<agentix_task::Service>, Strin
     std::fs::create_dir_all(dir.path().join(".obsidian")).unwrap();
     let service = Arc::new(
         Service::open(Config {
+            tracking: agentix_task::TrackingConfig::default(),
             schema_version: 1,
             storage: StorageConfig {
                 path: dir.path().join("tasks.sqlite3"),

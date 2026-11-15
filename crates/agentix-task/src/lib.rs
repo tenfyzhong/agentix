@@ -4,6 +4,8 @@ mod browse;
 mod browse_page;
 pub use browse_page::{JobBrowsePage, JobListItem, TaskBrowsePage, TaskListItem};
 mod config;
+mod tracking;
+pub use tracking::{TrackingConfig, TrackingStatus};
 mod context;
 pub use browse::{BrowseScope, ProjectSummary};
 mod conversation;

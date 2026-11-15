@@ -1666,3 +1666,6 @@ fn reload_requires_a_running_service_without_registering_a_project() {
     assert_eq!(response["ok"], false);
     assert_eq!(cli.ok(&["project", "list"]), json!([]));
 }
+
+#[path = "support/tracking.rs"]
+mod tracking;

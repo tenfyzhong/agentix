@@ -2199,6 +2199,7 @@ mod tests {
         std::fs::create_dir(dir.path().join(".obsidian")).unwrap();
         let service = Arc::new(
             agentix_task::Service::open(agentix_task::Config {
+                tracking: agentix_task::TrackingConfig::default(),
                 schema_version: 1,
                 storage: agentix_task::StorageConfig {
                     path: dir.path().join("tasks.sqlite3"),

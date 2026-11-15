@@ -1255,3 +1255,37 @@ test('OpenCode native hooks use real Taskix leases and deduplicate Bridge discus
     await event('session.execution.interrupted',{sessionID:session,reason:'user'});
     assert.equal((await f.run(['task','show',task.id])).lease,null);
 });
+
+for (const host of ['codex','claude','pi','omp','opencode','antigravity']) test(`${host} excluded directory skips real SQLite intake and decisions`, async t => {
+    const f = await fixture(t);
+    const excluded = join(f.dir,'excluded');
+    const nested = join(excluded,'a','b');
+    await mkdir(nested,{recursive:true});
+    const config = process.env.TASKIX_CONFIG;
+    const original = await readFile(config,'utf8');
+    await writeFile(config,original.replace('exclude_paths = []',`exclude_paths = [${JSON.stringify(excluded)}]`));
+    const options = {cwd:nested,session:`excluded-${host}`};
+    let requests = 0;
+    const routing = {env:{TASKIX_DECISION_ENABLED:'true',TASKIX_DECISION_URL:'https://fixture.invalid',TASKIX_DECISION_API_KEY:'fixture'},fetch:async()=>{requests++;throw new Error('Excluded decision');}};
+    const before = await f.run(['project','list']);
+    if (['codex','claude'].includes(host)) {
+        for (const event of ['SessionStart','UserPromptSubmit','PreToolUse','Stop','SessionEnd']) {
+            assert.deepEqual(await runHook({hook_event_name:event,session_id:options.session,cwd:nested,prompt:'Test',transcript_path:'/missing/transcript'},runTaskix,routing),{});
+        }
+    } else {
+        const handlers = new Map();
+        registerExtension({on:(name,fn)=>handlers.set(name,fn),registerTool(){}},host,runTaskix,{setInterval:()=>1,clearInterval(){}},undefined,routing);
+        const ctx={cwd:nested,sessionManager:{getSessionId:()=>options.session}};
+        await handlers.get('session_start')({},ctx);
+        assert.equal(await handlers.get('before_agent_start')({prompt:'Test'},ctx),undefined);
+        await handlers.get('agent_end')({messages:[{role:'assistant',content:'Test'}]},ctx);
+        await handlers.get('session_shutdown')({},ctx);
+    }
+    assert.equal(requests,0);
+    assert.deepEqual(await f.run(['project','list']),before);
+    assert.deepEqual((await f.run(['conversation','list'],options)).turns,[]);
+    await writeFile(config,original);
+    const recovered=await runTaskix(['context'],options);
+    assert.ok(recovered.result.project_id);
+    assert.deepEqual((await f.run(['conversation','list'],options)).turns,[]);
+});

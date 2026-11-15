@@ -8,6 +8,7 @@ async fn export_fixture() -> (tempfile::TempDir, Service, String) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".obsidian")).unwrap();
     let service = Service::open(Config {
+        tracking: crate::TrackingConfig::default(),
         schema_version: 1,
         storage: crate::StorageConfig {
             path: dir.path().join("tasks.sqlite3"),

@@ -102,3 +102,8 @@ batch_size = 20
 [metrics]
 enabled = false
 listen = "127.0.0.1:9465"
+
+# Optional local directory trees excluded from automatic tracking (including non-Git directories).
+# Restart agent hosts and Agentix after changing this policy. Manual management remains available.
+[tracking]
+exclude_paths = [] # Example: ["/private", "~/workspace/sandbox"]

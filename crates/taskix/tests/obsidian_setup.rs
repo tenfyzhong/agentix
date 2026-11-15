@@ -15,6 +15,7 @@ impl Fixture {
         let f = Self { dir };
         fs::create_dir_all(f.path("vault/.obsidian")).unwrap();
         let config = Config {
+            tracking: agentix_task::TrackingConfig::default(),
             schema_version: 1,
             storage: StorageConfig {
                 path: f.path("tasks.sqlite3"),

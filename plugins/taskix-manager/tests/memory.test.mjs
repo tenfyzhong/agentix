@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { memoryContext } from "../memory.mjs";
 import filesystem from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
-import { runHook, registerExtension } from "../runtime.mjs";
+import { runHook, registerExtension } from "./support/runtime.mjs";
 
 const packet = (revision = 1) => ({ result: { mode: "offline_fts", items: [{ id: "mem-a", revision }], text: `Historical memory\n${JSON.stringify({ id: "mem-a", revision, conclusion: "Use regional endpoints" })}\n` } });
 test("receipt publication cannot discard an accepted memory delivery at the deadline", async t => {

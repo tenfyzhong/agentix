@@ -54,6 +54,8 @@ export async function setupOpenCode(input, options = {}) {
                     chain: Promise.resolve(),
                 };
                 await handlers.get('session_start')({}, ctx);
+                state.excluded = !handlers.get('tracking_enabled')({}, ctx);
+                if (state.excluded) return state;
                 const saved = await input.storage.get('active:' + id);
                 if (saved?.version === 1 && Array.isArray(saved.turns)) {
                     if (
@@ -268,6 +270,7 @@ export async function setupOpenCode(input, options = {}) {
             text = promptText(event.prompt);
         if (!text) return;
         const state = await session(sessionID);
+        if (state.excluded) return;
         await serialized(state, () => {
             if (!state.seen.has(messageID)) stage(state, messageID, text);
         });
@@ -278,6 +281,15 @@ export async function setupOpenCode(input, options = {}) {
         const data = frame.data;
         if (!data?.sessionID || !sessions.has(data.sessionID)) return;
         const state = await session(data.sessionID);
+        if (state.excluded) {
+            if (frame.type === 'session.execution.interrupted' && data.reason !== 'shutdown')
+                await state.handlers.get('agent_end')({messages:[{role:'assistant',stopReason:'aborted'}]}, state.ctx);
+            if (frame.type === 'session.deleted') {
+                await state.handlers.get('session_shutdown')({}, state.ctx);
+                sessions.delete(data.sessionID);
+            }
+            return;
+        }
         await serialized(state, async () => {
             if (
                 frame.type === 'session.inbox.enqueued' &&
@@ -333,6 +345,7 @@ export async function setupOpenCode(input, options = {}) {
     await input.session.hook('prompt', prompt);
     await input.session.hook('context', async (event) => {
         const state = await session(event.sessionID);
+        if (state.excluded) return;
         await serialized(state, async () => {
             // Reconcile only a first model context or ambiguous admission. Once
             // delivered events catch up, ordinary tool steps need no SDK reads.

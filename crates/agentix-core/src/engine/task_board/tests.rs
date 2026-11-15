@@ -7,6 +7,7 @@ async fn task_service_collects_job_messages_without_an_engine_or_im_connection()
     std::fs::create_dir(root.path().join(".obsidian")).unwrap();
     let backend = Arc::new(
         Service::open(Config {
+            tracking: agentix_task::TrackingConfig::default(),
             schema_version: 1,
             storage: StorageConfig {
                 path: root.path().join("tasks.sqlite3"),
@@ -65,6 +66,7 @@ async fn task_service_records_configured_process_items_without_an_im_connection(
     std::fs::create_dir(root.path().join(".obsidian")).unwrap();
     let backend = Arc::new(
         Service::open(Config {
+            tracking: agentix_task::TrackingConfig::default(),
             schema_version: 1,
             storage: StorageConfig {
                 path: root.path().join("tasks.sqlite3"),
@@ -127,6 +129,7 @@ async fn task_service_stages_discussion_before_a_job_exists() {
     std::fs::create_dir(root.path().join(".obsidian")).unwrap();
     let backend = Arc::new(
         Service::open(Config {
+            tracking: agentix_task::TrackingConfig::default(),
             schema_version: 1,
             storage: StorageConfig {
                 path: root.path().join("tasks.sqlite3"),
@@ -220,6 +223,7 @@ async fn task_service_exports_unbound_discussion_for_the_session_project() {
     std::fs::create_dir(root.path().join(".obsidian")).unwrap();
     let backend = Arc::new(
         Service::open(Config {
+            tracking: agentix_task::TrackingConfig::default(),
             schema_version: 1,
             storage: StorageConfig {
                 path: root.path().join("tasks.sqlite3"),
@@ -287,6 +291,7 @@ async fn antigravity_bridge_and_hooks_merge_native_messages_with_timing() {
     std::fs::create_dir(root.path().join(".obsidian")).unwrap();
     let backend = Arc::new(
         Service::open(Config {
+            tracking: agentix_task::TrackingConfig::default(),
             schema_version: 1,
             storage: StorageConfig {
                 path: root.path().join("tasks.sqlite3"),
@@ -416,4 +421,51 @@ async fn record_antigravity_bridge_turn(tasks: &TaskBoardService, start: i32, tu
             None,
         )
         .await;
+}
+
+#[tokio::test]
+async fn excluded_directory_never_buffers_or_records_messages_without_later_cwd() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".obsidian")).unwrap();
+    let config: agentix_task::Config = serde_json::from_value(json!({
+        "schema_version":1,
+        "tracking":{"exclude_paths":[root.path()]},
+        "storage":{"path":root.path().join("tasks.sqlite3")},
+        "documents":{"root":root.path(),"directory":"docs"}
+    }))
+    .unwrap();
+    let backend = Arc::new(Service::open(config).await.unwrap());
+    let tasks = TaskBoardService::new(
+        Some(backend.clone()),
+        crate::SqliteState::in_memory().await.unwrap(),
+    );
+    for (kind, cwd) in [
+        ("userMessage", root.path().to_str()),
+        ("agentMessage", None),
+    ] {
+        tasks
+            .record_job_message(
+                &crate::AgentEvent::ItemCompleted {
+                    session_id: "codex:excluded".into(),
+                    turn_id: "turn".into(),
+                    item: crate::ItemSummary {
+                        id: kind.into(),
+                        kind: kind.into(),
+                        text: Some("Do not capture".into()),
+                        status: None,
+                    },
+                },
+                cwd,
+            )
+            .await;
+    }
+    assert!(tasks.conversations.lock().await.is_empty());
+    assert!(
+        backend
+            .store()
+            .memory_sources(0, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import * as jev from '../jev.mjs';
-import {runHook, registerExtension} from '../runtime.mjs';
+import {runHook, registerExtension} from './support/runtime.mjs';
 import {mkdtemp, writeFile, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';

@@ -32,14 +32,14 @@ test("hook_failure_persists_reason_and_context_without_event_payload", { skip: p
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
     assert.match(result.stderr, /Operation not permitted/);
-    assert.match(result.stderr, /taskix hook heartbeat/);
+    assert.match(result.stderr, /taskix project check/);
     assert.ok(result.stderr.includes(f.log));
     const raw = await readFile(f.log, "utf8");
     const entry = JSON.parse(raw);
     assert.equal(entry.event, "PostToolUse");
     assert.equal(entry.session_id, "test-session");
     assert.equal(entry.cwd, f.dir);
-    assert.equal(entry.command, "taskix hook heartbeat");
+    assert.equal(entry.command, "taskix project check");
     assert.equal(entry.exit_code, 1);
     assert.match(entry.message, /Operation not permitted/);
     assert.ok(Number.isFinite(Date.parse(entry.timestamp)));
@@ -79,7 +79,7 @@ test("missing_taskix_reports_spawn_reason_without_full_arguments", async t => {
     assert.equal(result.status, 1);
     const entry = JSON.parse(await readFile(f.log, "utf8"));
     assert.equal(entry.code, "ENOENT");
-    assert.match(entry.message, /taskix hook heartbeat.*ENOENT/);
+    assert.match(entry.message, /taskix project check.*ENOENT/);
     assert.doesNotMatch(entry.message, /--session|--json/);
 });
 
