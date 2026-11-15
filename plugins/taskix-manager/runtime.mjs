@@ -14,7 +14,7 @@ export { buildArgs, runTaskix } from "./taskix-cli.mjs";
 function skillContext(context) {
     return {
         ...context,
-        task_language: process.env.AGENT_TASK_LANG?.trim() || "en",
+        task_language: process.env.TASKIX_LANG?.trim() || "en",
     };
 }
 

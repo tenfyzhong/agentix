@@ -1030,7 +1030,7 @@ fn taskix_preserves_authored_language_without_language_configuration() {
     let output = cli
         .command(&["sync"])
         .env("TASKIX_LANGUAGE", "zh-CN")
-        .env("AGENT_TASK_LANG", "ja")
+        .env("TASKIX_LANG", "ja")
         .output()
         .unwrap();
     assert!(
@@ -1085,7 +1085,7 @@ fn initialization_ignores_language_environment_and_omits_language_configuration(
             cli.dir.path().join("tasks.sqlite3").to_str().unwrap(),
         ])
         .env("TASKIX_LANGUAGE", "zh-CN")
-        .env("AGENT_TASK_LANG", "ja")
+        .env("TASKIX_LANG", "ja")
         .output()
         .unwrap();
     assert!(output.status.success());

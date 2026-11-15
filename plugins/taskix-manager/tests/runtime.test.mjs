@@ -51,11 +51,11 @@ test("task tool passes arguments without shell interpolation and fences identity
 });
 
 test("skill language is injected by hooks and extensions independently of taskix", async (t) => {
-    const original = process.env.AGENT_TASK_LANG;
+    const original = process.env.TASKIX_LANG;
     const legacy = process.env.TASKIX_LANGUAGE;
     t.after(() => {
-        if (original === undefined) delete process.env.AGENT_TASK_LANG;
-        else process.env.AGENT_TASK_LANG = original;
+        if (original === undefined) delete process.env.TASKIX_LANG;
+        else process.env.TASKIX_LANG = original;
         if (legacy === undefined) delete process.env.TASKIX_LANGUAGE;
         else process.env.TASKIX_LANGUAGE = legacy;
     });
@@ -63,8 +63,8 @@ test("skill language is injected by hooks and extensions independently of taskix
     const context = { job_id: "job_one", documents: { root: "/vault", directory: "Tasks" } };
     const runner = async () => ({ schema_version: 1, ok: true, result: context });
     for (const [setting, expected] of [[undefined,"en"],["  ","en"],[" zh-CN ","zh-CN"],["ja","ja"]]) {
-        if (setting === undefined) delete process.env.AGENT_TASK_LANG;
-        else process.env.AGENT_TASK_LANG = setting;
+        if (setting === undefined) delete process.env.TASKIX_LANG;
+        else process.env.TASKIX_LANG = setting;
         const hook = await runHook({hook_event_name:"SessionStart",session_id:"s1",cwd:"/work"},runner);
         const value = JSON.parse(hook.hookSpecificOutput.additionalContext.split("\n").at(-1));
         assert.equal(value.task_language,expected);

@@ -16,7 +16,7 @@ For example, add this table to `~/.config/taskix/config.toml`:
 
 ```toml
 [environment]
-AGENT_TASK_LANG = "zh-CN"
+TASKIX_LANG = "zh-CN"
 TASKIX_MEMORY_ENABLED = true
 TASKIX_DECISION_ENABLED = true
 TASKIX_DECISION_PROVIDER = "typesafe"

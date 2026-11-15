@@ -121,7 +121,7 @@ exclude_paths = [] # Example: ["/private", "~/workspace/sandbox"]
 # macOS/Linux service login shell; default: the account login shell.
 # TASKIX_LOGIN_SHELL = "/opt/homebrew/bin/fish"
 # Host skill language; default en. Does not translate existing notes.
-# AGENT_TASK_LANG = "zh-CN"
+# TASKIX_LANG = "zh-CN"
 # Opt into memory for the CLI, host plugin and resident service; default false.
 # TASKIX_MEMORY_ENABLED = true
 # Provider credential referenced by [memory.providers.openai].api_key_env above.

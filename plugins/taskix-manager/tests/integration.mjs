@@ -206,11 +206,11 @@ test("Issue bridge preserves Markdown, waits for every Job and requires separate
 });
 
 function taskLanguage(t, language) {
-    const previous = process.env.AGENT_TASK_LANG;
-    process.env.AGENT_TASK_LANG = language;
+    const previous = process.env.TASKIX_LANG;
+    process.env.TASKIX_LANG = language;
     t.after(() => {
-        if (previous === undefined) delete process.env.AGENT_TASK_LANG;
-        else process.env.AGENT_TASK_LANG = previous;
+        if (previous === undefined) delete process.env.TASKIX_LANG;
+        else process.env.TASKIX_LANG = previous;
     });
 }
 
