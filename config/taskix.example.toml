@@ -4,48 +4,48 @@ schema_version = 1
 path = "~/.local/share/taskix/tasks.sqlite3"
 
 [documents]
-# Replace with an existing absolute Obsidian vault root containing .obsidian.
+## Replace with an existing absolute Obsidian vault root containing .obsidian.
 root = "/absolute/path/to/vault"
 directory = "Agent Tasks"
-# Relative to documents.root; resolved to an absolute path on archive/sync.
+## Relative to documents.root; resolved to an absolute path on archive/sync.
 archive_directory = "Archived Projects"
 
-# Service logging uses the same options as Agentix. RUST_LOG overrides level.
-# Ordinary CLI commands do not initialize logging. Changes require a restart.
+## Service logging uses the same options as Agentix. RUST_LOG overrides level.
+## Ordinary CLI commands do not initialize logging. Changes require a restart.
 [logging]
 level = "info"
 
 [logging.file]
 enabled = false
 path = "~/.local/state/taskix/taskix.log"
-# never, minutely, hourly, or daily; rotated files append a UTC timestamp.
+## never, minutely, hourly, or daily; rotated files append a UTC timestamp.
 rotation = "daily"
-# Maximum retained files for time-based rotation; never does not limit file size.
+## Maximum retained files for time-based rotation; never does not limit file size.
 max_files = 7
 
-# Optional project memory; one config and release, independent resident process.
-# Export TASKIX_MEMORY_ENABLED=true (or 1) to the CLI, host and service.
-# Run `taskix serve` separately. See https://github.com/tenfyzhong/agentix/wiki/Taskix-Memory.
-# On macOS/Linux, serve loads exported variables from your account login shell.
-# Set TASKIX_LOGIN_SHELL to an absolute path to override it; Windows inherits
-# the launcher's environment. Restart the service after environment changes.
+## Optional project memory; one config and release, independent resident process.
+## Export TASKIX_MEMORY_ENABLED=true (or 1) to the CLI, host and service.
+## Run `taskix serve` separately. See https://github.com/tenfyzhong/agentix/wiki/Taskix-Memory.
+## On macOS/Linux, serve loads exported variables from your account login shell.
+## Set TASKIX_LOGIN_SHELL to an absolute path to override it; Windows inherits
+## the launcher's environment. Restart the service after environment changes.
 [memory.storage]
-# Defaults to memory.sqlite3 beside storage.path; never use the task database.
+## Defaults to memory.sqlite3 beside storage.path; never use the task database.
 path = "~/.local/share/taskix/memory.sqlite3"
 
 [memory.providers.openai]
-# Defaults to chat_completions; GPT-6 Astra requires responses.
+## Defaults to chat_completions; GPT-6 Astra requires responses.
 api = "responses"
 protocol = "openai"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
-# Total provider concurrency; background work leaves one slot for online embedding queries.
+## Total provider concurrency; background work leaves one slot for online embedding queries.
 max_in_flight = 8
 
 [memory.agent]
 provider = "openai"
 model = "gpt-6-astra"
-# Optional; omit for provider default. Levels depend on the selected model.
+## Optional; omit for provider default. Levels depend on the selected model.
 # reasoning_effort = "low"
 max_concurrent_loops = 4
 max_extraction_loops_per_project = 2
@@ -57,13 +57,13 @@ request_timeout_seconds = 90
 task_timeout_seconds = 240
 lease_seconds = 300
 max_attempts = 3
-# Wait for rapid source updates to settle before extraction (0 disables the wait).
+## Wait for rapid source updates to settle before extraction (0 disables the wait).
 extraction_debounce_ms = 1000
-# Review agent-authored memories after repository changes and at this interval.
-# Set to zero to disable automatic repository reviews.
+## Review agent-authored memories after repository changes and at this interval.
+## Set to zero to disable automatic repository reviews.
 repository_review_interval_seconds = 86400
-# Write-driven low-priority semantic compaction; idle waits for notifications.
-# Process existing history once and wait for dirty revisions to settle.
+## Write-driven low-priority semantic compaction; idle waits for notifications.
+## Process existing history once and wait for dirty revisions to settle.
 compaction_enabled = true
 compaction_debounce_seconds = 30
 
@@ -93,84 +93,84 @@ query_timeout_ms = 1500
 [memory.projection]
 enabled = true
 poll_interval_ms = 5000
-# Full repair scan after a completed pass; changed revisions are published first.
+## Full repair scan after a completed pass; changed revisions are published first.
 reconcile_interval_seconds = 300
 batch_size = 20
 
-# Application-only endpoint, served by taskix serve even with Memory disabled.
-# No host or collector metrics. Restart after changes; see docs/application-metrics.md.
+## Application-only endpoint, served by taskix serve even with Memory disabled.
+## No host or collector metrics. Restart after changes; see docs/application-metrics.md.
 [metrics]
 enabled = false
 listen = "127.0.0.1:9465"
 
-# Optional local directory trees excluded from automatic tracking (including non-Git directories).
-# Restart agent hosts and Agentix after changing this policy. Manual management remains available.
+## Optional local directory trees excluded from automatic tracking (including non-Git directories).
+## Restart agent hosts and Agentix after changing this policy. Manual management remains available.
 [tracking]
 exclude_paths = [] # Example: ["/private", "~/workspace/sandbox"]
 
-# Shell exports for Taskix services, CLI and taskix-manager host plugins.
-# Apply in fish with `taskix env | source` (set -Ux), or in bash/zsh with
-# eval "$(taskix env)". Uncomment only the settings you need.
-# Values are literal: replace /absolute/path placeholders; ~ and $HOME are not
-# expanded by env. Normal config loading does not apply this table.
-# See docs/environment-export.md. Protect this file when storing secrets.
+## Shell exports for Taskix services, CLI and taskix-manager host plugins.
+## Apply in fish with `taskix env | source` (set -Ux), or in bash/zsh with
+## eval "$(taskix env)". Uncomment only the settings you need.
+## Values are literal: replace /absolute/path placeholders; ~ and $HOME are not
+## expanded by env. Normal config loading does not apply this table.
+## See docs/environment-export.md. Protect this file when storing secrets.
 [environment]
-# CLI config override; default: <home>/.config/taskix/config.toml.
-# --config takes priority. Use --config for the first export of a custom file.
+## CLI config override; default: <home>/.config/taskix/config.toml.
+## --config takes priority. Use --config for the first export of a custom file.
 # TASKIX_CONFIG = "/absolute/path/to/taskix/config.toml"
-# macOS/Linux service login shell; default: the account login shell.
+## macOS/Linux service login shell; default: the account login shell.
 # TASKIX_LOGIN_SHELL = "/opt/homebrew/bin/fish"
-# Host skill language; default en. Does not translate existing notes.
+## Host skill language; default en. Does not translate existing notes.
 # TASKIX_LANG = "zh-CN"
-# Opt into memory for the CLI, host plugin and resident service; default false.
+## Opt into memory for the CLI, host plugin and resident service; default false.
 # TASKIX_MEMORY_ENABLED = true
-# Provider credential referenced by [memory.providers.openai].api_key_env above.
-# Other providers may name their own variable with api_key_env.
+## Provider credential referenced by [memory.providers.openai].api_key_env above.
+## Other providers may name their own variable with api_key_env.
 # OPENAI_API_KEY = "replace-with-your-openai-key"
-# Antigravity hook identity root; default: <home>/.local/share/taskix/antigravity.
+## Antigravity hook identity root; default: <home>/.local/share/taskix/antigravity.
 # TASKIX_ANTIGRAVITY_DATA_DIR = "/absolute/path/to/taskix/antigravity"
 
-# Optional routing/lifecycle/discussion decisions; disabled by default.
-# The following example selects Typesafe. Supply a real endpoint/key to enable.
+## Optional routing/lifecycle/discussion decisions; disabled by default.
+## The following example selects Typesafe. Supply a real endpoint/key to enable.
 # TASKIX_DECISION_ENABLED = true
-# Provider identity: typesafe (default), openai, or a custom provider name.
+## Provider identity: typesafe (default), openai, or a custom provider name.
 # TASKIX_DECISION_PROVIDER = "typesafe"
-# Protocol: typesafe or openai_decisions; inferred for built-in providers only.
+## Protocol: typesafe or openai_decisions; inferred for built-in providers only.
 # TASKIX_DECISION_PROTOCOL = "typesafe"
-# Full endpoint. OpenAI's built-in default is https://api.openai.com/v1/decisions.
+## Full endpoint. OpenAI's built-in default is https://api.openai.com/v1/decisions.
 # TASKIX_DECISION_URL = "https://api.typesafe.ai/v1/systemone"
-# Only the built-in OpenAI provider/protocol can fall back to OPENAI_API_KEY.
+## Only the built-in OpenAI provider/protocol can fall back to OPENAI_API_KEY.
 # TASKIX_DECISION_API_KEY = "replace-with-your-decision-key"
-# Default model: jev-latest for Typesafe; gpt-6-luna for OpenAI Decisions.
+## Default model: jev-latest for Typesafe; gpt-6-luna for OpenAI Decisions.
 # TASKIX_DECISION_MODEL = "jev-latest"
-# Routing/lifecycle/discussion threshold; default 0.65, range 0.5..1.
+## Routing/lifecycle/discussion threshold; default 0.65, range 0.5..1.
 # TASKIX_DECISION_MIN_CONFIDENCE = 0.65
-# Independent memory screening threshold; default 0.75, range 0.5..1.
+## Independent memory screening threshold; default 0.75, range 0.5..1.
 # TASKIX_MEMORY_DECISION_MIN_CONFIDENCE = 0.75
 
-# Persist decision observations; default false. Separate from [metrics].
+## Persist decision observations; default false. Separate from [metrics].
 # TASKIX_DECISION_METRICS_ENABLED = true
-# Default: <XDG_STATE_HOME or home/.local/state>/taskix/decision-metrics.sqlite.
-# Writers and `taskix routing metrics` must use the same database path.
+## Default: <XDG_STATE_HOME or home/.local/state>/taskix/decision-metrics.sqlite.
+## Writers and `taskix routing metrics` must use the same database path.
 # TASKIX_DECISION_METRICS_DB = "/absolute/path/to/taskix/decision-metrics.sqlite"
-# Also controls host hook error-log location; default: <home>/.local/state.
+## Also controls host hook error-log location; default: <home>/.local/state.
 # XDG_STATE_HOME = "/absolute/path/to/.local/state"
 
-# Shared networking and diagnostics (optional).
-# RUST_LOG overrides [logging].level for the resident service.
+## Shared networking and diagnostics (optional).
+## RUST_LOG overrides [logging].level for the resident service.
 # RUST_LOG = "info"
-# HTTP client proxy variables; uppercase HTTP_PROXY/HTTPS_PROXY and lowercase
-# no_proxy are also accepted. Prefer one spelling of each variable.
+## HTTP client proxy variables; uppercase HTTP_PROXY/HTTPS_PROXY and lowercase
+## no_proxy are also accepted. Prefer one spelling of each variable.
 # http_proxy = "http://127.0.0.1:7890"
 # https_proxy = "http://127.0.0.1:7890"
 # NO_PROXY = "localhost,127.0.0.1,::1"
 
-# Compatibility only: prefer TASKIX_DECISION_* above for new configurations.
-# Typesafe still accepts TASKIX_JEV_ENABLED, TASKIX_JEV_URL, TASKIX_JEV_API_KEY,
-# TASKIX_JEV_MODEL, TASKIX_JEV_MIN_CONFIDENCE and
-# TASKIX_MEMORY_JEV_MIN_CONFIDENCE as fallbacks for the corresponding new keys.
-# TASKIX_JEV_METRICS_ENABLED / TASKIX_JEV_METRICS_DB are provider-independent
-# fallbacks for TASKIX_DECISION_METRICS_ENABLED / TASKIX_DECISION_METRICS_DB.
-# Do not set new and legacy names together.
-# Host-owned HOME, PATH, SHELL, CLAUDE_PLUGIN_ROOT and PLUGIN_ROOT are inherited.
-# TASKIX_MEMORY_LOGIN_ENVIRONMENT_PID is an internal bootstrap marker; do not set it.
+## Compatibility only: prefer TASKIX_DECISION_* above for new configurations.
+## Typesafe still accepts TASKIX_JEV_ENABLED, TASKIX_JEV_URL, TASKIX_JEV_API_KEY,
+## TASKIX_JEV_MODEL, TASKIX_JEV_MIN_CONFIDENCE and
+## TASKIX_MEMORY_JEV_MIN_CONFIDENCE as fallbacks for the corresponding new keys.
+## TASKIX_JEV_METRICS_ENABLED / TASKIX_JEV_METRICS_DB are provider-independent
+## fallbacks for TASKIX_DECISION_METRICS_ENABLED / TASKIX_DECISION_METRICS_DB.
+## Do not set new and legacy names together.
+## Host-owned HOME, PATH, SHELL, CLAUDE_PLUGIN_ROOT and PLUGIN_ROOT are inherited.
+## TASKIX_MEMORY_LOGIN_ENVIRONMENT_PID is an internal bootstrap marker; do not set it.
