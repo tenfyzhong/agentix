@@ -300,7 +300,7 @@ Codex uses a stateful mock app-server under `crates/agentix-codex/tests/support/
 
 Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
 
-GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite in two cargo-nextest hash partitions on Linux and four on macOS. Windows runs four partitions of the memory, task library and taskix suites; an independent Windows platform job checks the workspace and runs the native TCP control tests. CI installs cargo-nextest 0.9.146 and uses the `ci` profile to start the slow native plugin integration first. The short memory IPC suite and the bounded memory triage metrics integration reserve all test threads to protect their real deadlines from competing tests; local `make check` continues to use Cargo's standard test runner. Doctests run separately once per platform because nextest does not run them. Task timestamp tests use `TZ` overrides on Unix; the Windows platform job switches the native system time zone after its other tests to verify UTC+09:00, UTC-05:00, and UTC, then restores the original setting. Each partition uses a separate runner. Both workflows cancel superseded runs and run for pull requests and pushes to `main`, except when every changed file is Markdown (`.md`). Changes that include any other file still run both workflows. The Tests workflow also supports manual dispatch regardless of the changed files. See [CI test cost](docs/integration-coverage.md#ci-test-cost) for coverage guards and timing boundaries.
+GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite in two cargo-nextest hash partitions on Linux and four on macOS. Windows runs four partitions of the memory, task library and taskix suites; an independent Windows platform job checks the workspace and runs the native TCP control tests. CI installs cargo-nextest 0.9.146 and uses the `ci` profile to start the slow native plugin integration first. The short memory IPC suite and the bounded memory triage metrics integration reserve all test threads to protect their real deadlines from competing tests; local `make check` continues to use Cargo's standard test runner. Doctests run separately once per platform because nextest does not run them. Task timestamp tests use `TZ` overrides on Unix; the Windows platform job switches the native system time zone after its other tests to verify UTC+09:00, UTC-05:00, and UTC, then restores the original setting. Each partition uses a separate runner. Both workflows cancel superseded runs and run for pull requests and pushes to `main`, except when every changed file is Markdown (`.md`). Changes that include any other file still trigger both workflows; Tests skips its test jobs only for verified version-only release PRs as described below. The Tests workflow also supports manual dispatch regardless of the changed files. See [CI test cost](docs/integration-coverage.md#ci-test-cost) for coverage guards and timing boundaries.
 
 ## Workspace architecture
 
@@ -311,11 +311,11 @@ The core exposes a small common agent interface plus optional queue, attached-se
 Run `make` for a debug build, `make release` for a release build, or `make help` to list the available targets.
 
 Both CLIs append the current Git commit to development versions, for example
-`0.0.0-dev+dd207c5abc12`. Uncommitted tracked or untracked changes add `.dirty`;
+`0.8.0+dev.dd207c5abc12`. Uncommitted tracked or untracked changes add `.dirty`;
 ignored build artifacts do not. Cargo refreshes this metadata on each build,
-including optimized builds and `brew install --HEAD`. Versions ending in `-dev`
+including optimized builds and `brew install --HEAD`. Versions ending in `+dev` (and legacy `-dev`)
 use this rule; tagged releases retain their exact release version. Development
-source archives without Git metadata report `0.0.0-dev+unknown`.
+source archives without Git metadata report `0.8.0+dev.unknown`.
 
 ## Code and documentation style
 
@@ -384,12 +384,28 @@ Review feedback should normally be addressed with additional commits. Keep the p
 
 ## Releases
 
-Keep `VERSION`, Cargo/npm metadata, lockfiles, and plugin manifests at `0.0.0-dev` on `main`. After release acceptance, create and push a numeric `X.Y.Z` tag (without `v`) on the selected commit. The release workflow derives the version from that tag and stamps its disposable checkout before compiling and packaging. No version-bump or development-reset PR is needed.
+Use the repository [release-version skill](.agents/skills/release-version/SKILL.md)
+with an explicit version, for example `$release-version 0.8.1`. It updates main,
+prepares a version-only `release/X.Y.Z` PR, waits for CI, squash-merges the checked
+head, and creates and pushes an annotated tag at the exact squash commit.
+
+The Tests workflow uses a lightweight classification job for release PRs. Only
+same-repository `release/X.Y.Z` branches whose complete tree matches the result
+of running the base commit's version preparation qualify for skipping tests.
+Changes to code, dependencies or other metadata still run tests, even in a release
+branch. Version validation and the separate CI formatting/Clippy workflow remain
+active. Pushes to main and manual test runs are not skipped by this rule.
+
+Use the latest release number plus `+dev` on main (for example `0.8.0+dev`).
+Run `make prepare-release VERSION=X.Y.Z` and `make check-versions TAG=X.Y.Z`, then
+commit all version changes in a release PR. After acceptance and merge, create
+and push the numeric `X.Y.Z` tag on that exact commit. The next version number is
+chosen only when preparing its release.
 
 Pushing the tag starts the `Release` workflow, which:
 
-1. verifies that the tag points at the checked-out commit, validates source version consistency, then stamps and verifies the tag version;
-2. applies that version to all component manifests and lockfiles in each build checkout, then builds native binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
+1. verifies that the tag points at the checked-out commit, validates committed component versions against the tag;
+2. checks that version in each build checkout, then builds native binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
 3. verifies each binary's `--version` against the tag; macOS/Linux jobs immediately reuse their binaries for CLI bottles and install the tagged backup script for its separate bottle, without waiting for Windows;
 4. tests the standalone backup script and publishes `taskix-backup-<tag>.tar.gz`, separate `agentix-<tag>-<target>` and `taskix-<tag>-<target>` archives, a shared `SHA256SUMS`, and generated notes to the matching GitHub Release;
 5. publishes the prepared Homebrew formula PRs after all verified bottles and native archives are uploaded.
@@ -409,19 +425,28 @@ Run the focused packaging regressions with `cargo test -p agentix --all-features
 When the source URL changes for a new tag, the Homebrew workflow also removes the formula's old `revision` so the new upstream version starts at revision zero. Re-running the same tag preserves its revision while rebuilding the bottle.
 
 PR CI verifies that source metadata agrees with `VERSION` and rejects partial
-version changes. Release CI first checks that source
-consistency, then uses `scripts/plugin-version.mjs prepare X.Y.Z` and `check X.Y.Z`
-to stamp and verify its temporary checkout. Historical tags without `VERSION`
-retain the legacy Cargo-only version setter.
+version changes. Release CI checks `scripts/plugin-version.mjs check X.Y.Z`
+without rewriting committed versions. Historical tags without `VERSION` retain
+the legacy Cargo-only version setter. Existing release tags are never moved.
 
-The Taskix release archive contains tracked plugin files from the stamped working
-tree, excluding untracked caches and dependencies. Git tags and GitHub-generated
-source archives retain the committed `0.0.0-dev` manifests. Plugins installed
-directly from Git therefore still display the development manifest version;
-pinning a tag selects its code but does not rewrite its manifest. Use the source
-ref and commit to identify these installs. Caches without Git metadata cannot
-prove their release identity. CLI archives and Homebrew binaries carry the tag
-version; CLI and plugin installation remain separate operations.
+After successful Release and Homebrew publication, the `prepare-development` job
+opens a PR changing the released version to `X.Y.Z+dev`. It uses a deterministic
+branch, signed-off commits, and reuses existing PRs. It skips newer or already
+development versions on main and requires the release tag to be its ancestor.
+It never pushes main, force-pushes a branch or automatically merges a PR.
+If main moves during preparation, rerun the release workflow; if a newer release
+supersedes an open development PR, close that PR instead of merging it.
+
+Enable Actions PR creation in repository settings. The optional `RELEASE_PR_TOKEN`
+secret (Contents and Pull requests write access) lets PR checks run without
+approval; the default `GITHUB_TOKEN` requires approval for the resulting PR
+workflow runs. See [GitHub token behavior](https://docs.github.com/en/actions/concepts/security/github_token).
+
+New release tags, GitHub-generated source archives, packaged plugins, and CLI
+binaries all carry the committed release version. Tags previously published with
+`0.0.0-dev` manifests retain their original metadata. See
+[plugin installation](docs/plugin-installation.md#release-packaging) for the
+release/development cycle and installation boundaries.
 
 Before tagging a release:
 

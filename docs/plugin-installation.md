@@ -223,20 +223,47 @@ and does not refresh caches or change host registrations.
 
 ### Release packaging
 
-Keep `VERSION`, Cargo/npm metadata, lockfiles, and plugin manifests at
-`0.0.0-dev` on `main`. PR CI checks their consistency automatically.
+Maintainers can invoke the repository's `release-version` skill with an explicit
+version (for example `$release-version 0.8.1`). It updates main, prepares and checks
+a version-only release PR, waits for CI, squash-merges the checked head, then
+creates and pushes an annotated tag at the squash commit. A release request
+without a version must ask for one before making changes.
 
-After release acceptance, create and push a numeric tag such as `1.2.3` (without
-`v`). Release CI reads the tag, validates source consistency, and replaces the
-versions in its disposable checkout before building and packaging. It verifies
-the stamped metadata and binary versions before publication. The Taskix release
-archive includes the stamped plugin manifests, including the Obsidian manifest.
-No version-bump or development-reset commit is needed. Protocol/schema versions
-and third-party dependencies remain independent.
+For same-repository `release/X.Y.Z` PRs, the Tests workflow verifies that the
+entire diff exactly matches the base version-preparation output before skipping
+its test jobs. Version checks and formatting/Clippy remain active. Code or
+dependency changes, ordinary PRs, main pushes and manual runs still run tests.
 
-Direct Git installations and GitHub-generated source archives use the original
-committed manifests, which remain `0.0.0-dev`. Selecting a release tag pins the
-code but does not change the host's displayed manifest version. Identify these
-installs by their source ref and commit; the status tool may report `unknown` for
-release comparison when the manifest and tag differ or Git metadata is absent.
-Do not infer that two installations contain the same code from `0.0.0-dev` alone.
+Development uses the most recent release number with build metadata, for example
+`0.8.0+dev`. It does not reserve the next release number. Development CLI builds
+append the commit (`0.8.0+dev.<sha>`) and `.dirty` when appropriate. Build metadata
+does not affect SemVer precedence; compare source commits for development updates.
+
+Before publishing, run `make prepare-release VERSION=0.8.1` and
+`make check-versions TAG=0.8.1`, then commit the updated VERSION, Cargo/npm metadata,
+lockfiles and plugin manifests in a release PR. After merging, tag that exact
+commit with the numeric version (no `v` prefix). Release CI rejects mismatching
+versions instead of rewriting source files. Git-native installations pinned to
+new release tags therefore receive both the matching code and manifest version.
+Existing tags are unchanged; historical tags created with development manifests
+still contain those original manifests.
+
+After successful archive and Homebrew publication, CI opens a signed-off
+`development/0.8.1` PR targeting main, updating all components to `0.8.1+dev`.
+It reuses existing PRs, recovers a branch pushed before PR creation failed, and
+skips main if its version no longer matches the release. It never pushes main or
+merges the PR. If main moves while preparing the branch, rerun the release
+workflow after inspecting the current version. Merge the development PR only while
+main still has the corresponding stable version; close it if a newer release PR
+has superseded it. Closed PRs are not recreated automatically.
+
+The repository must allow GitHub Actions to create pull requests. Optionally set
+`RELEASE_PR_TOKEN` to a repository-scoped token with Contents and Pull requests
+write access to run PR checks without the approval required for GitHub-token
+created PRs. Otherwise the workflow uses `GITHUB_TOKEN`; approve its PR workflow
+runs as required by GitHub. See [GitHub token behavior](https://docs.github.com/en/actions/concepts/security/github_token).
+
+The Taskix release archive includes taskix-manager and its Obsidian manifest.
+CLI and plugin installations remain separate operations. Protocol/schema
+versions and third-party dependencies remain independent. Caches without Git
+metadata cannot prove their source commit from the manifest alone.

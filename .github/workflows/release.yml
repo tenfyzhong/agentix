@@ -54,9 +54,7 @@ jobs:
 
           version="$(.github/scripts/release-version.sh "$release_tag")"
           if [[ -f VERSION ]]; then
-            # Validate source metadata before stamping this disposable checkout.
-            node scripts/plugin-version.mjs check
-            node scripts/plugin-version.mjs prepare "$release_tag"
+            # Require the tagged commit to contain the release version.
             node scripts/plugin-version.mjs check "$release_tag"
           else
             echo "Legacy tag: unified plugin version metadata predates this release"
@@ -119,8 +117,6 @@ jobs:
           RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
         run: |
           if [[ -f VERSION ]]; then
-            node scripts/plugin-version.mjs check
-            node scripts/plugin-version.mjs prepare "$RELEASE_TAG"
             node scripts/plugin-version.mjs check "$RELEASE_TAG"
           else
             .github/scripts/set-release-version.sh "$RELEASE_TAG"
@@ -165,7 +161,7 @@ jobs:
             if [[ "$binary" == "taskix" ]]; then
               mkdir -p "$staging/docs"
               cp docs/task-board.md docs/task-workflow-mechanisms.md "$staging/docs/"
-              # Include stamped working-tree files, but never untracked caches.
+              # Include validated tracked files, but never untracked caches.
               git ls-files -z -- plugins/taskix-manager > dist/taskix-plugin-files
               tar --null -T dist/taskix-plugin-files -cf dist/taskix-plugin.tar
               tar -xf dist/taskix-plugin.tar -C "$staging"
@@ -296,3 +292,31 @@ jobs:
       tag: ${{ needs.resolve-version.outputs.tag }}
     secrets:
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  prepare-development:
+    needs:
+      - resolve-version
+      - publish-release
+      - publish-homebrew
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: development-version-pr
+      cancel-in-progress: false
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Create development version PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
+          RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
+        run: node scripts/development-pr.mjs "$RELEASE_TAG"

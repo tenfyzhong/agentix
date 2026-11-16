@@ -15,7 +15,8 @@ async function main() {
     if (!["prepare", "check"].includes(action) || extra.length) throw new Error("Usage: plugin-version.mjs prepare VERSION | check [TAG]");
     const current = (await readFile("VERSION", "utf8")).trim();
     const version = requested ?? current;
-    if (!(stable.test(version) || version === "0.0.0-dev")) throw new Error("Version must be X.Y.Z or 0.0.0-dev (no v prefix)");
+    if (!(stable.test(version) || (version.endsWith("+dev") && stable.test(version.slice(0, -4))) || version === "0.0.0-dev")) throw new Error("Version must be X.Y.Z or X.Y.Z+dev (no v prefix)");
+    if (action === "check" && requested && !stable.test(requested)) throw new Error("Release tag must be X.Y.Z (no v prefix)");
     if (action === "prepare" && !requested) throw new Error("prepare requires an explicit version");
     if (action === "check" && current !== version) throw new Error(`VERSION ${current} does not match ${version}`);
     const updates = new Map();
