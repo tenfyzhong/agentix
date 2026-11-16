@@ -124,7 +124,7 @@ test("branch_updates_use_encoded_refs_and_never_check_foreign_repositories", asy
 test("release_validation_precedes_build_and_publish_and_ci_checks_versions", async () => {
     const release = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
     const resolve = release.split("  prepare-homebrew:")[0];
-    assert.match(resolve, /node scripts\/plugin-version\.mjs check(?:\r?\n)/);
+    assert.match(resolve, /node scripts\/plugin-version\.mjs check "\$release_tag"/);
     assert.match(await readFile(join(root, ".github/workflows/tests.yml"), "utf8"), /node scripts\/plugin-version\.mjs check/);
 });
 
@@ -142,7 +142,7 @@ async function releaseFixture(t) {
         await mkdir(join(dir, path, ".."), { recursive: true });
         await cp(join(root, path), join(dir, path));
     }
-    assert.equal(run(dir, "prepare", "0.0.0-dev").status, 0);
+    assert.equal(run(dir, "prepare", "1.2.3").status, 0);
     const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd: dir, encoding: "utf8" });
     git("init", "-b", "main");
     git("add", ".");
@@ -155,7 +155,7 @@ const shellStep = (dir, script, env = {}) => spawnSync("bash", ["--noprofile", "
     cwd: dir, encoding: "utf8", env: { ...process.env, BASH_ENV: "/dev/null", ENV: "/dev/null", ...env },
 });
 
-test("release_resolves_development_tags_for_push_and_dispatch_without_changing_git", { skip: process.platform === "win32" }, async t => {
+test("release_checks_committed_versions_for_push_and_dispatch_without_changing_git", { skip: process.platform === "win32" }, async t => {
     const workflow = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
     for (const event of ["push", "workflow_dispatch"]) {
         const { dir, git } = await releaseFixture(t);
@@ -163,7 +163,7 @@ test("release_resolves_development_tags_for_push_and_dispatch_without_changing_g
         const result = shellStep(dir, script, { INPUT_TAG: "1.2.3", PUSHED_TAG: event === "push" ? "1.2.3" : "main", GITHUB_OUTPUT: join(dir, "output") });
         assert.equal(result.status, 0, result.stderr);
         assert.match(await readFile(join(dir, "output"), "utf8"), /tag=1.2.3\nversion=1.2.3/);
-        assert.equal(git("show", "1.2.3:VERSION").trim(), "0.0.0-dev");
+        assert.equal(git("show", "1.2.3:VERSION").trim(), "1.2.3");
     }
 });
 
@@ -174,7 +174,7 @@ test("release_resolution_rejects_inconsistent_source_metadata", { skip: process.
     const result = shellStep(dir, workflowStep(workflow, "Resolve release version").replaceAll("${{ github.event_name }}", "push"), { PUSHED_TAG: "1.2.3", GITHUB_OUTPUT: join(dir, "output") });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /9.9.9/);
-    assert.equal((await readFile(join(dir, "VERSION"), "utf8")).trim(), "0.0.0-dev");
+    assert.equal((await readFile(join(dir, "VERSION"), "utf8")).trim(), "1.2.3");
 });
 
 test("release_resolution_rejects_invalid_tags_and_wrong_commits", { skip: process.platform === "win32" }, async t => {
@@ -185,7 +185,7 @@ test("release_resolution_rejects_invalid_tags_and_wrong_commits", { skip: proces
         git("tag", tag);
         const result = shellStep(dir, script, { PUSHED_TAG: tag, GITHUB_OUTPUT: join(dir, "output") });
         assert.notEqual(result.status, 0, tag);
-        assert.equal((await readFile(join(dir, "VERSION"), "utf8")).trim(), "0.0.0-dev");
+        assert.equal((await readFile(join(dir, "VERSION"), "utf8")).trim(), "1.2.3");
     }
     git("commit", "--allow-empty", "-sm", "test: another commit");
     const result = shellStep(dir, script, { PUSHED_TAG: "1.2.3", GITHUB_OUTPUT: join(dir, "output") });
@@ -193,7 +193,7 @@ test("release_resolution_rejects_invalid_tags_and_wrong_commits", { skip: proces
     assert.match(result.stderr, /does not point at the checked-out commit/);
 });
 
-test("release_build_stamps_all_metadata_and_packages_worktree_plugin_versions", { skip: process.platform === "win32" }, async t => {
+test("release_build_checks_committed_metadata_and_packages_plugin_versions", { skip: process.platform === "win32" }, async t => {
     const { dir, git } = await releaseFixture(t);
     const workflow = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
     // Cargo's legacy setter discovers workspace package names from crate manifests.
@@ -207,8 +207,8 @@ test("release_build_stamps_all_metadata_and_packages_worktree_plugin_versions", 
     }
     const result = shellStep(dir, workflowStep(workflow, "Set release version"), { RELEASE_TAG: "1.2.3" });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(run(dir, "check", "1.2.3").status, 0, "all metadata must be stamped before packaging");
-    assert.equal(git("show", "HEAD:VERSION").trim(), "0.0.0-dev");
+    assert.equal(run(dir, "check", "1.2.3").status, 0, "all metadata must match before packaging");
+    assert.equal(git("show", "HEAD:VERSION").trim(), "1.2.3");
     await assertStampedArchive(dir, workflow);
 
     // Older tags without unified metadata still use the Cargo-only setter.
@@ -250,4 +250,54 @@ test("release_archive_uses_stamped_worktree_not_committed_plugin_manifests", { s
 test("missing_worktree_status_cannot_report_current", async () => {
     const { compareUpdate } = await import("../version.mjs");
     assert.equal(compareUpdate({ version: "1.2.3", tag: "1.2.3", dirty: null }, "1.2.3"), "unknown");
+});
+
+test("prepare_supports_build_metadata_development_versions", async t => {
+    const dir = await fixture(t);
+    assert.equal(run(dir, "prepare", "0.8.0+dev").status, 0);
+    assert.equal(run(dir, "check").status, 0);
+    for (const path of manifests) assert.equal(JSON.parse(await readFile(join(dir, path))).version, "0.8.0+dev");
+    assert.notEqual(run(dir, "check", "0.8.0+dev").status, 0, "explicit release tags must be stable");
+    assert.equal(run(dir, "prepare", "0.9.0").status, 0);
+    assert.equal(run(dir, "check", "0.9.0").status, 0);
+});
+
+test("release_rejects_development_metadata_instead_of_stamping_it", { skip: process.platform === "win32" }, async t => {
+    const { dir } = await releaseFixture(t);
+    assert.equal(run(dir, "prepare", "0.0.0-dev").status, 0);
+    const workflow = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
+    for (const name of ["Resolve release version", "Set release version"]) {
+        const result = shellStep(dir, workflowStep(workflow, name).replaceAll("${{ github.event_name }}", "push"), { PUSHED_TAG: "1.2.3", RELEASE_TAG: "1.2.3", GITHUB_OUTPUT: join(dir, "output") });
+        assert.notEqual(result.status, 0, name);
+        assert.equal((await readFile(join(dir, "VERSION"), "utf8")).trim(), "0.0.0-dev");
+    }
+});
+
+test("development_pr_pushes_only_a_version_branch_and_preserves_release_tag", { skip: process.platform === "win32" }, async t => {
+    const { createDevelopmentPr } = await import("../../../scripts/development-pr.mjs");
+    const { dir, git } = await releaseFixture(t);
+    const remote = await mkdtemp(join(tmpdir(), "development-remote-"));
+    t.after(() => rm(remote, { recursive: true, force: true }));
+    execFileSync("git", ["init", "--bare", remote]);
+    git("remote", "add", "origin", remote);
+    git("push", "origin", "main", "--tags");
+    const original = git("rev-parse", "HEAD").trim();
+    let prs = [], creates = 0;
+    const execute = (command, args) => {
+        if (command === "gh") {
+            if (args[1] === "list") return JSON.stringify(prs);
+            creates++;
+            prs = [{ url: "https://example.com/pr/1" }];
+            return prs[0].url;
+        }
+        if (command === "git") return git(...args);
+        return execFileSync(process.execPath, args, { cwd: dir, encoding: "utf8" });
+    };
+    createDevelopmentPr("1.2.3", { run: execute });
+    assert.equal(git("show", "origin/development/1.2.3:VERSION").trim(), "1.2.3+dev");
+    assert.equal(git("rev-parse", "origin/main").trim(), original);
+    assert.equal(git("show", "1.2.3:VERSION").trim(), "1.2.3");
+    assert.match(git("log", "-1", "--format=%B"), /Signed-off-by:/);
+    createDevelopmentPr("1.2.3", { run: execute });
+    assert.equal(creates, 1);
 });

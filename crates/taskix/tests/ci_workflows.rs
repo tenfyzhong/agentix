@@ -144,9 +144,15 @@ fn partitioning_preserves_doctests_and_windows_platform_checks() {
         Some("windows-latest")
     );
     let job = &config["jobs"]["windows-platform"];
-    assert!(
-        job.get("needs").is_none(),
-        "platform checks should overlap the test partitions"
+    assert_eq!(
+        job["needs"].as_str(),
+        Some("classify"),
+        "platform checks should wait only for classification, not test partitions"
+    );
+    assert_eq!(
+        config["jobs"]["test"]["needs"].as_str(),
+        Some("classify"),
+        "test partitions and platform checks should start together"
     );
     assert_eq!(
         step(job, "Check the Windows workspace")["run"].as_str(),

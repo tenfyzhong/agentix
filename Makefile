@@ -24,7 +24,7 @@ DEBUG_TARGET_DIR = $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 
 .DEFAULT_GOAL := build
 
-.PHONY: plugin-status plugin-stable build release completions check fmt clippy test test-backup clean help remove-plugin install update switch plugin
+.PHONY: prepare-release check-versions plugin-status plugin-stable build release completions check fmt clippy test test-backup clean help remove-plugin install update switch plugin
 
 build:
 	$(CARGO) build --workspace --all-features
@@ -217,6 +217,8 @@ clean:
 help:
 	@printf '%s\n' \
 		'make          Build the workspace in debug mode' \
+		'make prepare-release VERSION=X.Y.Z  Update all versions before the release PR' \
+		'make check-versions [TAG=X.Y.Z]  Validate component versions' \
 		'make release  Build the workspace in release mode' \
 		'make completions  Regenerate bash, zsh, and fish completions for both CLIs' \
 		'make check    Run formatting, lint, and tests' \
@@ -234,3 +236,10 @@ help:
 		'  HOSTS=opencode selects only the OpenCode 2.0.32+ server and TUI plugins' \
 		'make remove-plugin  Remove Agentix plugins for selected hosts' \
 		'make clean    Remove Cargo build artifacts'
+
+prepare-release:
+	@test -n "$(VERSION)" || (echo 'Usage: make prepare-release VERSION=X.Y.Z' >&2; exit 2)
+	@$(NODE) scripts/plugin-version.mjs prepare "$(VERSION)"
+
+check-versions:
+	@$(NODE) scripts/plugin-version.mjs check $(if $(TAG),"$(TAG)")

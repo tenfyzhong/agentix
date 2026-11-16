@@ -578,6 +578,14 @@ checks do not establish live provider/IM or service-manager environment behavior
 
 ## CI test cost
 
+A lightweight classification job skips test jobs only for same-repository
+`release/X.Y.Z` pull requests whose full tree is exactly the base commit with
+`prepare-release` version changes applied. Version consistency is verified while
+classifying. Ordinary PRs, mixed changes, main pushes and manual dispatches retain
+the test matrix. Formatting and Clippy remain in the separate CI workflow.
+`plugins/taskix-manager/tests/release-pr.test.mjs` exercises real Git trees for
+pure releases and code/dependency changes hidden in release-named branches.
+
 Plugin tests run in parallel with Rust tests on each supported operating system.
 Rust CI uses pinned cargo-nextest 0.9.146 to schedule tests across binaries, with
 two hash partitions on Linux and four each on macOS and Windows. Every partition runs

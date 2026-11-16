@@ -18,7 +18,7 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
 
 fn main() {
     let version = env::var("CARGO_PKG_VERSION").expect("Cargo supplies the package version");
-    let version = if version.ends_with("-dev") {
+    let version = if version.ends_with("-dev") || version.ends_with("+dev") {
         // A deliberately absent input refreshes Git metadata on every Cargo invocation,
         // including untracked files, restored files and commits with unchanged sources.
         let refresh = Path::new(&env::var_os("OUT_DIR").expect("Cargo supplies OUT_DIR"))
@@ -42,7 +42,11 @@ fn main() {
                 ))
             })
             .flatten();
-        format!("{version}+{}", metadata.as_deref().unwrap_or("unknown"))
+        let separator = if version.contains('+') { "." } else { "+" };
+        format!(
+            "{version}{separator}{}",
+            metadata.as_deref().unwrap_or("unknown")
+        )
     } else {
         println!("cargo:rerun-if-changed=../../build.rs");
         version

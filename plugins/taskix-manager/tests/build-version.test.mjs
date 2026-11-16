@@ -88,3 +88,10 @@ test("development source archives explicitly report unavailable Git metadata", a
     await rm(join(root, ".git"), { recursive: true, force: true });
     assert.equal(build(root), "0.0.0-dev+unknown");
 });
+
+test("build_metadata_development_versions_append_sha_without_a_second_plus", async t => {
+    const root = await fixture(t, "0.8.0+dev");
+    assert.equal(build(root), `0.8.0+dev.${git(root, "rev-parse", "--short=12", "HEAD")}`);
+    await rm(join(root, ".git"), { recursive: true, force: true });
+    assert.equal(build(root), "0.8.0+dev.unknown");
+});
