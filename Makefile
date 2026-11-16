@@ -235,7 +235,7 @@ help:
 		'make plugin [PLUGIN_TAG=X.Y.Z]  Install current remote branch or a fixed release tag' \
 		'make plugin-stable  Resolve latest release once and install its fixed tag' \
 		'make plugin-status PLUGIN_PATH=/installed/plugin  Check version, source and updates' \
-		'make prepare-release VERSION=X.Y.Z  Prepare all component versions before tagging' \
+		'make prepare-release VERSION=X.Y.Z  Stamp component versions for local packaging' \
 		'make check-versions  Verify all committed component versions' \
 		'  HOSTS="codex pi omp claude opencode antigravity" selects plugin hosts (default: all six)' \
 		'  HOSTS=antigravity selects the native agy Taskix and Agentix plugins' \

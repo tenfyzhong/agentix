@@ -54,6 +54,9 @@ jobs:
 
           version="$(.github/scripts/release-version.sh "$release_tag")"
           if [[ -f VERSION ]]; then
+            # Validate source metadata before stamping this disposable checkout.
+            node scripts/plugin-version.mjs check
+            node scripts/plugin-version.mjs prepare "$release_tag"
             node scripts/plugin-version.mjs check "$release_tag"
           else
             echo "Legacy tag: unified plugin version metadata predates this release"
@@ -107,11 +110,21 @@ jobs:
         with:
           toolchain: 1.95.0
           targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
       - name: Set release version
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
-        run: .github/scripts/set-release-version.sh "$RELEASE_TAG"
+        run: |
+          if [[ -f VERSION ]]; then
+            node scripts/plugin-version.mjs check
+            node scripts/plugin-version.mjs prepare "$RELEASE_TAG"
+            node scripts/plugin-version.mjs check "$RELEASE_TAG"
+          else
+            .github/scripts/set-release-version.sh "$RELEASE_TAG"
+          fi
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-${{ matrix.target }}
@@ -152,10 +165,11 @@ jobs:
             if [[ "$binary" == "taskix" ]]; then
               mkdir -p "$staging/docs"
               cp docs/task-board.md docs/task-workflow-mechanisms.md "$staging/docs/"
-              # Materialize the archive so tar cannot close a pipe before git finishes.
-              git archive --output=dist/taskix-plugin.tar HEAD plugins/taskix-manager
+              # Include stamped working-tree files, but never untracked caches.
+              git ls-files -z -- plugins/taskix-manager > dist/taskix-plugin-files
+              tar --null -T dist/taskix-plugin-files -cf dist/taskix-plugin.tar
               tar -xf dist/taskix-plugin.tar -C "$staging"
-              rm dist/taskix-plugin.tar
+              rm dist/taskix-plugin.tar dist/taskix-plugin-files
             fi
             executable="$binary"
             if [[ "$RUNNER_OS" == "Windows" ]]; then
