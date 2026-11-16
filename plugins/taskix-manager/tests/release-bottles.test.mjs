@@ -248,7 +248,10 @@ end
         assert.equal(cloned.status, 0, cloned.stdout + cloned.stderr);
         // A fully qualified formula name explicitly permits loading without persisted trust.
         const formulaPath = join(tapPath, "Formula", "tap-trust-fixture.rb");
-        const untrusted = brew("info", "--json=v2", formulaPath);
+        // Homebrew's CLI resolves names; use its path API to exercise persisted tap trust.
+        const loadFormula = () => brew("ruby", "-rformulary", "-e",
+            "puts Formulary.from_path(ARGV.fetch(0)).name", formulaPath);
+        const untrusted = loadFormula();
         assert.notEqual(untrusted.status, 0);
         assert.match(untrusted.stdout + untrusted.stderr, /untrusted tap/);
         await rm(tapPath, { recursive: true, force: true });
@@ -257,9 +260,9 @@ end
         assert.equal(trusted.status, 0, trusted.stdout + trusted.stderr);
         const installed = brew("tap", tap, `file://${remote}`);
         assert.equal(installed.status, 0, installed.stdout + installed.stderr);
-        const loaded = brew("info", "--json=v2", formulaPath);
+        const loaded = loadFormula();
         assert.equal(loaded.status, 0, loaded.stdout + loaded.stderr);
-        assert.equal(JSON.parse(loaded.stdout).formulae[0].name, "tap-trust-fixture");
+        assert.equal(loaded.stdout.trim(), "tap-trust-fixture");
         assert.match(await readFile(join(tapPath, "Formula", "tap-trust-fixture.rb"), "utf8"), /class TapTrustFixture/);
     } finally {
         if (tapPath) await rm(tapPath, { recursive: true, force: true });

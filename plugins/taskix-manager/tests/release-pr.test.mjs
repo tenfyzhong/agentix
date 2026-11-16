@@ -52,9 +52,11 @@ test("release_named_pr_with_code_or_dependency_changes_runs_tests", async t => {
 test("every_test_job_depends_on_release_classification", async () => {
     const workflow = await readFile(join(root, ".github/workflows/tests.yml"), "utf8");
     assert.match(workflow, /  classify:/);
-    for (const id of ["backup", "plugins", "native-opencode", "bottles", "test", "windows-platform"]) {
-        const job = workflow.split(`\n  ${id}:\n`)[1].split(/\n  [\w-]+:\n/)[0];
-        assert.match(job, /needs: classify/);
-        assert.match(job, /if: needs.classify.outputs.run-tests == 'true'/);
+    for (const text of [workflow.replace(/\r\n/g, "\n"), workflow.replace(/\r?\n/g, "\r\n")]) {
+        for (const id of ["backup", "plugins", "native-opencode", "bottles", "test", "windows-platform"]) {
+            const job = text.replace(/\r\n/g, "\n").split(`\n  ${id}:\n`)[1].split(/\n  [\w-]+:\n/)[0];
+            assert.match(job, /needs: classify/);
+            assert.match(job, /if: needs.classify.outputs.run-tests == 'true'/);
+        }
     }
 });
