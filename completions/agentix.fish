@@ -54,8 +54,10 @@ complete -c agentix -n "__fish_agentix_using_subcommand launch-open-code" -s h -
 complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-auth -d 'Authentication for the Codex proxy WebSocket listener' -r -f -a "capability-token\t''
 signed-bearer-token\t''"
 complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-token-file -d 'Absolute path to the capability-token file' -r -F
+complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-token-pass -d 'Pass entry containing the credential; requires working pinentry' -r
 complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-token-sha256 -d 'SHA-256 verifier for the capability token (64 hex digits)' -r
 complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-shared-secret-file -d 'Absolute path to the HS256 JWT shared-secret file (at least 32 bytes)' -r -F
+complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-shared-secret-pass -d 'Pass entry containing the credential; requires working pinentry' -r
 complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-issuer -r
 complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-audience -r
 complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-max-clock-skew-seconds -d 'JWT validation clock tolerance; defaults to 30 seconds' -r

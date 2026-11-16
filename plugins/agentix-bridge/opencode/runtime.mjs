@@ -1,3 +1,4 @@
+import { agentEnvironment } from "../environment.mjs";
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -54,7 +55,7 @@ export class OpenCodeBridge {
         this.options = options;
         this.stateDir =
             options.stateDir ??
-            process.env.AGENTIX_OPENCODE_STATE_DIR ??
+            agentEnvironment().AGENTIX_OPENCODE_STATE_DIR ??
             join(homedir(), '.local/share/agentix/opencode');
         this.clientId = randomUUID();
         this.native = new NativeTurns();

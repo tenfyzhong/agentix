@@ -7,9 +7,9 @@ One Project represents a long-lived repository; worktrees of that repository sha
 
 ## Task language
 
-Use `TASKIX_LANG` from the host environment to choose the language for task decomposition and newly authored Issue/Milestone/Job/Task titles, concise names, goals, Notes, and Plan bodies. The plugin also exposes this setting as `task_language` in its injected context. Unset or blank means English (`en`); for example, `zh-CN` selects Chinese and `ja` selects Japanese. Honor an explicit language requested for the current work. Preserve existing authored content unless translation is requested.
+Use `TASKIX_LANG` from `taskix.env` or the host environment to choose the language for task decomposition and newly authored Issue/Milestone/Job/Task titles, concise names, goals, Notes, and Plan bodies. The plugin also exposes this setting as `task_language` in its injected context. Unset or blank means English (`en`); for example, `zh-CN` selects Chinese and `ja` selects Japanese. Honor an explicit language requested for the current work. Preserve existing authored content unless translation is requested.
 
-This is a skill setting. Do not write language settings into taskix configuration or translate its generated sections. taskix stores supplied text as-is and uses fixed English template labels.
+This is a skill setting. Keep this setting in `taskix.env` or the host environment, not `config.toml`; do not translate generated sections. taskix stores supplied text as-is and uses fixed English template labels.
 
 ## Local tracking policy
 

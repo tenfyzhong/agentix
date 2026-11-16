@@ -1,9 +1,10 @@
+import { agentEnvironment } from "../environment.mjs";
 import { isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import { Mailbox, hostKey, atomicJson } from '../claude/mailbox.mjs';
 import { createTranscriptReader } from './history.mjs';
 
-export const dataRoot = () => process.env.AGENTIX_ANTIGRAVITY_DATA_DIR ?? join(homedir(), '.local/share/agentix/antigravity');
+export const dataRoot = () => agentEnvironment().AGENTIX_ANTIGRAVITY_DATA_DIR ?? join(homedir(), '.local/share/agentix/antigravity');
 export function normalizeHook(value) {
     if (typeof value.conversationId !== 'string' || !value.conversationId || !Array.isArray(value.workspacePaths) ||
         !value.workspacePaths.length || typeof value.hookEventName !== 'string' || !value.hookEventName) {

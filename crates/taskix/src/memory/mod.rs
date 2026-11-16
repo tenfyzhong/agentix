@@ -127,8 +127,16 @@ async fn doctor(path: &std::path::Path, location: &MemoryLocation) -> Result<Val
     let configuration = match agentix_memory::MemoryConfig::load(path) {
         Ok(config) => {
             let providers = config.providers.iter().map(|(name, provider)| {
-                json!({"name":name,"credentials_available":provider.api_key_env.as_ref()
-                    .is_none_or(|key| std::env::var(key).is_ok_and(|value| !value.trim().is_empty()))})
+                // Diagnostics must not launch pinentry or claim untested secrets are available.
+                let pass = provider.api_key_pass.is_some() || provider.api_key_env.as_ref().is_some_and(|key| {
+                    std::env::var_os(key).is_none() && std::env::var_os(format!("{key}_PASS")).is_some()
+                });
+                let available = if pass { None } else { Some(provider.api_key_env.as_ref()
+                    .is_none_or(|key| std::env::var(key).is_ok_and(|value| !value.trim().is_empty()))) };
+                json!({"name":name,
+                    "credential_source":if pass { "pass" } else if provider.api_key_env.is_some() { "environment" } else { "none" },
+                    "credentials_available":available,
+                    "credentials_check":if pass { "deferred_to_provider_initialization" } else { "environment" }})
             }).collect::<Vec<_>>();
             json!({"valid":true,"model":config.agent.model,"api":config.providers.get(&config.agent.provider).map(|provider| provider.api),
                 "reasoning_effort":config.agent.reasoning_effort,

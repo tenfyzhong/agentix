@@ -1,3 +1,4 @@
+import { taskEnvironment } from "../environment.mjs";
 import { appendFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -6,7 +7,7 @@ export async function reportHookError(error, event) {
     const message = error?.message || String(error);
     process.stderr.write(`Task board hook: ${message}\n`);
     try {
-        const path = join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "taskix", "hooks.jsonl");
+        const path = join(taskEnvironment().XDG_STATE_HOME || join(homedir(), ".local", "state"), "taskix", "hooks.jsonl");
         // Do not persist the raw event, transcript, environment or CLI arguments.
         const entry = {
             timestamp: new Date().toISOString(),

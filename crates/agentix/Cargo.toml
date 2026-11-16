@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+agentix-secrets = { path = "../agentix-secrets" }
 agentix-metrics = { path = "../agentix-metrics" }
 agentix-multiplexer = { path = "../agentix-multiplexer" }
 agentix-rmux = { path = "../agentix-rmux" }

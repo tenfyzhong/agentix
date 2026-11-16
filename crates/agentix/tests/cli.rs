@@ -476,6 +476,7 @@ owner_user_ids = []
             .arg("--config")
             .arg(&config)
             .arg("doctor")
+            .env("RUST_LOG", "off")
             .env_remove("AGENTIX_TELEGRAM_TOKEN")
             .stdin(Stdio::null())
             .output()

@@ -56,3 +56,10 @@ No Agentix checkout is required.
 Remote delivery and controls require tmux, rmux or Rex. See the
 [Antigravity guide](https://github.com/tenfyzhong/agentix/wiki/Antigravity) and
 [wire contract](../../docs/host-protocol.md#antigravity).
+
+## Local environment defaults
+
+Agentix Bridge reads `~/.config/agentix/agentix.env` (or beside inherited `AGENTIX_CONFIG`). File values are cached once per process and overridden by inherited environment values. The plugin does not mutate the host environment. Restart resident hosts after edits; new hooks load the latest file. See [local environment files](https://github.com/tenfyzhong/agentix/wiki/Environment-Export) for syntax and migration.
+
+The loader uses Node built-in `util.parseEnv` (Node 20.12.0 / 21.7.0 or newer;
+current LTS recommended). Bun hosts must support `node:util.parseEnv`.

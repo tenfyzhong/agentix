@@ -1,15 +1,17 @@
+import { passKey } from "./pass.mjs";
+import { taskEnvironment } from "./environment.mjs";
 // Provider identity is independent of the wire protocol. No lifecycle writes here.
 const enabled = value => /^(true|1)$/i.test(value?.trim() || "");
 const text = value => value?.trim() || undefined;
 export const validProvider = value => typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value);
 export const validProtocol = value => ["typesafe", "openai_decisions"].includes(value);
-export function metricsEnabled(env = process.env) {
+export function metricsEnabled(env = taskEnvironment()) {
     return enabled(env.TASKIX_DECISION_METRICS_ENABLED ?? env.TASKIX_JEV_METRICS_ENABLED);
 }
-export function metricsDatabase(env = process.env) {
+export function metricsDatabase(env = taskEnvironment()) {
     return text(env.TASKIX_DECISION_METRICS_DB) ?? text(env.TASKIX_JEV_METRICS_DB);
 }
-export function decisionConfig(env = process.env) {
+export function decisionConfig(env = taskEnvironment()) {
     const provider = text(env.TASKIX_DECISION_PROVIDER) ?? "typesafe";
     const protocol = text(env.TASKIX_DECISION_PROTOCOL) ?? ({ typesafe: "typesafe", openai: "openai_decisions" })[provider];
     if (!validProvider(provider) || !validProtocol(protocol)) return;
@@ -18,7 +20,15 @@ export function decisionConfig(env = process.env) {
     if (!enabled(env.TASKIX_DECISION_ENABLED ?? (legacy ? env.TASKIX_JEV_ENABLED : undefined))) return;
     const value = name => text(env[`TASKIX_DECISION_${name}`]) ?? (legacy ? text(env[`TASKIX_JEV_${name}`]) : undefined);
     const url = value("URL") ?? (officialOpenAI ? "https://api.openai.com/v1/decisions" : undefined);
-    const key = value("API_KEY") ?? (officialOpenAI ? text(env.OPENAI_API_KEY) : undefined);
+    const credential = prefix => {
+        const direct = text(env[`${prefix}API_KEY`]);
+        if (direct) return direct;
+        const entry = env[`${prefix}API_KEY_PASS`];
+        return entry === undefined ? undefined : passKey(entry, env);
+    };
+    const key = credential("TASKIX_DECISION_")
+        ?? (legacy ? credential("TASKIX_JEV_") : undefined)
+        ?? (officialOpenAI ? credential("OPENAI_") : undefined);
     const model = value("MODEL") ?? (legacy ? "jev-latest" : officialOpenAI ? "gpt-6-luna" : undefined);
     if (!url || !key || !model || /[^\x20-\x7e]/.test(key)) return;
     try {

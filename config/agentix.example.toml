@@ -16,7 +16,7 @@
 background_turns = true
 
 [logging]
-## Used unless RUST_LOG is set.
+## Tracing filter for stderr and file logs; environment variables do not override it.
 level = "info"
 
 [logging.file]
@@ -42,12 +42,19 @@ proxy_endpoint = "unix://~/.codex/app-server-control/app-server-control.sock"
 endpoint = "unix://~/.codex/app-server-control/app-server-control-upstream.sock"
 
 ## For a non-loopback ws:// proxy, authentication is required:
+## Credential files remain supported without pass or pinentry. Use *_file when
+## pass is unavailable or password entry is not configured; omit the *_pass field.
 # [agent.codex.proxy]
 # ws_auth = "capability-token"
 # ws_token_file = "/absolute/path/codex-proxy.token"
+## Or use ws_token_pass after configuring pinentry (see docs/pass-secrets.md):
+# ws_token_pass = "agentix/codex/token"
+## Select exactly one token source.
 ## Or ws_token_sha256 = "<64 hex digits>" instead of ws_token_file.
 ## For ws_auth = "signed-bearer-token":
 # ws_shared_secret_file = "/absolute/path/codex-proxy.secret"
+## Alternatively, use pass with working pinentry (at least 32 secret bytes):
+# ws_shared_secret_pass = "agentix/codex/shared-secret"
 # ws_issuer = "agentix"
 # ws_audience = "codex"
 # ws_max_clock_skew_seconds = 30
@@ -80,12 +87,23 @@ endpoint = "unix://~/.codex/app-server-control/app-server-control-upstream.sock"
 [storage]
 path = "~/.local/share/agentix/state.sqlite3"
 
+## Plaintext token/secret values remain fully supported; pass is optional.
+## If pass is not installed or pinentry/password entry is not configured, use
+## token, app_secret, bot_token and app_token with actual plaintext credentials.
+## In plaintext mode, omit the corresponding *_pass fields; pass is never invoked.
+## Do not combine a nonblank plaintext credential with its *_pass alternative.
+## A pass error does not automatically fall back to plaintext.
+## Keep files containing plaintext credentials out of Git and restrict permissions.
 [channel]
 kind = "telegram"
 
 [channel.telegram]
-## Fill in the actual bot token, not an environment variable name.
+## Plaintext mode (no pass/pinentry required): fill in the actual bot token,
+## not an environment variable name.
+## See docs/pass-secrets.md for pass/pinentry setup and direct-secret alternatives.
 token = ""
+## Alternatively, omit/empty token and configure pinentry before using pass:
+# token_pass = "agentix/telegram/token"
 ## Leave this empty or omit it on first setup. Run `agentix client claim` locally,
 ## then send the printed `/claim <code>` in a private chat to fill it automatically.
 owner_user_ids = []
@@ -93,7 +111,10 @@ owner_user_ids = []
 ## To use Feishu, set `channel.kind = "feishu"` above and configure this section.
 # [channel.feishu]
 # app_id = ""
+## Plaintext mode (no pass/pinentry required): fill in the actual app secret.
 # app_secret = ""
+## Alternatively, omit/empty app_secret; requires working pinentry:
+# app_secret_pass = "agentix/feishu/app-secret"
 ## Leave this empty or omit it on first setup. Run `agentix client claim` locally,
 ## then send the printed `/claim <code>` in a private chat to fill it automatically.
 # owner_open_ids = []
@@ -127,8 +148,12 @@ owner_user_ids = []
 # command_prefix = "" # e.g. "ax-"
 # command_suffix = "" # e.g. "-dev"
 # app_id = "A0123456789" # Enables startup slash-command sync through logged-in Slack CLI.
+## Plaintext mode (no pass/pinentry required): fill in the actual tokens.
 # bot_token = "xoxb-..."
 # app_token = "xapp-..."
+## Alternatively, omit/empty the corresponding tokens; requires working pinentry:
+# bot_token_pass = "agentix/slack/bot-token"
+# app_token_pass = "agentix/slack/app-token"
 ## Run `agentix client claim`, then send `/agentix /claim <code>` in the bot DM.
 # owner_user_ids = []
 
@@ -143,45 +168,5 @@ show_tool_calls = false
 enabled = false
 listen = "127.0.0.1:9464"
 
-## Shell exports for Agentix and its agentix-bridge host plugins.
-## Apply in fish with `agentix env | source` (set -Ux), or in bash/zsh with
-## eval "$(agentix env)". Uncomment only the settings you need.
-## Values are literal: replace /absolute/path placeholders; ~ and $HOME are not
-## expanded by env. Normal config loading does not apply this table.
-## See docs/environment-export.md. Protect this file when storing secrets.
-[environment]
-## macOS/Linux login shell for the service and spawned agent processes.
-## Default: the account login shell. Must be an absolute executable path.
-# AGENTIX_LOGIN_SHELL = "/opt/homebrew/bin/fish"
-
-## Bridge endpoint; keep it consistent with [server].endpoint.
-## Default: unix://<home>/.local/share/agentix/control.sock.
-# AGENTIX_CONTROL_ENDPOINT = "unix:///absolute/path/to/agentix/control.sock"
-## Claude delivery: auto (default), multiplexer, or channel.
-# AGENTIX_CLAUDE_DELIVERY = "auto"
-## Bridge mailbox/state roots; defaults are <home>/.local/share/agentix/<backend>.
-## Keep these consistent with the corresponding agent backend configuration.
-# AGENTIX_CLAUDE_DATA_DIR = "/absolute/path/to/agentix/claude"
-# AGENTIX_OPENCODE_STATE_DIR = "/absolute/path/to/agentix/opencode"
-# AGENTIX_ANTIGRAVITY_DATA_DIR = "/absolute/path/to/agentix/antigravity"
-## Native Antigravity session root for a new session before its first input.
-## Default: <home>/.gemini/antigravity-cli/brain.
-# AGENTIX_ANTIGRAVITY_SESSION_DIR = "/absolute/path/to/antigravity-cli/brain"
-## Codex home used for endpoint/token resolution; default: <home>/.codex.
-# CODEX_HOME = "/absolute/path/to/.codex"
-
-## Shared networking and diagnostics (optional).
-## RUST_LOG overrides [logging].level for the resident service.
-# RUST_LOG = "info"
-## HTTP client proxy variables; uppercase HTTP_PROXY/HTTPS_PROXY and lowercase
-## no_proxy are also accepted. Prefer one spelling of each variable.
-# http_proxy = "http://127.0.0.1:7890"
-# https_proxy = "http://127.0.0.1:7890"
-# NO_PROXY = "localhost,127.0.0.1,::1"
-
-## Host-owned context: inherit HOME, PATH, SHELL and (on Windows) PATHEXT.
-## Do not persist per-pane TMUX, TMUX_PANE, REX_SESSION, REX_BLOCK or REX_SERVER.
-## AGENTIX_SERVICE_ENVIRONMENT_PID is an internal bootstrap marker; do not set it.
-## Channel credentials belong in [channel.<kind>], not environment variables.
-## Taskix host settings (TASKIX_LANG, TASKIX_*, provider keys) are documented
-## in taskix.example.toml; apply both env commands when using both plugins.
+## Local environment defaults are in agentix.env beside this file.
+## See config/agentix.env.example and docs/environment-export.md.

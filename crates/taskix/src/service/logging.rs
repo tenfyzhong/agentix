@@ -101,9 +101,8 @@ const fn default_max_log_files() -> usize {
 }
 
 pub fn init(config: &LoggingConfig) -> Result<Option<WorkerGuard>> {
-    let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new(&config.level))
-        .context("logging.level is not a valid tracing filter")?;
+    let filter =
+        EnvFilter::try_new(&config.level).context("logging.level is not a valid tracing filter")?;
     let stderr = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_timer(local_time_timer());

@@ -1,4 +1,6 @@
+import { taskEnvironment } from "./environment.mjs";
 import { execFile } from "node:child_process";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 
 const executeFile = promisify(execFile);
@@ -37,6 +39,7 @@ export async function runTaskix(args, options = {}) {
             buildArgs(args, options),
             {
                 cwd: options.cwd,
+                env: taskEnvironment(process.env, configArgument(args, options.cwd)),
                 signal: options.signal,
                 timeout: 30000,
                 maxBuffer: 4 * 1024 * 1024,
@@ -69,4 +72,13 @@ export async function runTaskix(args, options = {}) {
         failure.signal = error.signal;
         throw failure;
     }
+}
+
+function configArgument(args, cwd = process.cwd()) {
+    const resolved = value => value && !value.startsWith("~/") ? resolve(cwd, value) : value;
+    for (let index = 0; index < args.length; index++) {
+        if (args[index] === '--config') return resolved(args[index + 1]);
+        if (args[index].startsWith('--config=')) return resolved(args[index].slice(9));
+    }
+    return resolved(process.env.TASKIX_CONFIG);
 }

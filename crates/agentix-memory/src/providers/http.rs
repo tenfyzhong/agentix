@@ -46,20 +46,35 @@ impl HttpProvider {
             (1..=64).contains(&config.max_in_flight),
             "invalid: provider concurrency"
         );
-        let authorization = if let Some(name) = config.api_key_env {
-            let key = std::env::var(&name).with_context(|| {
-                format!("provider key environment variable {name} is unavailable")
-            })?;
+        config.validate_credentials()?;
+        let key = if let Some(entry) = &config.api_key_pass {
+            Some(super::pass::key(entry)?)
+        } else if let Some(name) = config.api_key_env {
+            let key = match std::env::var(&name) {
+                Ok(value) => value,
+                Err(std::env::VarError::NotPresent) => {
+                    let entry = std::env::var(format!("{name}_PASS")).with_context(|| {
+                        format!("provider key environment variable {name} is unavailable")
+                    })?;
+                    super::pass::key(&entry)?
+                }
+                Err(_) => anyhow::bail!("provider key environment variable is invalid"),
+            };
             ensure!(
                 !key.trim().is_empty(),
                 "provider key environment variable is empty"
             );
-            let mut header = reqwest::header::HeaderValue::from_str(&format!("Bearer {key}"))?;
-            header.set_sensitive(true);
-            Some(header)
+            Some(key)
         } else {
             None
         };
+        let authorization = key
+            .map(|key| -> Result<_> {
+                let mut header = reqwest::header::HeaderValue::from_str(&format!("Bearer {key}"))?;
+                header.set_sensitive(true);
+                Ok(header)
+            })
+            .transpose()?;
         Ok(Self {
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -217,6 +232,7 @@ mod tests {
                     api: crate::ModelApi::Responses,
                     base_url: "http://127.0.0.1:1".into(),
                     api_key_env: None,
+                    api_key_pass: None,
                     protocol: ProviderProtocol::Openai,
                     max_in_flight: 2,
                 },
@@ -257,6 +273,7 @@ mod tests {
             api: crate::ModelApi::Responses,
             base_url: "http://127.0.0.1:1".into(),
             api_key_env: None,
+            api_key_pass: None,
             protocol: ProviderProtocol::Openai,
             max_in_flight: capacity,
         })

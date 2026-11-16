@@ -18,12 +18,18 @@ pub struct ProxyOptions {
     /// Absolute path to the capability-token file.
     #[arg(long)]
     pub ws_token_file: Option<PathBuf>,
+    /// Pass entry containing the credential; requires working pinentry.
+    #[arg(long)]
+    pub ws_token_pass: Option<String>,
     /// SHA-256 verifier for the capability token (64 hex digits).
     #[arg(long)]
     pub ws_token_sha256: Option<String>,
     /// Absolute path to the HS256 JWT shared-secret file (at least 32 bytes).
     #[arg(long)]
     pub ws_shared_secret_file: Option<PathBuf>,
+    /// Pass entry containing the credential; requires working pinentry.
+    #[arg(long)]
+    pub ws_shared_secret_pass: Option<String>,
     #[arg(long)]
     pub ws_issuer: Option<String>,
     #[arg(long)]
@@ -36,6 +42,13 @@ pub struct ProxyOptions {
 impl ProxyOptions {
     /// Explicit CLI fields override the corresponding configuration fields.
     pub fn overlay(&mut self, other: &Self) {
+        if other.ws_token_pass.is_some() {
+            self.ws_token_pass.clone_from(&other.ws_token_pass);
+        }
+        if other.ws_shared_secret_pass.is_some() {
+            self.ws_shared_secret_pass
+                .clone_from(&other.ws_shared_secret_pass);
+        }
         if other.ws_auth.is_some() {
             self.ws_auth = other.ws_auth;
         }

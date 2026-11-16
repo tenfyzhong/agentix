@@ -20,6 +20,7 @@ fn connection_with_api(url: &str, protocol: ProviderProtocol, api: ModelApi) -> 
             base_url: url.into(),
             protocol,
             api_key_env: None,
+            api_key_pass: None,
             max_in_flight: 4,
         })
         .unwrap(),

@@ -1,3 +1,4 @@
+import { agentEnvironment } from "../environment.mjs";
 import { RexTerminalAdapter } from './rex.mjs';
 import { execFile } from 'node:child_process';
 import { failure } from '../protocol/errors.mjs';
@@ -13,7 +14,7 @@ function run(command, args, input, signal) {
 // Both drivers speak the same terminal command vocabulary. Keep server selection
 // and read-only process verification here, outside Claude's input workflow.
 export class TerminalAdapter {
-    constructor(kind, { env = process.env, pid = process.ppid, run: execute = run, command } = {}) {
+    constructor(kind, { env = agentEnvironment(), pid = process.ppid, run: execute = run, command } = {}) {
         if (kind === 'rex') return new RexTerminalAdapter({ env, pid, run: execute, command });
         if (!['rmux', 'tmux'].includes(kind)) throw failure('invalid_request', 'Invalid multiplexer configuration');
         this.kind = kind;
@@ -66,4 +67,4 @@ export async function detectTerminal(options, signal) {
     return matches[0].adapter;
 }
 
-export function hasTerminalContext(env = process.env) { return Boolean(env.TMUX_PANE || (env.REX_SESSION && env.REX_BLOCK)); }
+export function hasTerminalContext(env = agentEnvironment()) { return Boolean(env.TMUX_PANE || (env.REX_SESSION && env.REX_BLOCK)); }

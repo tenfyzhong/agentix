@@ -37,6 +37,7 @@ dependencies = [
  "agentix-multiplexer",
  "agentix-rex",
  "agentix-rmux",
+ "agentix-secrets",
  "agentix-slack",
  "agentix-task",
  "agentix-telegram",
@@ -93,6 +94,7 @@ dependencies = [
  "agentix-domain",
  "agentix-metrics",
  "agentix-multiplexer",
+ "agentix-secrets",
  "anyhow",
  "async-trait",
  "clap",
@@ -174,6 +176,7 @@ name = "agentix-memory"
 version = "0.0.0-dev"
 dependencies = [
  "agentix-metrics",
+ "agentix-secrets",
  "anyhow",
  "async-trait",
  "dirs",
@@ -257,6 +260,15 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "agentix-secrets"
+version = "0.0.0-dev"
+dependencies = [
+ "anyhow",
+ "rustix",
+ "tempfile",
 ]
 
 [[package]]

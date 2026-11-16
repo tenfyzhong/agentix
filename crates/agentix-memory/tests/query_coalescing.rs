@@ -24,6 +24,7 @@ async fn identical_queries_share_work_and_short_waiter_does_not_cancel_long_wait
             api: agentix_memory::ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
+            api_key_pass: None,
             protocol: ProviderProtocol::Openai,
             max_in_flight: 4,
         })
@@ -77,6 +78,7 @@ async fn failed_queries_retry_and_project_generation_keys_are_isolated() {
                     api: agentix_memory::ModelApi::Responses,
                     base_url: server.url.clone(),
                     api_key_env: None,
+                    api_key_pass: None,
                     protocol: ProviderProtocol::Openai,
                     max_in_flight: 4,
                 })
@@ -138,6 +140,7 @@ async fn concurrent_query_latency_and_provider_request_count() {
                     api: agentix_memory::ModelApi::Responses,
                     base_url: server.url.clone(),
                     api_key_env: None,
+                    api_key_pass: None,
                     protocol: ProviderProtocol::Openai,
                     max_in_flight: 4,
                 })

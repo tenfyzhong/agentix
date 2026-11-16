@@ -26,6 +26,7 @@ async fn provider_metrics_count_real_usage_without_inventing_missing_tokens() {
             api: ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
+            api_key_pass: None,
             max_in_flight: 2,
         })
         .unwrap(),

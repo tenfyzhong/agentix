@@ -56,7 +56,7 @@ Edit `~/.config/agentix/config.toml`:
 
 1. Enable the backend you use: `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, `[agent.claude]`, `[agent.opencode]`, or `[agent.antigravity]`. The example enables Codex; each table selects its backend without a `kind` field.
 2. Set `[channel].kind` to `telegram`, `feishu`, or `slack`.
-3. Fill in the matching channel table: Telegram `token`, Feishu `app_id` and `app_secret`, or Slack `bot_token` and `app_token`.
+3. Fill in the matching channel table: Telegram `token`, Feishu `app_id` and `app_secret`, or Slack `bot_token` and `app_token`. Each secret also accepts a direct pass entry via its `_pass` field; configure pinentry first ([setup](docs/pass-secrets.md)).
 4. Leave the selected channel's owner list empty for first-time claiming.
 
 Pi/OMP need the [live-session bridge](https://github.com/tenfyzhong/agentix/wiki/Pi-and-OMP) loaded in the original terminal. Claude Code needs the [bridge plugin and terminal setup](https://github.com/tenfyzhong/agentix/wiki/Claude-Code). OpenCode 2.0.32+ uses the [OpenCode TUI and server plugins](https://github.com/tenfyzhong/agentix/wiki/OpenCode). Antigravity agy 1.5.5 uses the [native plugins and terminal bridge](https://github.com/tenfyzhong/agentix/wiki/Antigravity). For Windows configuration, bot creation, and other settings, see [Getting started](https://github.com/tenfyzhong/agentix/wiki/Getting-Started) and [configuration and operations](https://github.com/tenfyzhong/agentix/wiki/Configuration-and-Operations).
@@ -97,10 +97,11 @@ For Pi, OMP, Claude Code, OpenCode, or Antigravity, start the configured host wi
 
 Mention the bot in group chats. If another Codex process owns the session's writer, the attachment is read-only; send prompts through the original process.
 
-Use `agentix env` and `taskix env` to generate shell exports from `[environment]`
-in their configuration files. In fish, run `agentix env | source` and
-`taskix env | source`; generated assignments use `set -Ux`. See
-[Environment export](docs/environment-export.md) for other shells and examples.
+Agentix and Taskix automatically load `agentix.env` and `taskix.env` beside their
+TOML configurations. Plugins cache these defaults per process; global shell
+exports are optional. `agentix env` and `taskix env` still generate shell scripts
+from the same files, with `set -Ux` for fish. See
+[Local environment files](docs/environment-export.md) for setup and migration.
 
 ## Detailed documentation
 

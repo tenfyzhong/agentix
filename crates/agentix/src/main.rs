@@ -161,6 +161,12 @@ enum ClientCommand {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if !matches!(
+        cli.command,
+        CliCommand::Env { .. } | CliCommand::Completions { .. }
+    ) {
+        agentix_task::environment::bootstrap(&cli.config, "agentix")?;
+    }
     if let CliCommand::LaunchAntigravity {
         command,
         state_dir,
@@ -209,7 +215,10 @@ async fn run(cli: Cli) -> Result<()> {
     if let CliCommand::Env { shell } = &command {
         print!(
             "{}",
-            agentix_task::environment::export(&config_path, shell.as_deref())?
+            agentix_task::environment::export(
+                &agentix_task::environment::path(&config_path, "agentix")?,
+                shell.as_deref()
+            )?
         );
         return Ok(());
     }
@@ -249,9 +258,8 @@ async fn run(cli: Cli) -> Result<()> {
 }
 
 fn init_logging(config: &LoggingConfig) -> Result<Option<WorkerGuard>> {
-    let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new(&config.level))
-        .context("logging.level is not a valid tracing filter")?;
+    let filter =
+        EnvFilter::try_new(&config.level).context("logging.level is not a valid tracing filter")?;
     let stderr = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_timer(local_time_timer());
@@ -1288,8 +1296,8 @@ fn build_channels(
                     .connect_timeout(std::time::Duration::from_secs(10))
                     .build()?,
                 "https://slack.com/api/".parse()?,
-                slack.bot_token.clone(),
-                slack.app_token.clone(),
+                slack.resolve_bot_token()?,
+                slack.resolve_app_token()?,
                 slack.owner_user_ids.clone(),
             )?
             .with_command_affixes(affixes.clone());
@@ -1359,7 +1367,7 @@ fn build_channels(
                 .expect("configuration was validated");
             let mut adapter = FeishuAdapter::new(
                 feishu.app_id.clone(),
-                feishu.app_secret.clone(),
+                feishu.resolve_app_secret()?,
                 feishu.owner_open_ids.clone(),
             )?;
             if feishu.owner_open_ids.is_empty() {
@@ -1377,7 +1385,10 @@ fn build_channels(
 
 fn build_telegram_bot(telegram: &TelegramConfig) -> Result<teloxide::Bot> {
     let client = teloxide::net::default_reqwest_settings().build()?;
-    Ok(teloxide::Bot::with_client(telegram.token.clone(), client))
+    Ok(teloxide::Bot::with_client(
+        telegram.resolve_token()?,
+        client,
+    ))
 }
 
 async fn doctor_pi(

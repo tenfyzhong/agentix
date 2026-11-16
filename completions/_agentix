@@ -59,8 +59,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--ws-auth=[Authentication for the Codex proxy WebSocket listener]:WS_AUTH:(capability-token signed-bearer-token)' \
 '--ws-token-file=[Absolute path to the capability-token file]:WS_TOKEN_FILE:_files' \
+'--ws-token-pass=[Pass entry containing the credential; requires working pinentry]:WS_TOKEN_PASS:_default' \
 '--ws-token-sha256=[SHA-256 verifier for the capability token (64 hex digits)]:WS_TOKEN_SHA256:_default' \
 '--ws-shared-secret-file=[Absolute path to the HS256 JWT shared-secret file (at least 32 bytes)]:WS_SHARED_SECRET_FILE:_files' \
+'--ws-shared-secret-pass=[Pass entry containing the credential; requires working pinentry]:WS_SHARED_SECRET_PASS:_default' \
 '--ws-issuer=[]:WS_ISSUER:_default' \
 '--ws-audience=[]:WS_AUDIENCE:_default' \
 '--ws-max-clock-skew-seconds=[JWT validation clock tolerance; defaults to 30 seconds]:WS_MAX_CLOCK_SKEW_SECONDS:_default' \

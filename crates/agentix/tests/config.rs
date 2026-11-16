@@ -969,3 +969,62 @@ fn environment_export_table_is_accepted_without_applying_it() {
     assert_eq!(config.selected_agents().len(), 1);
     assert!(std::env::var_os("AGENTIX_ENV_TEST").is_none());
 }
+
+#[test]
+fn channel_pass_references_validate_without_decrypting() {
+    for (kind, field, extra) in [
+        ("telegram", "token", ""),
+        ("feishu", "app_secret", "app_id='app'\n"),
+        ("slack", "bot_token", "app_token_pass='agentix/app'\n"),
+        ("slack", "app_token", "bot_token_pass='agentix/bot'\n"),
+    ] {
+        let table = format!("[channel.{kind}]\n{extra}{field}_pass='agentix/key'\n");
+        Config::from_toml(&credential_config(kind, &table)).unwrap();
+        let error = Config::from_toml(&credential_config(
+            kind,
+            &format!("{table}{field}='secret'"),
+        ))
+        .unwrap_err();
+        assert!(error.to_string().contains("mutually exclusive"));
+        for invalid in ["", "../key", "-key"] {
+            assert!(
+                Config::from_toml(&credential_config(
+                    kind,
+                    &table.replace("agentix/key", invalid)
+                ))
+                .is_err()
+            );
+        }
+    }
+}
+
+#[test]
+fn channel_credentials_are_redacted_in_debug() {
+    for (kind, fields) in [
+        ("telegram", "token='sensitive-value'"),
+        ("feishu", "app_id='app'\napp_secret='sensitive-value'"),
+        (
+            "slack",
+            "bot_token='sensitive-value'\napp_token='sensitive-value'",
+        ),
+    ] {
+        let config = Config::from_toml(&credential_config(
+            kind,
+            &format!("[channel.{kind}]\n{fields}"),
+        ))
+        .unwrap();
+        assert!(!format!("{config:?}").contains("sensitive-value"));
+    }
+}
+
+#[test]
+fn unselected_pass_channels_do_not_require_valid_credentials() {
+    let config = Config::from_toml(&credential_config(
+        "telegram",
+        "[channel.telegram]\ntoken='direct'\n[channel.feishu]\napp_secret_pass='../unused'\n[channel.slack]\nbot_token_pass=''\n",
+    )).unwrap();
+    assert_eq!(
+        config.channel.telegram.unwrap().resolve_token().unwrap(),
+        "direct"
+    );
+}

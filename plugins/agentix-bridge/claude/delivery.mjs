@@ -1,3 +1,4 @@
+import { agentEnvironment } from "../environment.mjs";
 import { TerminalAdapter, detectTerminal } from './terminal.mjs';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -22,7 +23,7 @@ export class TerminalDelivery {
     constructor({ mode = 'auto', delay = sleep, ...options } = {}) {
         this.mode = deliveryMode(mode);
         if (this.mode === 'channel') throw failure('invalid_request', 'Use channel delivery for channel mode');
-        this.options = { ...options, env: { ...(options.env ?? process.env) }, pid: options.pid ?? process.ppid };
+        this.options = { ...options, env: { ...(options.env ?? agentEnvironment()) }, pid: options.pid ?? process.ppid };
         this.delay = delay;
     }
     configure(result) {

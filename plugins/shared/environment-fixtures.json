@@ -1,0 +1,55 @@
+{
+  "valid": [
+    {
+      "source": "# comment\r\nA=one=two\nB=\"$HOME $(secret)\"\nC='a\\b'\nEMPTY=\n",
+      "values": {
+        "A": "one=two",
+        "B": "$HOME $(secret)",
+        "C": "a\\b",
+        "EMPTY": ""
+      }
+    },
+    {
+      "source": " A = \u4e2d\u6587 # literal\nB=\" padded \"\n",
+      "values": {
+        "A": "\u4e2d\u6587",
+        "B": " padded "
+      }
+    },
+    {
+      "source": "A=first\nA=last\nexport B=two # comment\nC=\"a#b\"\n",
+      "values": {
+        "A": "last",
+        "B": "two",
+        "C": "a#b"
+      }
+    },
+    {
+      "source": "A=\"first\nsecond\"\nB=\"one\\ntwo\"\nC='one\\ntwo'\nD=`literal # text`\n",
+      "values": {
+        "A": "first\nsecond",
+        "B": "one\ntwo",
+        "C": "one\\ntwo",
+        "D": "literal # text"
+      }
+    },
+    {
+      "source": "IGNORED\nA=\"unclosed\nB=ok\n",
+      "values": {
+        "A": "\"unclosed",
+        "B": "ok"
+      }
+    },
+    {
+      "source": "EMPTY=\nNEXT=value\n",
+      "values": {
+        "EMPTY": "",
+        "NEXT": "value"
+      }
+    }
+  ],
+  "invalid": [
+    "BAD-KEY=secret",
+    "A=secret\u0000"
+  ]
+}

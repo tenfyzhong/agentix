@@ -810,7 +810,7 @@ _agentix() {
             return 0
             ;;
         agentix__subcmd__serve)
-            opts="-h --ws-auth --ws-token-file --ws-token-sha256 --ws-shared-secret-file --ws-issuer --ws-audience --ws-max-clock-skew-seconds --help"
+            opts="-h --ws-auth --ws-token-file --ws-token-pass --ws-token-sha256 --ws-shared-secret-file --ws-shared-secret-pass --ws-issuer --ws-audience --ws-max-clock-skew-seconds --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -824,11 +824,19 @@ _agentix() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --ws-token-pass)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --ws-token-sha256)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 --ws-shared-secret-file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --ws-shared-secret-pass)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

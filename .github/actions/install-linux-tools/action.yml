@@ -1,5 +1,5 @@
 name: Install Linux tools
-description: Install Ubuntu packages from the kernel.org mirror
+description: Install Ubuntu packages with an official mirror fallback
 inputs:
   packages:
     description: Space-separated Ubuntu package names
@@ -34,5 +34,9 @@ runs:
           options+=(-o "Acquire::https::Proxy=$https_proxy_url")
         fi
         read -r -a packages <<< "$PACKAGES"
-        sudo apt-get "${options[@]}" update
+        if ! sudo apt-get "${options[@]}" update; then
+          echo "::warning::Primary Ubuntu mirror unavailable; retrying the official archive"
+          sed -i 's|https://mirrors.edge.kernel.org/ubuntu|https://archive.ubuntu.com/ubuntu|' "$sources"
+          sudo apt-get "${options[@]}" update
+        fi
         sudo apt-get "${options[@]}" install --yes "${packages[@]}"
