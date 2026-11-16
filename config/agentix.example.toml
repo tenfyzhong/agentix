@@ -16,7 +16,7 @@
 background_turns = true
 
 [logging]
-## Used unless RUST_LOG is set.
+## Tracing filter for stderr and file logs; environment variables do not override it.
 level = "info"
 
 [logging.file]

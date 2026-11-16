@@ -1016,8 +1016,8 @@ fn service_file_logging_validates_configuration_before_starting() {
 }
 
 #[test]
-fn service_file_logging_honors_rotation_disabled_and_environment_filter() {
-    for (rotation, enabled, filter) in [
+fn service_file_logging_honors_rotation_disabled_and_configured_filter_despite_rust_log() {
+    for (rotation, enabled, level) in [
         ("daily", true, "error"),
         ("hourly", true, "error"),
         ("minutely", true, "error"),
@@ -1028,17 +1028,17 @@ fn service_file_logging_honors_rotation_disabled_and_environment_filter() {
         let path = cli.dir.path().join("config.toml");
         let base = std::fs::read_to_string(&path).unwrap();
         let logs = cli.dir.path().join("logs");
-        std::fs::write(&path, format!("{base}\n[logging]\nlevel='off'\n[logging.file]\nenabled={enabled}\npath='{}'\nrotation='{rotation}'\n", logs.join("taskix.log").display())).unwrap();
+        std::fs::write(&path, format!("{base}\n[logging]\nlevel='{level}'\n[logging.file]\nenabled={enabled}\npath='{}'\nrotation='{rotation}'\n", logs.join("taskix.log").display())).unwrap();
         std::fs::remove_file(cli.dir.path().join("state.sqlite3")).unwrap();
         let output = cli
             .command(&["serve"])
-            .env("RUST_LOG", filter)
+            .env("RUST_LOG", if level == "off" { "error" } else { "off" })
             .output()
             .unwrap();
         assert!(!output.status.success());
         assert_eq!(
             String::from_utf8_lossy(&output.stderr).contains("taskix service failed"),
-            filter == "error"
+            level == "error"
         );
         if !enabled {
             assert!(!logs.exists());
@@ -1056,7 +1056,7 @@ fn service_file_logging_honors_rotation_disabled_and_environment_filter() {
             assert!(name.starts_with("taskix.log."), "{name}");
         }
         let text = std::fs::read_to_string(files[0].path()).unwrap();
-        assert_eq!(text.contains("taskix service failed"), filter == "error");
+        assert_eq!(text.contains("taskix service failed"), level == "error");
     }
 }
 

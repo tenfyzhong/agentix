@@ -557,8 +557,8 @@ exported credentials, proxy settings, or memory enablement.
 `[logging.file]` sections follow Agentix's configuration: `level = "info"`,
 `enabled = false`, `path = "~/.local/state/taskix/taskix.log"`,
 `rotation = "daily"`, and `max_files = 7`. Set `logging.file.enabled = true`
-to also write files; parent directories are created automatically. `RUST_LOG`
-overrides the configured filter. Normal CLI commands do not initialize logging.
+to also write files; parent directories are created automatically. `[logging].level`
+always supplies the filter; `RUST_LOG` is ignored. Normal CLI commands do not initialize logging.
 
 Rotation supports `never`, `minutely`, `hourly`, and `daily`. Rotated filenames
 append a UTC timestamp to the configured filename; log entries use local RFC 3339

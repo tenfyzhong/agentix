@@ -28,7 +28,6 @@ const pathKeys = new Set([
     'TASKIX_ANTIGRAVITY_DATA_DIR',
     'TASKIX_DECISION_METRICS_DB',
     'TASKIX_JEV_METRICS_DB',
-    'XDG_STATE_HOME',
 ]);
 function expandPaths(values, home) {
     return Object.fromEntries(Object.entries(values).map(([key, value]) => [
@@ -47,6 +46,10 @@ function applicationEnvironment(app, inherited, configPath) {
         let values;
         try {
             values = parseEnvironment(readFileSync(path, 'utf8'));
+            // This global setting belongs to the host, not an application file.
+            delete values.XDG_STATE_HOME;
+            // Application logging is configured exclusively through config.toml.
+            delete values.RUST_LOG;
         } catch (error) {
             if (error.code !== 'ENOENT') throw error;
             values = Object.create(null);

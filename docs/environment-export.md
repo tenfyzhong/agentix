@@ -74,7 +74,7 @@ Supported keys are `AGENTIX_CONFIG`, `AGENTIX_LOGIN_SHELL`,
 `AGENTIX_ANTIGRAVITY_DATA_DIR`, `AGENTIX_ANTIGRAVITY_SESSION_DIR`, `CODEX_HOME`,
 `TASKIX_CONFIG`, `TASKIX_BIN` (legacy), `TASKIX_LOGIN_SHELL`,
 `TASKIX_ANTIGRAVITY_DATA_DIR`, `TASKIX_DECISION_METRICS_DB`,
-`TASKIX_JEV_METRICS_DB` (legacy), and `XDG_STATE_HOME`.
+and `TASKIX_JEV_METRICS_DB` (legacy).
 Config selectors still need to be set outside the file for discovery.
 `TASKIX_BIN` expansion does not restore the legacy executable override; plugins
 resolve the Taskix executable through `PATH`.
@@ -87,6 +87,15 @@ TASKIX_DECISION_METRICS_DB=~/.local/state/taskix/decision-metrics.sqlite
 Other values, including credentials, URLs and unknown keys, remain literal even
 when they begin with `~/`. For example, `OPENAI_API_KEY=~/secret` is a literal
 key, not a reference to a file. Path expansion does not execute shell code.
+
+`XDG_STATE_HOME` is a global host setting. Both application env files ignore
+this key during loading and shell export; an inherited global value (including
+an empty value) remains unchanged. Configure it in the host environment, not in
+`agentix.env` or `taskix.env`.
+
+Logging is configured only through `[logging].level` in each application's
+`config.toml`. `RUST_LOG` in application env files is ignored during loading and
+export. An inherited `RUST_LOG` does not override either application's logger.
 
 ## Migration
 

@@ -166,3 +166,10 @@ fn env_expands_home_paths_and_keeps_credentials_literal() {
     let expected = format!("export CODEX_HOME='{}';\nexport OPENAI_API_KEY='~/literal';\n", home.replace('\'', "'\\''"));
     assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
 }
+
+#[test]
+fn env_does_not_export_global_state_home() {
+    let output = run("XDG_STATE_HOME=~/private-state\nRUST_LOG=trace\nOTHER=retained\n", "fish");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "set -Ux OTHER 'retained';\n");
+}

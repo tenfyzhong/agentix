@@ -111,3 +111,22 @@ for (const app of ['taskix', 'agentix']) {
         assert.equal(inherited.TASKIX_BIN, undefined);
     });
 }
+
+for (const app of ['taskix', 'agentix']) {
+    test(`${app} ignores file XDG_STATE_HOME and keeps the global setting`, async t => {
+        const dir = mkdtempSync(join(tmpdir(), 'env-global-state-'));
+        t.after(() => rmSync(dir, {recursive:true, force:true}));
+        const { taskEnvironment, agentEnvironment } = await import('../environment.mjs');
+        const load = app === 'taskix' ? taskEnvironment : agentEnvironment;
+        const config = join(dir, 'config.toml');
+        writeFileSync(join(dir, `${app}.env`), 'XDG_STATE_HOME=~/private-state\nRUST_LOG=trace\nOTHER=retained\n');
+        assert.equal(load({}, config).XDG_STATE_HOME, undefined);
+        assert.equal(load({}, config).RUST_LOG, undefined);
+        for (const value of ['', join(dir, 'global-state')]) {
+            const inherited = {XDG_STATE_HOME:value};
+            assert.equal(load(inherited, config).XDG_STATE_HOME, value);
+            assert.deepEqual(inherited, {XDG_STATE_HOME:value});
+        }
+        assert.equal(load({}, config).OTHER, 'retained');
+    });
+}

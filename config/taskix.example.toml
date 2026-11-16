@@ -10,7 +10,7 @@ directory = "Agent Tasks"
 ## Relative to documents.root; resolved to an absolute path on archive/sync.
 archive_directory = "Archived Projects"
 
-## Service logging uses the same options as Agentix. RUST_LOG overrides level.
+## Service logging uses the same options as Agentix and the configured level.
 ## Ordinary CLI commands do not initialize logging. Changes require a restart.
 [logging]
 level = "info"

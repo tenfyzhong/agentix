@@ -143,7 +143,7 @@ pub fn path(config: &Path, app: &str) -> Result<std::path::PathBuf> {
 }
 
 // Keep the path allowlist aligned with plugins/shared/environment.mjs.
-fn expand_paths(mut values: BTreeMap<String, String>) -> Result<BTreeMap<String, String>> {
+fn file_defaults(mut values: BTreeMap<String, String>) -> Result<BTreeMap<String, String>> {
     const PATH_KEYS: &[&str] = &[
         "AGENTIX_CONFIG",
         "AGENTIX_LOGIN_SHELL",
@@ -158,8 +158,11 @@ fn expand_paths(mut values: BTreeMap<String, String>) -> Result<BTreeMap<String,
         "TASKIX_ANTIGRAVITY_DATA_DIR",
         "TASKIX_DECISION_METRICS_DB",
         "TASKIX_JEV_METRICS_DB",
-        "XDG_STATE_HOME",
     ];
+    // This global setting belongs to the host, never an application env file.
+    values.remove("XDG_STATE_HOME");
+    // Application logging is configured exclusively through config.toml.
+    values.remove("RUST_LOG");
     for (key, value) in &mut values {
         if PATH_KEYS.contains(&key.as_str()) && (value == "~" || value.starts_with("~/")) {
             let home = std::env::var_os("HOME")
@@ -182,7 +185,7 @@ fn expand_paths(mut values: BTreeMap<String, String>) -> Result<BTreeMap<String,
 
 pub fn load(path: &Path) -> Result<BTreeMap<String, String>> {
     match std::fs::read_to_string(path) {
-        Ok(source) => expand_paths(parse(&source)?),
+        Ok(source) => file_defaults(parse(&source)?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
         Err(error) => Err(error).context("read environment configuration"),
     }
@@ -192,7 +195,7 @@ pub fn load(path: &Path) -> Result<BTreeMap<String, String>> {
 pub fn export(path: &Path, shell: Option<&str>) -> Result<String> {
     let path = crate::expand_home(path)?;
     let source = std::fs::read_to_string(&path).context("read environment configuration")?;
-    let values = expand_paths(parse(&source)?)?;
+    let values = file_defaults(parse(&source)?)?;
     let shell = shell.map_or_else(Dialect::detect, Dialect::parse)?;
     Ok(values
         .into_iter()
@@ -244,6 +247,25 @@ fn valid_key(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_files_cannot_set_or_export_global_state_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("taskix.env");
+        std::fs::write(
+            &file,
+            "XDG_STATE_HOME=~/private-state\nRUST_LOG=trace\nOTHER=retained\n",
+        )
+        .unwrap();
+        assert_eq!(
+            load(&file).unwrap(),
+            BTreeMap::from([("OTHER".into(), "retained".into())])
+        );
+        assert_eq!(
+            export(&file, Some("fish")).unwrap(),
+            "set -Ux OTHER 'retained';\n"
+        );
+    }
 
     #[test]
     fn loads_and_exports_home_paths_without_expanding_other_values() {
