@@ -60,3 +60,18 @@ test("every_test_job_depends_on_release_classification", async () => {
         }
     }
 });
+
+test("every_ci_job_depends_on_release_classification", async () => {
+    const workflow = (await readFile(join(root, ".github/workflows/ci.yml"), "utf8")).replace(/\r\n/g, "\n");
+    const jobs = workflow.split("\njobs:\n")[1].split(/(?=^  [\w-]+:\n)/m).filter(text => text.trim());
+    assert.equal(jobs.length, 4);
+    const classifier = jobs.find(text => text.startsWith("  classify:\n"));
+    assert.ok(classifier, "CI must verify the full release diff before skipping jobs");
+    assert.match(classifier, /fetch-depth: 0/);
+    assert.match(classifier, /run: node scripts\/release-pr\.mjs/);
+    assert.match(classifier, /run-tests: \$\{\{ steps\.changes\.outputs\.run-tests \}\}/);
+    for (const job of jobs.filter(text => text !== classifier)) {
+        assert.match(job, /needs: classify/);
+        assert.match(job, /if: needs\.classify\.outputs\.run-tests == 'true'/);
+    }
+});

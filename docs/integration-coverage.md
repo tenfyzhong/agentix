@@ -578,11 +578,12 @@ checks do not establish live provider/IM or service-manager environment behavior
 
 ## CI test cost
 
-A lightweight classification job skips test jobs only for same-repository
+Lightweight classification jobs in Tests and CI skip tests, formatting/Clippy,
+monitoring, and tmux checks only for same-repository
 `release/X.Y.Z` pull requests whose full tree is exactly the base commit with
 `prepare-release` version changes applied. Version consistency is verified while
 classifying. Ordinary PRs, mixed changes, main pushes and manual dispatches retain
-the test matrix. Formatting and Clippy remain in the separate CI workflow.
+the full test and CI jobs.
 `plugins/taskix-manager/tests/release-pr.test.mjs` exercises real Git trees for
 pure releases and code/dependency changes hidden in release-named branches.
 

@@ -389,12 +389,13 @@ with an explicit version, for example `$release-version 0.8.1`. It updates main,
 prepares a version-only `release/X.Y.Z` PR, waits for CI, squash-merges the checked
 head, and creates and pushes an annotated tag at the exact squash commit.
 
-The Tests workflow uses a lightweight classification job for release PRs. Only
-same-repository `release/X.Y.Z` branches whose complete tree matches the result
-of running the base commit's version preparation qualify for skipping tests.
+The Tests and CI workflows each use a lightweight classification job for release
+PRs. Only same-repository `release/X.Y.Z` branches whose complete tree matches the result
+of running the base commit's version preparation qualify for skipping tests,
+formatting/Clippy, monitoring, and tmux checks.
 Changes to code, dependencies or other metadata still run tests, even in a release
-branch. Version validation and the separate CI formatting/Clippy workflow remain
-active. Pushes to main and manual test runs are not skipped by this rule.
+branch. Version validation remains active in both classification jobs. Pushes to
+main and manual test runs are not skipped by this rule.
 
 Use the latest release number plus `+dev` on main (for example `0.8.0+dev`).
 Run `make prepare-release VERSION=X.Y.Z` and `make check-versions TAG=X.Y.Z`, then
