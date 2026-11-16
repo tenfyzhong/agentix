@@ -124,8 +124,127 @@ test("branch_updates_use_encoded_refs_and_never_check_foreign_repositories", asy
 test("release_validation_precedes_build_and_publish_and_ci_checks_versions", async () => {
     const release = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
     const resolve = release.split("  prepare-homebrew:")[0];
-    assert.match(resolve, /node scripts\/plugin-version\.mjs check "\$release_tag"/);
+    assert.match(resolve, /node scripts\/plugin-version\.mjs check(?:\r?\n)/);
     assert.match(await readFile(join(root, ".github/workflows/tests.yml"), "utf8"), /node scripts\/plugin-version\.mjs check/);
+});
+
+function workflowStep(workflow, name) {
+    const step = workflow.split(`      - name: ${name}\n`)[1];
+    assert.ok(step, `missing step ${name}`);
+    const body = step.split(/\n(?:      - |  [a-z])/)[0];
+    const inline = body.match(/        run: ([^|\n].*)/);
+    return inline ? inline[1] : body.split("        run: |\n")[1].replace(/^          /gm, "");
+}
+
+async function releaseFixture(t) {
+    const dir = await fixture(t);
+    for (const path of ["scripts/plugin-version.mjs", "plugins/taskix-manager/version.mjs", ".github/scripts/release-version.sh", ".github/scripts/set-release-version.sh"]) {
+        await mkdir(join(dir, path, ".."), { recursive: true });
+        await cp(join(root, path), join(dir, path));
+    }
+    assert.equal(run(dir, "prepare", "0.0.0-dev").status, 0);
+    const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd: dir, encoding: "utf8" });
+    git("init", "-b", "main");
+    git("add", ".");
+    git("commit", "-sm", "test: development source");
+    git("tag", "1.2.3");
+    return { dir, git };
+}
+
+const shellStep = (dir, script, env = {}) => spawnSync("bash", ["--noprofile", "--norc", "-euo", "pipefail", "-c", script], {
+    cwd: dir, encoding: "utf8", env: { ...process.env, BASH_ENV: "/dev/null", ENV: "/dev/null", ...env },
+});
+
+test("release_resolves_development_tags_for_push_and_dispatch_without_changing_git", { skip: process.platform === "win32" }, async t => {
+    const workflow = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
+    for (const event of ["push", "workflow_dispatch"]) {
+        const { dir, git } = await releaseFixture(t);
+        const script = workflowStep(workflow, "Resolve release version").replaceAll("${{ github.event_name }}", event);
+        const result = shellStep(dir, script, { INPUT_TAG: "1.2.3", PUSHED_TAG: event === "push" ? "1.2.3" : "main", GITHUB_OUTPUT: join(dir, "output") });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(await readFile(join(dir, "output"), "utf8"), /tag=1.2.3\nversion=1.2.3/);
+        assert.equal(git("show", "1.2.3:VERSION").trim(), "0.0.0-dev");
+    }
+});
+
+test("release_resolution_rejects_inconsistent_source_metadata", { skip: process.platform === "win32" }, async t => {
+    const { dir } = await releaseFixture(t);
+    await writeFile(join(dir, manifests[3]), '{"version":"9.9.9"}\n');
+    const workflow = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
+    const result = shellStep(dir, workflowStep(workflow, "Resolve release version").replaceAll("${{ github.event_name }}", "push"), { PUSHED_TAG: "1.2.3", GITHUB_OUTPUT: join(dir, "output") });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /9.9.9/);
+    assert.equal((await readFile(join(dir, "VERSION"), "utf8")).trim(), "0.0.0-dev");
+});
+
+test("release_resolution_rejects_invalid_tags_and_wrong_commits", { skip: process.platform === "win32" }, async t => {
+    const { dir, git } = await releaseFixture(t);
+    const workflow = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
+    const script = workflowStep(workflow, "Resolve release version").replaceAll("${{ github.event_name }}", "push");
+    for (const tag of ["invalid", "v1.2.3", "1.2.3-rc.1"]) {
+        git("tag", tag);
+        const result = shellStep(dir, script, { PUSHED_TAG: tag, GITHUB_OUTPUT: join(dir, "output") });
+        assert.notEqual(result.status, 0, tag);
+        assert.equal((await readFile(join(dir, "VERSION"), "utf8")).trim(), "0.0.0-dev");
+    }
+    git("commit", "--allow-empty", "-sm", "test: another commit");
+    const result = shellStep(dir, script, { PUSHED_TAG: "1.2.3", GITHUB_OUTPUT: join(dir, "output") });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /does not point at the checked-out commit/);
+});
+
+test("release_build_stamps_all_metadata_and_packages_worktree_plugin_versions", { skip: process.platform === "win32" }, async t => {
+    const { dir, git } = await releaseFixture(t);
+    const workflow = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
+    // Cargo's legacy setter discovers workspace package names from crate manifests.
+    const cargo = await readFile(join(dir, "Cargo.lock"), "utf8");
+    for (const block of cargo.split("[[package]]")) {
+        if (/^source = /m.test(block)) continue;
+        const name = block.match(/^name = "([^"]+)"/m)?.[1];
+        if (!name) continue;
+        await mkdir(join(dir, "crates", name), { recursive: true });
+        await writeFile(join(dir, "crates", name, "Cargo.toml"), `[package]\nname = "${name}"\n`);
+    }
+    const result = shellStep(dir, workflowStep(workflow, "Set release version"), { RELEASE_TAG: "1.2.3" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(run(dir, "check", "1.2.3").status, 0, "all metadata must be stamped before packaging");
+    assert.equal(git("show", "HEAD:VERSION").trim(), "0.0.0-dev");
+    await assertStampedArchive(dir, workflow);
+
+    // Older tags without unified metadata still use the Cargo-only setter.
+    await rm(join(dir, "VERSION"));
+    const legacy = shellStep(dir, workflowStep(workflow, "Set release version"), { RELEASE_TAG: "1.2.4" });
+    assert.equal(legacy.status, 0, legacy.stderr);
+    assert.match(await readFile(join(dir, "Cargo.toml"), "utf8"), /version = "1.2.4"/);
+    assert.equal(JSON.parse(await readFile(join(dir, "package.json"))).version, "1.2.3");
+});
+
+async function assertStampedArchive(dir, workflow) {
+    const target = "aarch64-apple-darwin";
+    for (const file of ["README.md", "LICENSE", "docs/task-board.md", "docs/task-workflow-mechanisms.md", ...["agentix", "taskix"].flatMap(binary => [
+        `config/${binary}.example.toml`, `completions/${binary}.bash`, `completions/_${binary}`, `completions/${binary}.fish`,
+    ])]) {
+        await mkdir(join(dir, file, ".."), { recursive: true });
+        await cp(join(root, file), join(dir, file));
+    }
+    await mkdir(join(dir, `target/${target}/release`), { recursive: true });
+    for (const binary of ["agentix", "taskix"]) await writeFile(join(dir, `target/${target}/release/${binary}`), "binary fixture");
+    await writeFile(join(dir, "plugins/taskix-manager/untracked-secret"), "must not ship");
+    const packed = shellStep(dir, workflowStep(workflow, "Package release binary"), { RELEASE_TAG: "1.2.3", TARGET: target, RUNNER_OS: "macOS" });
+    assert.equal(packed.status, 0, packed.stderr);
+    const archive = join(dir, `dist/taskix-1.2.3-${target}.tar.gz`);
+    const files = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" });
+    assert.doesNotMatch(files, /untracked-secret/);
+    for (const file of manifests.filter(path => path.startsWith("plugins/taskix-manager/"))) {
+        const manifest = execFileSync("tar", ["-xOf", archive, `./${file}`], { encoding: "utf8" });
+        assert.equal(JSON.parse(manifest).version, "1.2.3", file);
+    }
+}
+
+test("release_archive_uses_stamped_worktree_not_committed_plugin_manifests", { skip: process.platform === "win32" }, async t => {
+    const { dir } = await releaseFixture(t);
+    assert.equal(run(dir, "prepare", "1.2.3").status, 0);
+    await assertStampedArchive(dir, await readFile(join(root, ".github/workflows/release.yml"), "utf8"));
 });
 
 test("missing_worktree_status_cannot_report_current", async () => {

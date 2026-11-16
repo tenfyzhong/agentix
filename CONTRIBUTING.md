@@ -384,12 +384,12 @@ Review feedback should normally be addressed with additional commits. Keep the p
 
 ## Releases
 
-The repository keeps `[workspace.package].version` and its workspace entries in `Cargo.lock` at `0.0.0-dev`. Create a semantic-version tag with an optional leading `v`, for example `v0.2.0`. The release workflow derives the release version from that tag and updates the checked-out Cargo metadata before compiling; release versions are not committed to the development branch.
+Keep `VERSION`, Cargo/npm metadata, lockfiles, and plugin manifests at `0.0.0-dev` on `main`. After release acceptance, create and push a numeric `X.Y.Z` tag (without `v`) on the selected commit. The release workflow derives the version from that tag and stamps its disposable checkout before compiling and packaging. No version-bump or development-reset PR is needed.
 
 Pushing the tag starts the `Release` workflow, which:
 
-1. verifies that the tag points at the checked-out commit and contains a supported semantic version;
-2. applies that version to the workspace manifest and lockfile, then builds native binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
+1. verifies that the tag points at the checked-out commit, validates source version consistency, then stamps and verifies the tag version;
+2. applies that version to all component manifests and lockfiles in each build checkout, then builds native binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
 3. verifies each binary's `--version` against the tag; macOS/Linux jobs immediately reuse their binaries for CLI bottles and install the tagged backup script for its separate bottle, without waiting for Windows;
 4. tests the standalone backup script and publishes `taskix-backup-<tag>.tar.gz`, separate `agentix-<tag>-<target>` and `taskix-<tag>-<target>` archives, a shared `SHA256SUMS`, and generated notes to the matching GitHub Release;
 5. publishes the prepared Homebrew formula PRs after all verified bottles and native archives are uploaded.
@@ -408,14 +408,20 @@ Run the focused packaging regressions with `cargo test -p agentix --all-features
 
 When the source URL changes for a new tag, the Homebrew workflow also removes the formula's old `revision` so the new upstream version starts at revision zero. Re-running the same tag preserves its revision while rebuilding the bottle.
 
-All CLI and plugin release versions are driven by the committed `VERSION` file.
-Run `make prepare-release VERSION=X.Y.Z` on the release branch, verify with
-`make check-versions`, and commit all generated manifest/lockfile changes before
-tagging that commit. The tag must match exactly (numeric, without `v`). Release
-CI rejects mismatches before publication; historical tags without `VERSION` keep
-the legacy packaging path. Do not rely on CI-only version stamping for plugins
-installed directly from Git. After releasing, use the same prepare command with
-`VERSION=0.0.0-dev` to reset every component together for development.
+PR CI verifies that source metadata agrees with `VERSION` and rejects partial
+version changes. Release CI first checks that source
+consistency, then uses `scripts/plugin-version.mjs prepare X.Y.Z` and `check X.Y.Z`
+to stamp and verify its temporary checkout. Historical tags without `VERSION`
+retain the legacy Cargo-only version setter.
+
+The Taskix release archive contains tracked plugin files from the stamped working
+tree, excluding untracked caches and dependencies. Git tags and GitHub-generated
+source archives retain the committed `0.0.0-dev` manifests. Plugins installed
+directly from Git therefore still display the development manifest version;
+pinning a tag selects its code but does not rewrite its manifest. Use the source
+ref and commit to identify these installs. Caches without Git metadata cannot
+prove their release identity. CLI archives and Homebrew binaries carry the tag
+version; CLI and plugin installation remain separate operations.
 
 Before tagging a release:
 

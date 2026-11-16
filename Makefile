@@ -24,7 +24,7 @@ DEBUG_TARGET_DIR = $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 
 .DEFAULT_GOAL := build
 
-.PHONY: prepare-release check-versions plugin-status plugin-stable build release completions check fmt clippy test test-backup clean help remove-plugin install update switch plugin
+.PHONY: plugin-status plugin-stable build release completions check fmt clippy test test-backup clean help remove-plugin install update switch plugin
 
 build:
 	$(CARGO) build --workspace --all-features
@@ -176,12 +176,6 @@ remove-plugin:
 		esac; \
 	done
 
-prepare-release:
-	$(NODE) scripts/plugin-version.mjs prepare "$(VERSION)"
-
-check-versions:
-	$(NODE) scripts/plugin-version.mjs check
-
 plugin-status:
 	@test -n "$(PLUGIN_PATH)" || { echo 'Set PLUGIN_PATH to the installed plugin directory reported by your host'; exit 2; }
 	$(NODE) plugins/taskix-manager/version.mjs --path "$(PLUGIN_PATH)" --check
@@ -235,8 +229,6 @@ help:
 		'make plugin [PLUGIN_TAG=X.Y.Z]  Install current remote branch or a fixed release tag' \
 		'make plugin-stable  Resolve latest release once and install its fixed tag' \
 		'make plugin-status PLUGIN_PATH=/installed/plugin  Check version, source and updates' \
-		'make prepare-release VERSION=X.Y.Z  Prepare all component versions before tagging' \
-		'make check-versions  Verify all committed component versions' \
 		'  HOSTS="codex pi omp claude opencode antigravity" selects plugin hosts (default: all six)' \
 		'  HOSTS=antigravity selects the native agy Taskix and Agentix plugins' \
 		'  HOSTS=opencode selects only the OpenCode 2.0.32+ server and TUI plugins' \

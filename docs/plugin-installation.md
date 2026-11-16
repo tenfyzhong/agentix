@@ -163,7 +163,9 @@ claim that those changes have been published or that model conversations passed.
 The tooling in this section is introduced by the unified-version change; use a
 checkout containing it until the first release with this policy is published.
 
-Agentix, Taskix, both host plugins, and Taskix Sync share one release version.
+Agentix, Taskix, both host plugins, and Taskix Sync use the same release tag.
+CI-produced CLI archives contain the release version; direct Git plugin installs
+keep the committed development manifest version (see Release packaging below).
 The commands above use `main`, a development channel. To install a stable release,
 select a published numeric tag from [Releases](https://github.com/tenfyzhong/agentix/releases)
 and replace `main` in the Codex, Claude, Pi, OpenCode and agy source references
@@ -219,20 +221,22 @@ sources report `modified`. Missing metadata, deleted branches, API rate limits
 and network failures report `unknown`, never `current`. This command is read-only
 and does not refresh caches or change host registrations.
 
-### Preparing a release
+### Release packaging
 
-Maintainers use `VERSION` as the single source of truth. On a release branch:
+Keep `VERSION`, Cargo/npm metadata, lockfiles, and plugin manifests at
+`0.0.0-dev` on `main`. PR CI checks their consistency automatically.
 
-```sh
-make prepare-release VERSION=1.2.3
-make check-versions
-```
+After release acceptance, create and push a numeric tag such as `1.2.3` (without
+`v`). Release CI reads the tag, validates source consistency, and replaces the
+versions in its disposable checkout before building and packaging. It verifies
+the stamped metadata and binary versions before publication. The Taskix release
+archive includes the stamped plugin manifests, including the Obsidian manifest.
+No version-bump or development-reset commit is needed. Protocol/schema versions
+and third-party dependencies remain independent.
 
-Review and commit the generated Cargo, package, lockfile and plugin manifest
-changes before creating the matching numeric tag. Release CI verifies the
-committed versions before building or publishing. PR CI catches partial version
-changes. `prepare-release` does not commit, tag, push or publish. After a release,
-reset all development versions together with `make prepare-release VERSION=0.0.0-dev`;
-development identity comes from its branch and commit, not this placeholder.
-Obsidian stable releases use the same numeric version. Protocol/schema versions
-and third-party dependency versions remain independent.
+Direct Git installations and GitHub-generated source archives use the original
+committed manifests, which remain `0.0.0-dev`. Selecting a release tag pins the
+code but does not change the host's displayed manifest version. Identify these
+installs by their source ref and commit; the status tool may report `unknown` for
+release comparison when the manifest and tag differ or Git metadata is absent.
+Do not infer that two installations contain the same code from `0.0.0-dev` alone.
