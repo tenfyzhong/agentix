@@ -97,10 +97,11 @@ For Pi, OMP, Claude Code, OpenCode, or Antigravity, start the configured host wi
 
 Mention the bot in group chats. If another Codex process owns the session's writer, the attachment is read-only; send prompts through the original process.
 
-Use `agentix env` and `taskix env` to generate shell exports from `[environment]`
-in their configuration files. In fish, run `agentix env | source` and
-`taskix env | source`; generated assignments use `set -Ux`. See
-[Environment export](docs/environment-export.md) for other shells and examples.
+Agentix and Taskix automatically load `agentix.env` and `taskix.env` beside their
+TOML configurations. Plugins cache these defaults per process; global shell
+exports are optional. `agentix env` and `taskix env` still generate shell scripts
+from the same files, with `set -Ux` for fish. See
+[Local environment files](docs/environment-export.md) for setup and migration.
 
 ## Detailed documentation
 

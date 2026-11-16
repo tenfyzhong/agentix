@@ -13,6 +13,7 @@
     "mcp_config.json",
     "hooks.json",
     "runtime.mjs",
+    "environment.mjs",
     "new-session.mjs",
     "extensions/",
     "README.md",
@@ -48,5 +49,8 @@
   },
   "exports": {
     "./tui": "./opencode/tui.mjs"
+  },
+  "engines": {
+    "node": "^20.12.0 || >=21.7.0"
   }
 }

@@ -19,6 +19,7 @@
     "skills/",
     "obsidian/",
     "runtime.mjs",
+    "environment.mjs",
     "taskix-cli.mjs",
     "routing-context.mjs",
     "conversation.mjs",
@@ -55,5 +56,8 @@
   },
   "exports": {
     ".": "./opencode/server.mjs"
+  },
+  "engines": {
+    "node": "^20.12.0 || >=21.7.0"
   }
 }

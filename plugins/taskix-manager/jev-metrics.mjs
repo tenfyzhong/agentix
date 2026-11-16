@@ -1,3 +1,4 @@
+import { taskEnvironment } from "./environment.mjs";
 import { metricsEnabled, metricsDatabase, validProvider, validProtocol } from "./decision-provider.mjs";
 import { Worker } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
@@ -5,7 +6,7 @@ import { mkdir, open, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-export function metricsPath(env = process.env) {
+export function metricsPath(env = taskEnvironment()) {
     return metricsDatabase(env) || join(env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "taskix", "decision-metrics.sqlite");
 }
 
@@ -24,7 +25,7 @@ export function answerScore(question, answer, criteria, threshold) {
 }
 
 // One assessment owns one event; nested helpers reuse its telemetry.
-export async function measureDecision({ env = process.env, options, config, kind = "routing", telemetry }, callback) {
+export async function measureDecision({ env = taskEnvironment(), options, config, kind = "routing", telemetry }, callback) {
     if (telemetry) return callback(telemetry);
     if (!config || !metricsEnabled(env)) return callback(undefined);
     const metric = { kind, id: randomUUID(), started_at: Date.now(), called: false, answers: [], outcome: { action: "agent", reason: "preparation_unavailable" } };

@@ -147,3 +147,10 @@ Set `[tracking].exclude_paths` in `~/.config/taskix/config.toml` to absolute or 
 Run `taskix project check --path /private/tmp/demo --json` to inspect the matching rule without opening storage or generating documents. A main repository rule covers all its worktrees; a worktree-only rule leaves other worktrees enabled. Symlinks resolve to their physical paths. Glob and negation syntax are not supported.
 
 Upgrade Taskix, Agentix, and host plugins together, then restart hosts and Agentix. Excluded directories skip automatic routing, conversation capture and memory context. Explicit CLI management remains available; existing records and task lifecycle maintenance are preserved. Archive historical projects separately after closing their Issues and Jobs. Removing a rule resumes future capture without backfilling excluded turns.
+
+## Local environment defaults
+
+Taskix Manager reads `~/.config/taskix/taskix.env` (or beside inherited `TASKIX_CONFIG`). File values are cached once per process and overridden by inherited environment values. The plugin does not mutate the host environment. Restart resident hosts after edits; new hooks load the latest file. See [local environment files](https://github.com/tenfyzhong/agentix/wiki/Environment-Export) for syntax and migration.
+
+The loader uses Node built-in `util.parseEnv` (Node 20.12.0 / 21.7.0 or newer;
+current LTS recommended). Bun hosts must support `node:util.parseEnv`.

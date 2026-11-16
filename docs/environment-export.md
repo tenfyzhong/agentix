@@ -1,83 +1,95 @@
-# Environment export
+# Local environment files
 
-`agentix env` and `taskix env` print executable shell assignments from the
-`[environment]` table in their respective configuration files. They do not start
-services, open databases, validate runtime credentials, or change the parent
-process environment. Apply the output in the shell that will launch the CLI,
-agent host, or service.
+Agentix and Taskix load local defaults automatically from `agentix.env` and
+`taskix.env`, beside their respective `config.toml` files. The default locations
+are `~/.config/agentix/agentix.env` and `~/.config/taskix/taskix.env`.
+Copy `config/agentix.env.example` or `config/taskix.env.example` and uncomment the
+settings you need. No shell export or third-party dotenv/TOML parser is required
+for host plugins.
 
-The `[environment]` sections in `config/agentix.example.toml` and
-`config/taskix.example.toml` list the current CLI, service, and host-plugin
-settings with defaults and placeholder values. Uncomment the entries you need.
-Compatibility aliases and host-owned/internal variables are documented separately
-in comments and should not be exported as persistent user settings.
+For example, `~/.config/taskix/taskix.env`:
 
-For example, add this table to `~/.config/taskix/config.toml`:
-
-```toml
-[environment]
-TASKIX_LANG = "zh-CN"
-TASKIX_MEMORY_ENABLED = true
-TASKIX_DECISION_ENABLED = true
-TASKIX_DECISION_PROVIDER = "typesafe"
-TASKIX_DECISION_URL = "https://api.typesafe.ai/v1/systemone"
-TASKIX_DECISION_API_KEY = "replace-with-your-key"
+```dotenv
+TASKIX_LANG=zh-CN
+TASKIX_MEMORY_ENABLED=true
+TASKIX_DECISION_ENABLED=true
+TASKIX_DECISION_PROVIDER=typesafe
+TASKIX_DECISION_URL=https://api.typesafe.ai/v1/systemone
+TASKIX_DECISION_API_KEY=replace-with-your-key
 ```
 
-The Agentix file (`~/.config/agentix/config.toml`) can use the same table for
-variables such as `AGENTIX_LOGIN_SHELL`, `http_proxy`, `https_proxy`, and `NO_PROXY`.
-Existing credential fields and `api_key_env` references keep their meanings;
-use the exact referenced variable name as an environment key. Reading normal
-configuration does not implicitly apply this table.
+Explicit command options take priority over inherited process environment,
+which takes priority over file defaults. An inherited empty value still overrides
+the file. TOML retains structured application configuration and provider
+`api_key_env` references; put the referenced credential in the env file.
 
-In fish:
+CLIs load defaults at startup before runtime configuration. On Unix they use
+`exec` when defaults must be added, preserving PID and signals without unsafe
+process-environment mutation. On Windows the bootstrap waits for the replacement
+process and returns its exit status. Child processes inherit the resulting
+values. This never modifies a parent shell or fish universal variables.
+
+Agentix Bridge and Taskix Manager independently load their own files, including
+when started directly by an agent host. Plugins cache file contents in memory
+once per resolved path for the lifetime of the process, and do not modify the
+host's shared `process.env`. Restart a resident host/plugin or service after
+editing a file. New hook processes see the new file automatically. Missing files
+are optional during normal startup; invalid variable names, NUL bytes or unreadable files report errors.
+
+Use `--config PATH` to select a CLI TOML file and its adjacent env file. Taskix
+also honors inherited `TASKIX_CONFIG`. Standalone plugins honor inherited
+`TASKIX_CONFIG` or `AGENTIX_CONFIG` to locate their corresponding files.
+Set these selectors outside the env file; discovery happens before it is read.
+
+## Dotenv format
+
+Plugins use Node's built-in `util.parseEnv`, without a third-party parser or
+`process.loadEnvFile`. The API requires Node 20.12.0 / 21.7.0 or newer; use a
+current Node LTS release. Compatible Bun hosts must provide `node:util.parseEnv`.
+Rust uses the same value rules, covered by shared fixtures tested against Node.
+
+Use `KEY=VALUE` with portable names matching `[A-Za-z_][A-Za-z0-9_]*`.
+An optional `export ` prefix is accepted. Duplicate keys use the last value.
+Unquoted values are trimmed and `#` starts a comment; quote values containing
+literal `#`. Matching single, double or backtick quotes preserve whitespace
+and allow multiline values. Double-quoted `\n` becomes a newline; single quotes
+preserve backslashes. Empty values are supported. All values remain strings.
+
+There is no variable interpolation, command substitution or shell evaluation.
+`$HOME`, `~` and `$(...)` remain literal. Use absolute paths where needed.
+As with Node, lines without `=` are ignored and an unmatched opening quote
+remains part of the line's value. This is not a strict syntax checker.
+NUL bytes and parsed nonportable variable names are rejected without exposing
+values in diagnostics, so generated shell exports remain safe.
+
+## Migration
+
+Move entries out of the old TOML `[environment]` table into the matching env
+file, removing the table header and TOML-specific escaping. The old table is no
+longer used for exports or automatic loading. Remove old shell definitions if
+you want file defaults to take effect; in fish, remove the corresponding
+universal variables with `set -eU NAME` (and any shadowing global/local values).
+Neither installed configuration nor existing shell variables is changed for you.
+
+## Optional shell export
+
+`agentix env` and `taskix env` still print executable assignments from these same
+env files, without initializing services or databases. They export file values,
+not unrelated inherited variables. Use this only when another tool needs them.
 
 ```fish
 agentix env | source
 taskix env | source
 ```
 
-The generated statements use `set -Ux`, so values persist across fish sessions.
-An existing global or local variable of the same name can shadow a universal
-variable; remove that shadowing definition when migrating existing shell setup.
+Fish output uses `set -Ux`, so explicitly applying it persists values across
+sessions. In bash, zsh or POSIX sh, use `eval "$(taskix env)"`; in PowerShell use
+`taskix env | Out-String | Invoke-Expression` (likewise for Agentix).
 
-In bash, zsh, or POSIX sh:
-
-```sh
-eval "$(agentix env)"
-eval "$(taskix env)"
-```
-
-These exports affect the current shell and its future child processes. Put the
-commands in the shell's startup file if they should run for every new session.
-
-In PowerShell:
-
-```powershell
-agentix env | Out-String | Invoke-Expression
-taskix env | Out-String | Invoke-Expression
-```
-
-Automatic detection walks the calling process ancestry to find the nearest
-shell, so a nested fish shell wins over a login `$SHELL` naming zsh. If no shell
-is visible, `$SHELL` is the fallback. Unsupported or undetectable shells produce
-an error rather than guessed syntax. To generate a file for a different shell,
-use `env --shell sh|bash|zsh|fish|powershell|pwsh`.
-
-Select a different file with `agentix --config PATH env` or
-`taskix --config PATH env`; Taskix also honors `TASKIX_CONFIG`. `taskix env` emits
-only script text and rejects `--json`. Missing files and invalid entries fail
-before any script is printed. An absent or empty table produces no assignments.
-
-Keys must be shell identifiers (`[A-Za-z_][A-Za-z0-9_]*`). Values may be strings,
-booleans, integers, or finite floating-point numbers. Arrays, tables, dates, and
-NUL bytes are rejected. Values are quoted literally: dollar signs, backticks,
-quotes, backslashes, and newlines are preserved without command execution.
-Neither `~` nor `$HOME` in values is expanded. Variables are emitted in sorted
-order; inherited environment variables and unrelated configuration fields are
-not exported. Secrets in this table appear in the generated script; protect the
-configuration file and any saved output with appropriate file permissions.
-
-Restart existing agent hosts and services after updating their environment.
-Exporting variables in a terminal does not modify already running processes or
-unrelated desktop application environments.
+Shell detection walks the calling process ancestry, with `$SHELL` as fallback.
+Override with `env --shell sh|bash|zsh|fish|powershell|pwsh`. Unsupported shells
+produce an error. `--config PATH` still selects the adjacent env file, and
+`taskix env` rejects `--json`. An explicitly requested export requires an existing
+env file; an empty file emits nothing. Invalid entries fail before any script is
+printed. Output is sorted and quoted literally. Protect files and generated
+scripts containing credentials with appropriate file permissions.

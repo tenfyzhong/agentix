@@ -1,3 +1,4 @@
+import { taskEnvironment } from "../environment.mjs";
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -12,7 +13,7 @@ export function hostKey(pid = process.ppid) {
     if (!started) throw new Error('Antigravity parent process is unavailable');
     return `${pid}-${started}`;
 }
-export const dataRoot = () => process.env.TASKIX_ANTIGRAVITY_DATA_DIR ?? join(homedir(), '.local/share/taskix/antigravity');
+export const dataRoot = () => taskEnvironment().TASKIX_ANTIGRAVITY_DATA_DIR ?? join(homedir(), '.local/share/taskix/antigravity');
 
 export function createAntigravityTool(options = {}) {
     let tool;

@@ -83,7 +83,7 @@ impl Config {
             table.remove("logging");
             // Application metrics belong to the resident service.
             table.remove("metrics");
-            // Shell exports are applied explicitly by the caller, not board operations.
+            // Tolerate the obsolete export table; defaults now live in taskix.env.
             table.remove("environment");
         }
         // Older releases stored a template locale and output format here.

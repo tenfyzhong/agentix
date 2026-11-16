@@ -3,7 +3,7 @@ use std::process::Command;
 fn run(config: &str, shell: &str) -> std::process::Output {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("config.toml");
-    std::fs::write(&path, config).unwrap();
+    std::fs::write(path.with_file_name(format!("{}.env", std::path::Path::new(binary()).file_stem().unwrap().to_str().unwrap())), config).unwrap();
     Command::new(binary())
         .arg("--config")
         .arg(path)
@@ -30,7 +30,7 @@ fn env_exports_config_without_runtime_initialization() {
         ),
     ] {
         let output = run(
-            "[environment]\nTOKEN = \"a'b\\\\c $HOME\"\nENABLED = true\nEMPTY = ''\n",
+            "TOKEN = \"a'b\\c $HOME\"\nENABLED = true\nEMPTY = ''\n",
             shell,
         );
         assert!(
@@ -46,9 +46,9 @@ fn env_exports_config_without_runtime_initialization() {
 #[test]
 fn env_rejects_invalid_entries_without_partial_script() {
     for config in [
-        "[environment]\nGOOD = 'value'\n'BAD;echo' = 'secret'",
-        "[environment]\nGOOD = 'value'\nBAD = ['secret']",
-        "[environment]\nBAD = \"secret\\u0000\"",
+        "GOOD = 'value'\nBAD;echo = 'secret'",
+        "GOOD = 'value'\nBAD-NAME = 'secret",
+        "BAD = \"secret\0\"",
     ] {
         let output = run(config, "fish");
         assert!(!output.status.success());
@@ -64,7 +64,7 @@ fn env_empty_table_emits_nothing_and_unknown_shell_fails() {
     let output = run("", "fish");
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
-    let output = run("[environment]\nA = 'b'", "unknown");
+    let output = run("A = 'b'", "unknown");
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
 }
@@ -74,12 +74,9 @@ fn env_empty_table_emits_nothing_and_unknown_shell_fails() {
 fn env_detects_actual_shell_and_round_trips_literal_values() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join("config.toml");
-    let value = "a'b\\c $HOME $(touch injected) `touch injected`\n中文\n";
-    let mut table = toml::Table::new();
-    table.insert("ENV_EXPORT_TEST_VALUE".into(), value.into());
-    let mut root = toml::Table::new();
-    root.insert("environment".into(), table.into());
-    std::fs::write(&config, toml::to_string(&root).unwrap()).unwrap();
+    let value = "a'b\\c $HOME $(touch injected) `touch injected` 中文";
+    let app = std::path::Path::new(binary()).file_stem().unwrap().to_str().unwrap();
+    std::fs::write(config.with_file_name(format!("{app}.env")), format!("ENV_EXPORT_TEST_VALUE={value}\n")).unwrap();
     // fish --no-config disables universal-variable persistence; isolate its config instead.
     for (shell, flags, script) in [
         (
@@ -134,7 +131,7 @@ fn env_detects_actual_shell_and_round_trips_literal_values() {
 }
 
 #[test]
-fn env_rejects_missing_files_and_hides_malformed_toml_values() {
+fn env_rejects_missing_files_and_hides_malformed_values() {
     let directory = tempfile::tempdir().unwrap();
     let output = Command::new(binary())
         .arg("--config")
@@ -144,8 +141,19 @@ fn env_rejects_missing_files_and_hides_malformed_toml_values() {
         .unwrap();
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
-    let output = run("[environment]\nTOKEN = 'private-test-value", "sh");
+    let output = run("BAD-TOKEN = 'private-test-value", "sh");
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     assert!(!String::from_utf8_lossy(&output.stderr).contains("private-test-value"));
+}
+
+#[test]
+fn env_reads_dedicated_file_without_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = std::path::Path::new(binary()).file_stem().unwrap().to_str().unwrap();
+    std::fs::write(dir.path().join(format!("{app}.env")), "LOCAL_ENV_TEST=literal\n").unwrap();
+    let output = Command::new(binary()).arg("--config").arg(dir.path().join("missing.toml"))
+        .args(["env", "--shell", "sh"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "export LOCAL_ENV_TEST='literal';\n");
 }

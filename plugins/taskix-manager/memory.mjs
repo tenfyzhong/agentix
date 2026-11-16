@@ -1,3 +1,4 @@
+import { taskEnvironment } from "./environment.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 const pendingReceipts = new Map();
 
 // Independent of routing and extraction. Failures must never interrupt host work.
-export async function memoryContext(prompt, turn, options, runner, { cacheDir, timeoutMs = 1500, requireEnabled = false, env = process.env } = {}) {
+export async function memoryContext(prompt, turn, options, runner, { cacheDir, timeoutMs = 1500, requireEnabled = false, env = taskEnvironment() } = {}) {
     if (typeof prompt !== "string" || !prompt.trim() || !options.session) return "";
     const controller = new AbortController();
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
@@ -38,7 +39,7 @@ export async function memoryContext(prompt, turn, options, runner, { cacheDir, t
 }
 
 async function deduplicate(packet, turn, options, directory = join(tmpdir(), `taskix-memory-context-${process.getuid?.() ?? "user"}`), signal) {
-    const key = createHash("sha256").update(JSON.stringify([options.session, options.cwd || "", process.env.TASKIX_CONFIG || ""])).digest("hex");
+    const key = createHash("sha256").update(JSON.stringify([options.session, options.cwd || "", taskEnvironment().TASKIX_CONFIG || ""])).digest("hex");
     const path = join(directory, `memory-${key}.json`);
     await pendingReceipts.get(path);
     let seen = {};
@@ -75,6 +76,6 @@ async function deduplicate(packet, turn, options, directory = join(tmpdir(), `ta
     };
 }
 
-export function memoryEnabled(env = process.env) {
+export function memoryEnabled(env = taskEnvironment()) {
     return env.TASKIX_MEMORY_ENABLED === "true" || env.TASKIX_MEMORY_ENABLED === "1";
 }

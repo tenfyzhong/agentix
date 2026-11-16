@@ -161,6 +161,12 @@ enum ClientCommand {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if !matches!(
+        cli.command,
+        CliCommand::Env { .. } | CliCommand::Completions { .. }
+    ) {
+        agentix_task::environment::bootstrap(&cli.config, "agentix")?;
+    }
     if let CliCommand::LaunchAntigravity {
         command,
         state_dir,
@@ -209,7 +215,10 @@ async fn run(cli: Cli) -> Result<()> {
     if let CliCommand::Env { shell } = &command {
         print!(
             "{}",
-            agentix_task::environment::export(&config_path, shell.as_deref())?
+            agentix_task::environment::export(
+                &agentix_task::environment::path(&config_path, "agentix")?,
+                shell.as_deref()
+            )?
         );
         return Ok(());
     }

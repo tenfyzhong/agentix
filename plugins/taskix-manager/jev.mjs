@@ -1,3 +1,4 @@
+import { taskEnvironment } from "./environment.mjs";
 import { withDeadline, readJson } from "./jev-io.mjs";
 // Host-side routing only. All lifecycle writes remain guarded by taskix.
 import { decisionConfig, encodeDecision, decodeDecision, metricsEnabled } from "./decision-provider.mjs";
@@ -150,7 +151,7 @@ async function unchangedJob(job, project, runner, options) {
         !fresh.archived_at && fresh.project_id === project && (fresh.issue_id ?? null) === (job.issue_id ?? null);
 }
 
-export async function withJevMetrics(env = process.env, options, callback, kind = "routing") {
+export async function withJevMetrics(env = taskEnvironment(), options, callback, kind = "routing") {
     const config = decisionConfig(env);
     if (!config || !metricsEnabled(env)) return callback(undefined);
     const { measureDecision } = await import("./jev-metrics.mjs");
@@ -209,7 +210,7 @@ export async function routePrompt(args) {
     return args.telemetry ? run(args.telemetry) : withJevMetrics(args.env, args.options, run);
 }
 
-async function classifyPrompt({ prompt, context, options, runner, history = [], env = process.env, fetch = globalThis.fetch, telemetry, assessment }) {
+async function classifyPrompt({ prompt, context, options, runner, history = [], env = taskEnvironment(), fetch = globalThis.fetch, telemetry, assessment }) {
     const config = decisionConfig(env);
     if (!config) return;
     let candidates = [];
@@ -414,7 +415,7 @@ export async function classifyDiscussionTurns(args) {
         telemetry => classifyDiscussionMeasured({...args, telemetry}));
 }
 
-async function classifyDiscussionMeasured({ target, pending, currentTurn, env = process.env, fetch = globalThis.fetch, signal, telemetry }) {
+async function classifyDiscussionMeasured({ target, pending, currentTurn, env = taskEnvironment(), fetch = globalThis.fetch, signal, telemetry }) {
     const fallback = reason => ({ status: "agent", reason });
     if (!pending || pending.complete !== true || !Number.isSafeInteger(pending.revision) ||
         !Array.isArray(pending.turns) || !target?.prompt?.trim() || !target?.title?.trim()) return fallback("incomplete_context");

@@ -1,3 +1,4 @@
+import { agentEnvironment } from "../environment.mjs";
 import { hasTerminalContext } from './terminal.mjs';
 import { NativeSessionControl } from '../new-session.mjs';
 import { ChannelDelivery, TerminalDelivery, deliveryMode } from './delivery.mjs';
@@ -13,7 +14,7 @@ import { ClaudeStateStore } from './store.mjs';
 
 const clientId = hostKey();
 const mailbox = new Mailbox();
-const mode = deliveryMode(process.env.AGENTIX_CLAUDE_DELIVERY);
+const mode = deliveryMode(agentEnvironment().AGENTIX_CLAUDE_DELIVERY);
 const channelMode = mode === 'channel';
 let session, polling = false;
 const mcp = new Server({ name: 'agentix-bridge', version: '0.1.0' }, {

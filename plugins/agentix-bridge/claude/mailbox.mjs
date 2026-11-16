@@ -1,3 +1,4 @@
+import { agentEnvironment } from "../environment.mjs";
 import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync, realpathSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -10,7 +11,7 @@ export function hostKey(pid = process.ppid) {
     if (!started) throw new Error('Claude parent process is unavailable');
     return `${pid}-${started}`;
 }
-export const dataRoot = () => process.env.AGENTIX_CLAUDE_DATA_DIR ?? join(homedir(), '.local/share/agentix/claude');
+export const dataRoot = () => agentEnvironment().AGENTIX_CLAUDE_DATA_DIR ?? join(homedir(), '.local/share/agentix/claude');
 export function atomicJson(path, value) {
     const temporary = `${path}.${randomUUID()}.tmp`;
     writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 });

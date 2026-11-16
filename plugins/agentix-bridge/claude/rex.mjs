@@ -1,3 +1,4 @@
+import { agentEnvironment } from "../environment.mjs";
 import { accessSync, constants } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { failure } from '../protocol/errors.mjs';
@@ -73,7 +74,7 @@ export function decodeRexVT(input, rows, columns) {
 
 export class RexTerminalAdapter {
     kind = 'rex';
-    constructor({ env = process.env, pid = process.ppid, run, command } = {}) {
+    constructor({ env = agentEnvironment(), pid = process.ppid, run, command } = {}) {
         this.env = { ...env }; this.pid = pid; this.run = run;
         this.pane = env.REX_BLOCK; this.session = env.REX_SESSION;
         this.command = command ?? rexCandidates(env).find(path => { try { accessSync(path, constants.X_OK); return true; } catch { return false; } });

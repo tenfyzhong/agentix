@@ -1,3 +1,4 @@
+import { taskEnvironment } from "./environment.mjs";
 import { decisionConfig } from "./decision-provider.mjs";
 import { memoryContext } from "./memory.mjs";
 import { withDeadline } from "./jev-io.mjs";
@@ -14,7 +15,7 @@ export { buildArgs, runTaskix } from "./taskix-cli.mjs";
 function skillContext(context) {
     return {
         ...context,
-        task_language: process.env.TASKIX_LANG?.trim() || "en",
+        task_language: taskEnvironment().TASKIX_LANG?.trim() || "en",
     };
 }
 

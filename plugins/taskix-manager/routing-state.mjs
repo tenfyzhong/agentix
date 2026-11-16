@@ -1,3 +1,4 @@
+import { taskEnvironment } from "./environment.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 // Hooks are separate processes. Persist only an expiring receipt, never prompts,
 // credentials, model responses or task leases. An unreadable receipt is a miss.
 function receiptPath(event, directory) {
-    const key = createHash("sha256").update(JSON.stringify([event.session_id, event.cwd || "", process.env.TASKIX_CONFIG || ""])).digest("hex");
+    const key = createHash("sha256").update(JSON.stringify([event.session_id, event.cwd || "", taskEnvironment().TASKIX_CONFIG || ""])).digest("hex");
     return join(directory, `${key}.json`);
 }
 export async function routingReceipt(event, action, directory = join(tmpdir(), `taskix-routing-${process.getuid?.() ?? "user"}`)) {

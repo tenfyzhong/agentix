@@ -1,15 +1,16 @@
+import { taskEnvironment } from "./environment.mjs";
 // Provider identity is independent of the wire protocol. No lifecycle writes here.
 const enabled = value => /^(true|1)$/i.test(value?.trim() || "");
 const text = value => value?.trim() || undefined;
 export const validProvider = value => typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value);
 export const validProtocol = value => ["typesafe", "openai_decisions"].includes(value);
-export function metricsEnabled(env = process.env) {
+export function metricsEnabled(env = taskEnvironment()) {
     return enabled(env.TASKIX_DECISION_METRICS_ENABLED ?? env.TASKIX_JEV_METRICS_ENABLED);
 }
-export function metricsDatabase(env = process.env) {
+export function metricsDatabase(env = taskEnvironment()) {
     return text(env.TASKIX_DECISION_METRICS_DB) ?? text(env.TASKIX_JEV_METRICS_DB);
 }
-export function decisionConfig(env = process.env) {
+export function decisionConfig(env = taskEnvironment()) {
     const provider = text(env.TASKIX_DECISION_PROVIDER) ?? "typesafe";
     const protocol = text(env.TASKIX_DECISION_PROTOCOL) ?? ({ typesafe: "typesafe", openai: "openai_decisions" })[provider];
     if (!validProvider(provider) || !validProtocol(protocol)) return;

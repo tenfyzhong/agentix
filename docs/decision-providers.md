@@ -129,6 +129,6 @@ historical counters on startup, and HTTP scrapes do not query SQLite. Local mock
 and interoperability tests establish protocol behavior, not live model quality,
 account access or remote Grafana deployment.
 
-Store these variables in `[environment]` in the Taskix configuration and run
-`taskix env | source` in fish to apply them together. See
-[Environment export](environment-export.md).
+Store these variables in `taskix.env` beside the Taskix configuration. The CLI
+and plugin load it automatically; restart resident hosts after edits. See
+[Local environment files](environment-export.md).

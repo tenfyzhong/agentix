@@ -1,3 +1,4 @@
+import { agentEnvironment } from "./environment.mjs";
 import { ObservedUsage } from './usage.mjs';
 import net from 'node:net';
 import { FrameDecoder } from './framing.mjs';
@@ -37,7 +38,7 @@ export class BridgeTransport {
     #timer;
     constructor(options) {
         this.#options = { ...options, reconnectDelay: options.reconnectDelay ?? 1000,
-            endpoint: options.endpoint ?? process.env.AGENTIX_CONTROL_ENDPOINT ?? `unix://${join(homedir(), '.local/share/agentix/control.sock')}` };
+            endpoint: options.endpoint ?? agentEnvironment().AGENTIX_CONTROL_ENDPOINT ?? `unix://${join(homedir(), '.local/share/agentix/control.sock')}` };
         this.#options.connection = connectionOptions(this.#options.endpoint);
     }
     get sequence() { return this.#sequence; }

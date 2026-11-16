@@ -575,9 +575,31 @@ fn completion_command() -> clap::Command {
     })
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let cli = Cli::parse();
+    if !matches!(
+        cli.command,
+        Command::Env { .. } | Command::Completions { .. }
+    ) {
+        match cli
+            .config_path()
+            .and_then(|path| agentix_task::environment::bootstrap(&path, "taskix"))
+        {
+            Ok(()) => {}
+            Err(error) => {
+                eprintln!("taskix: {error:#}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("create Taskix runtime")
+        .block_on(main_async(cli))
+}
+
+async fn main_async(cli: Cli) -> ExitCode {
     if let Command::Completions { shell } = &cli.command {
         clap_complete::generate(
             *shell,
@@ -593,7 +615,10 @@ async fn main() -> ExitCode {
                 !cli.json,
                 "env emits a shell script and cannot be used with --json"
             );
-            agentix_task::environment::export(&cli.config_path()?, shell.as_deref())
+            agentix_task::environment::export(
+                &agentix_task::environment::path(&cli.config_path()?, "taskix")?,
+                shell.as_deref(),
+            )
         })();
         return match result {
             Ok(script) => {
