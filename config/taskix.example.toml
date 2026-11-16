@@ -38,7 +38,15 @@ path = "~/.local/share/taskix/memory.sqlite3"
 api = "responses"
 protocol = "openai"
 base_url = "https://api.openai.com/v1"
+## Choose api_key_env OR api_key_pass, never both.
+## api_key_env also accepts OPENAI_API_KEY_PASS when OPENAI_API_KEY is unset.
 api_key_env = "OPENAI_API_KEY"
+## Optional: remove api_key_env and reference pass directly, without an env entry.
+## Configure GPG/pinentry for the service user BEFORE enabling pass. On macOS add
+## pinentry-program /opt/homebrew/bin/pinentry-mac to ~/.gnupg/gpg-agent.conf.
+## Without working pinentry, use api_key_env and an actual API key in taskix.env.
+## See docs/pass-secrets.md for setup and cache/restart behavior.
+# api_key_pass = "taskix/openai"
 ## Total provider concurrency; background work leaves one slot for online embedding queries.
 max_in_flight = 8
 

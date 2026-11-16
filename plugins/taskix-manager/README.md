@@ -154,3 +154,10 @@ Taskix Manager reads `~/.config/taskix/taskix.env` (or beside inherited `TASKIX_
 
 The loader uses Node built-in `util.parseEnv` (Node 20.12.0 / 21.7.0 or newer;
 current LTS recommended). Bun hosts must support `node:util.parseEnv`.
+
+## Optional pass credentials
+
+Memory accepts `api_key_pass` directly, or `api_key_env` with a matching `_PASS`
+entry in `taskix.env`. Plugins accept `TASKIX_DECISION_API_KEY_PASS`. Configure
+GPG/pinentry for the service user first; otherwise use a direct API key.
+See [pass setup and precedence](https://github.com/tenfyzhong/agentix/wiki/Pass-Secrets).

@@ -44,8 +44,22 @@ pub struct ProviderConfig {
     pub base_url: String,
     #[serde(default)]
     pub api_key_env: Option<String>,
+    #[serde(default)]
+    pub api_key_pass: Option<String>,
     #[serde(default = "provider_concurrency")]
     pub max_in_flight: usize,
+}
+impl ProviderConfig {
+    pub fn validate_credentials(&self) -> Result<()> {
+        ensure!(
+            self.api_key_env.is_none() || self.api_key_pass.is_none(),
+            "api_key_env and api_key_pass are mutually exclusive"
+        );
+        if let Some(entry) = &self.api_key_pass {
+            crate::providers::pass::validate_entry(entry)?;
+        }
+        Ok(())
+    }
 }
 fn provider_concurrency() -> usize {
     8
@@ -325,6 +339,7 @@ impl MemoryConfig {
             return Ok(());
         }
         for provider in self.providers.values() {
+            provider.validate_credentials()?;
             let url = reqwest::Url::parse(&provider.base_url)?;
             ensure!(
                 matches!(url.scheme(), "http" | "https")

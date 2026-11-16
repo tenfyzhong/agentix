@@ -132,3 +132,10 @@ account access or remote Grafana deployment.
 Store these variables in `taskix.env` beside the Taskix configuration. The CLI
 and plugin load it automatically; restart resident hosts after edits. See
 [Local environment files](environment-export.md).
+
+## Optional pass credentials
+
+Memory accepts `api_key_pass` directly, or `api_key_env` with a matching `_PASS`
+entry in `taskix.env`. Plugins accept `TASKIX_DECISION_API_KEY_PASS`. Configure
+GPG/pinentry for the service user first; otherwise use a direct API key.
+See [pass setup and precedence](https://github.com/tenfyzhong/agentix/wiki/Pass-Secrets).

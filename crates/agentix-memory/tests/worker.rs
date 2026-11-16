@@ -31,6 +31,7 @@ async fn targeted_worker_records_failure_without_claiming_other_projects() {
         base_url: server.url.clone(),
         protocol: agentix_memory::ProviderProtocol::Openai,
         api_key_env: None,
+        api_key_pass: None,
         max_in_flight: 4,
     })
     .unwrap();
@@ -64,6 +65,7 @@ async fn permanent_provider_rejection_fails_work_without_replaying_the_same_requ
         base_url: server.url.clone(),
         protocol: agentix_memory::ProviderProtocol::Openai,
         api_key_env: None,
+        api_key_pass: None,
         max_in_flight: 4,
     })
     .unwrap();
@@ -307,6 +309,7 @@ async fn real_http_agent_pipeline_extracts_consolidates_and_preserves_provenance
         base_url: server.url.clone(),
         protocol: agentix_memory::ProviderProtocol::Openai,
         api_key_env: None,
+        api_key_pass: None,
         max_in_flight: 4,
     })
     .unwrap();
@@ -726,6 +729,7 @@ async fn worker_corrects_unanchored_candidates_and_oversized_consolidation_evide
         base_url: server.url.clone(),
         protocol: agentix_memory::ProviderProtocol::Openai,
         api_key_env: None,
+        api_key_pass: None,
         max_in_flight: 4,
     })
     .unwrap();

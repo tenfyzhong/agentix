@@ -28,6 +28,7 @@
     "README.md",
     "jev.mjs",
     "decision-provider.mjs",
+    "pass.mjs",
     "jev-io.mjs",
     "routing-state.mjs",
     "jev-metrics.mjs",

@@ -1669,3 +1669,37 @@ fn reload_requires_a_running_service_without_registering_a_project() {
 
 #[path = "support/tracking.rs"]
 mod tracking;
+
+#[test]
+fn doctor_pass_credentials_are_deferred_without_decryption() {
+    for source in [
+        "api_key_pass='test/key'",
+        "api_key_env='TASKIX_DOCTOR_TEST_KEY'",
+    ] {
+        let cli = Cli::new();
+        let path = cli.dir.path().join("config.toml");
+        let original = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{original}\n[memory.providers.openai]\nbase_url='http://localhost:9/v1'\napi='responses'\n{source}\n")).unwrap();
+        let output = cli
+            .command(&["doctor"])
+            .env("TASKIX_MEMORY_ENABLED", "true")
+            .env_remove("TASKIX_DOCTOR_TEST_KEY")
+            .env("TASKIX_DOCTOR_TEST_KEY_PASS", "test/key")
+            .env("PATH", cli.dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let data: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let provider = &data["result"]["configuration"]["providers"][0];
+        assert_eq!(provider["credential_source"], "pass", "{data}");
+        assert!(provider["credentials_available"].is_null());
+        assert_eq!(
+            provider["credentials_check"],
+            "deferred_to_provider_initialization"
+        );
+    }
+}

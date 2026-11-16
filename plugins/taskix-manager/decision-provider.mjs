@@ -1,3 +1,4 @@
+import { passKey } from "./pass.mjs";
 import { taskEnvironment } from "./environment.mjs";
 // Provider identity is independent of the wire protocol. No lifecycle writes here.
 const enabled = value => /^(true|1)$/i.test(value?.trim() || "");
@@ -19,7 +20,15 @@ export function decisionConfig(env = taskEnvironment()) {
     if (!enabled(env.TASKIX_DECISION_ENABLED ?? (legacy ? env.TASKIX_JEV_ENABLED : undefined))) return;
     const value = name => text(env[`TASKIX_DECISION_${name}`]) ?? (legacy ? text(env[`TASKIX_JEV_${name}`]) : undefined);
     const url = value("URL") ?? (officialOpenAI ? "https://api.openai.com/v1/decisions" : undefined);
-    const key = value("API_KEY") ?? (officialOpenAI ? text(env.OPENAI_API_KEY) : undefined);
+    const credential = prefix => {
+        const direct = text(env[`${prefix}API_KEY`]);
+        if (direct) return direct;
+        const entry = env[`${prefix}API_KEY_PASS`];
+        return entry === undefined ? undefined : passKey(entry, env);
+    };
+    const key = credential("TASKIX_DECISION_")
+        ?? (legacy ? credential("TASKIX_JEV_") : undefined)
+        ?? (officialOpenAI ? credential("OPENAI_") : undefined);
     const model = value("MODEL") ?? (legacy ? "jev-latest" : officialOpenAI ? "gpt-6-luna" : undefined);
     if (!url || !key || !model || /[^\x20-\x7e]/.test(key)) return;
     try {

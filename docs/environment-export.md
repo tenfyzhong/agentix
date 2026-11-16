@@ -128,3 +128,10 @@ produce an error. `--config PATH` still selects the adjacent env file, and
 env file; an empty file emits nothing. Invalid entries fail before any script is
 printed. Output is sorted and quoted literally. Protect files and generated
 scripts containing credentials with appropriate file permissions.
+
+## Optional pass credentials
+
+Memory accepts `api_key_pass` directly, or `api_key_env` with a matching `_PASS`
+entry in `taskix.env`. Plugins accept `TASKIX_DECISION_API_KEY_PASS`. Configure
+GPG/pinentry for the service user first; otherwise use a direct API key.
+See [pass setup and precedence](https://github.com/tenfyzhong/agentix/wiki/Pass-Secrets).

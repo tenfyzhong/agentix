@@ -64,6 +64,7 @@ fn embedding_index(
         protocol: ProviderProtocol::Ollama,
         base_url: endpoint.to_owned(),
         api_key_env: None,
+        api_key_pass: None,
         max_in_flight: 2,
     })?);
     let model = Arc::new(HttpEmbedding::new(provider, config.clone())?);

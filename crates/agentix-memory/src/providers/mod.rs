@@ -2,6 +2,7 @@ mod embedding;
 mod http;
 mod limits;
 mod model;
+pub(crate) mod pass;
 pub use embedding::HttpEmbedding;
 pub use http::HttpProvider;
 pub(crate) use http::ProviderHttpError;
