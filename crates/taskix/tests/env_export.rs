@@ -52,7 +52,10 @@ fn ordinary_command_loads_local_defaults_and_preserves_inherited_override() {
         let expected = if inherited { &inherited_db } else { &file_db };
         assert!(!output.status.success());
         assert!(
-            String::from_utf8_lossy(&output.stdout).contains(expected.to_str().unwrap()),
+            serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(expected.to_str().unwrap()),
             "{output:?}"
         );
     }
