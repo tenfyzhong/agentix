@@ -56,11 +56,37 @@ and allow multiline values. Double-quoted `\n` becomes a newline; single quotes
 preserve backslashes. Empty values are supported. All values remain strings.
 
 There is no variable interpolation, command substitution or shell evaluation.
-`$HOME`, `~` and `$(...)` remain literal. Use absolute paths where needed.
+`$HOME`, `${VAR}`, `$(...)` and `~user` remain literal.
 As with Node, lines without `=` are ignored and an unmatched opening quote
 remains part of the line's value. This is not a strict syntax checker.
 NUL bytes and parsed nonportable variable names are rejected without exposing
 values in diagnostics, so generated shell exports remain safe.
+
+## Home shorthand in paths
+
+Known filesystem settings accept `~` and `~/...` in both env files. CLIs,
+plugins and optional shell exports expand them using inherited `HOME`, then
+`USERPROFILE`, then the operating system home directory. An env-file `HOME`
+value does not change this base. Inherited overrides remain unchanged.
+
+Supported keys are `AGENTIX_CONFIG`, `AGENTIX_LOGIN_SHELL`,
+`AGENTIX_CLAUDE_DATA_DIR`, `AGENTIX_OPENCODE_STATE_DIR`,
+`AGENTIX_ANTIGRAVITY_DATA_DIR`, `AGENTIX_ANTIGRAVITY_SESSION_DIR`, `CODEX_HOME`,
+`TASKIX_CONFIG`, `TASKIX_BIN` (legacy), `TASKIX_LOGIN_SHELL`,
+`TASKIX_ANTIGRAVITY_DATA_DIR`, `TASKIX_DECISION_METRICS_DB`,
+`TASKIX_JEV_METRICS_DB` (legacy), and `XDG_STATE_HOME`.
+Config selectors still need to be set outside the file for discovery.
+`TASKIX_BIN` expansion does not restore the legacy executable override; plugins
+resolve the Taskix executable through `PATH`.
+
+```dotenv
+CODEX_HOME=~/.codex
+TASKIX_DECISION_METRICS_DB=~/.local/state/taskix/decision-metrics.sqlite
+```
+
+Other values, including credentials, URLs and unknown keys, remain literal even
+when they begin with `~/`. For example, `OPENAI_API_KEY=~/secret` is a literal
+key, not a reference to a file. Path expansion does not execute shell code.
 
 ## Migration
 

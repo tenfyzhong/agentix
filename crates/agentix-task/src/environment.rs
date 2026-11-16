@@ -142,9 +142,47 @@ pub fn path(config: &Path, app: &str) -> Result<std::path::PathBuf> {
     Ok(crate::expand_home(config)?.with_file_name(format!("{app}.env")))
 }
 
+// Keep the path allowlist aligned with plugins/shared/environment.mjs.
+fn expand_paths(mut values: BTreeMap<String, String>) -> Result<BTreeMap<String, String>> {
+    const PATH_KEYS: &[&str] = &[
+        "AGENTIX_CONFIG",
+        "AGENTIX_LOGIN_SHELL",
+        "AGENTIX_CLAUDE_DATA_DIR",
+        "AGENTIX_OPENCODE_STATE_DIR",
+        "AGENTIX_ANTIGRAVITY_DATA_DIR",
+        "AGENTIX_ANTIGRAVITY_SESSION_DIR",
+        "CODEX_HOME",
+        "TASKIX_CONFIG",
+        "TASKIX_BIN",
+        "TASKIX_LOGIN_SHELL",
+        "TASKIX_ANTIGRAVITY_DATA_DIR",
+        "TASKIX_DECISION_METRICS_DB",
+        "TASKIX_JEV_METRICS_DB",
+        "XDG_STATE_HOME",
+    ];
+    for (key, value) in &mut values {
+        if PATH_KEYS.contains(&key.as_str()) && (value == "~" || value.starts_with("~/")) {
+            let home = std::env::var_os("HOME")
+                .filter(|value| !value.is_empty())
+                .or_else(|| std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()))
+                .map(std::path::PathBuf::from)
+                .or_else(dirs::home_dir)
+                .context("home directory unavailable")?;
+            *value = if value == "~" {
+                home
+            } else {
+                home.join(value[2..].trim_start_matches('/'))
+            }
+            .to_string_lossy()
+            .into_owned();
+        }
+    }
+    Ok(values)
+}
+
 pub fn load(path: &Path) -> Result<BTreeMap<String, String>> {
     match std::fs::read_to_string(path) {
-        Ok(source) => parse(&source),
+        Ok(source) => expand_paths(parse(&source)?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
         Err(error) => Err(error).context("read environment configuration"),
     }
@@ -154,7 +192,7 @@ pub fn load(path: &Path) -> Result<BTreeMap<String, String>> {
 pub fn export(path: &Path, shell: Option<&str>) -> Result<String> {
     let path = crate::expand_home(path)?;
     let source = std::fs::read_to_string(&path).context("read environment configuration")?;
-    let values = parse(&source)?;
+    let values = expand_paths(parse(&source)?)?;
     let shell = shell.map_or_else(Dialect::detect, Dialect::parse)?;
     Ok(values
         .into_iter()
@@ -206,6 +244,31 @@ fn valid_key(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loads_and_exports_home_paths_without_expanding_other_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("taskix.env");
+        std::fs::write(&file, "TASKIX_BIN=~/bin/taskix\nCODEX_HOME=~\nOPENAI_API_KEY=~/literal\nCUSTOM_PATH=~/literal\nTASKIX_LOGIN_SHELL=~someone/bin/fish\nAGENTIX_LOGIN_SHELL=$HOME/bin/fish\n").unwrap();
+        let values = load(&file).unwrap();
+        let home = std::env::var_os("HOME")
+            .filter(|value| !value.is_empty())
+            .or_else(|| std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()))
+            .map(std::path::PathBuf::from)
+            .or_else(dirs::home_dir)
+            .unwrap();
+        assert_eq!(
+            values["TASKIX_BIN"],
+            home.join("bin/taskix").to_string_lossy()
+        );
+        assert_eq!(values["CODEX_HOME"], home.to_string_lossy());
+        assert_eq!(values["OPENAI_API_KEY"], "~/literal");
+        assert_eq!(values["CUSTOM_PATH"], "~/literal");
+        assert_eq!(values["TASKIX_LOGIN_SHELL"], "~someone/bin/fish");
+        assert_eq!(values["AGENTIX_LOGIN_SHELL"], "$HOME/bin/fish");
+        let script = export(&file, Some("fish")).unwrap();
+        assert!(script.contains(&Dialect::Fish.assignment("TASKIX_BIN", &values["TASKIX_BIN"])));
+    }
 
     #[test]
     fn accepts_only_portable_environment_identifiers() {

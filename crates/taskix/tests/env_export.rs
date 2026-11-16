@@ -35,7 +35,7 @@ fn ordinary_command_loads_local_defaults_and_preserves_inherited_override() {
     let inherited_db = dir.path().join("inherited.sqlite");
     std::fs::write(
         dir.path().join("taskix.env"),
-        format!("TASKIX_DECISION_METRICS_DB={}\n", file_db.display()),
+        "TASKIX_DECISION_METRICS_DB=~/file-default.sqlite\n",
     )
     .unwrap();
     for inherited in [false, true] {
@@ -43,6 +43,7 @@ fn ordinary_command_loads_local_defaults_and_preserves_inherited_override() {
         cmd.arg("--config")
             .arg(&config)
             .args(["routing", "metrics", "report", "--json"])
+            .env("HOME", dir.path())
             .env_remove("TASKIX_DECISION_METRICS_DB")
             .env_remove("TASKIX_JEV_METRICS_DB");
         if inherited {

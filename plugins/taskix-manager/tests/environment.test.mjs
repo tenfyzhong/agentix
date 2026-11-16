@@ -80,3 +80,34 @@ test('Taskix subprocess receives file defaults from explicit config', {skip:proc
     assert.equal((await runTaskix(['--config','config.toml','context'], {cwd:dir})).result, 'from-file');
     assert.equal(process.env.LOCAL_ENV_CHILD_TEST, undefined);
 });
+
+for (const app of ['taskix', 'agentix']) {
+    test(`${app} expands only known file paths and preserves inherited overrides`, async t => {
+        const dir = mkdtempSync(join(tmpdir(), 'env-home-'));
+        t.after(() => rmSync(dir, {recursive:true, force:true}));
+        const { taskEnvironment, agentEnvironment } = await import('../environment.mjs');
+        const load = app === 'taskix' ? taskEnvironment : agentEnvironment;
+        const home = join(dir, 'home with spaces');
+        writeFileSync(join(dir, `${app}.env`), [
+            'TASKIX_BIN=~/bin/taskix', 'CODEX_HOME=~',
+            'TASKIX_DECISION_METRICS_DB=~/metrics.sqlite',
+            'AGENTIX_CLAUDE_DATA_DIR=~/claude',
+            'OPENAI_API_KEY=~/literal', 'CUSTOM_PATH=~/literal',
+            'TASKIX_LOGIN_SHELL=~someone/bin/fish',
+            'AGENTIX_LOGIN_SHELL=$HOME/bin/fish',
+        ].join('\n'));
+        const inherited = {HOME:home};
+        const config = join(dir, 'config.toml');
+        const env = load(inherited, config);
+        assert.equal(env.TASKIX_BIN, join(home, 'bin/taskix'));
+        assert.equal(env.CODEX_HOME, home);
+        assert.equal(env.TASKIX_DECISION_METRICS_DB, join(home, 'metrics.sqlite'));
+        assert.equal(env.AGENTIX_CLAUDE_DATA_DIR, join(home, 'claude'));
+        assert.equal(env.OPENAI_API_KEY, '~/literal');
+        assert.equal(env.CUSTOM_PATH, '~/literal');
+        assert.equal(env.TASKIX_LOGIN_SHELL, '~someone/bin/fish');
+        assert.equal(env.AGENTIX_LOGIN_SHELL, '$HOME/bin/fish');
+        assert.equal(load({...inherited, TASKIX_BIN:''}, config).TASKIX_BIN, '');
+        assert.equal(inherited.TASKIX_BIN, undefined);
+    });
+}

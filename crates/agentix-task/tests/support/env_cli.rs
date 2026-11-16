@@ -157,3 +157,12 @@ fn env_reads_dedicated_file_without_toml() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "export LOCAL_ENV_TEST='literal';\n");
 }
+
+#[test]
+fn env_expands_home_paths_and_keeps_credentials_literal() {
+    let output = run("CODEX_HOME=~\nOPENAI_API_KEY=~/literal\n", "sh");
+    assert!(output.status.success(), "{output:?}");
+    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap();
+    let expected = format!("export CODEX_HOME='{}';\nexport OPENAI_API_KEY='~/literal';\n", home.replace('\'', "'\\''"));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+}

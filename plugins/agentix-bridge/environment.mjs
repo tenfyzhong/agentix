@@ -13,6 +13,31 @@ export function parseEnvironment(source) {
     return values;
 }
 
+// Only known filesystem settings accept home shorthand; secrets and URLs stay literal.
+const pathKeys = new Set([
+    'AGENTIX_CONFIG',
+    'AGENTIX_LOGIN_SHELL',
+    'AGENTIX_CLAUDE_DATA_DIR',
+    'AGENTIX_OPENCODE_STATE_DIR',
+    'AGENTIX_ANTIGRAVITY_DATA_DIR',
+    'AGENTIX_ANTIGRAVITY_SESSION_DIR',
+    'CODEX_HOME',
+    'TASKIX_CONFIG',
+    'TASKIX_BIN',
+    'TASKIX_LOGIN_SHELL',
+    'TASKIX_ANTIGRAVITY_DATA_DIR',
+    'TASKIX_DECISION_METRICS_DB',
+    'TASKIX_JEV_METRICS_DB',
+    'XDG_STATE_HOME',
+]);
+function expandPaths(values, home) {
+    return Object.fromEntries(Object.entries(values).map(([key, value]) => [
+        key,
+        pathKeys.has(key) && (value === '~' || value.startsWith('~/'))
+            ? (value === '~' ? home : join(home, value.slice(2))) : value,
+    ]));
+}
+
 const files = new Map();
 function applicationEnvironment(app, inherited, configPath) {
     const home = inherited.HOME || inherited.USERPROFILE || homedir();
@@ -29,7 +54,7 @@ function applicationEnvironment(app, inherited, configPath) {
         files.set(path, Object.freeze(values));
     }
     // Never mutate a shared plugin host's process.env. Empty inherited values count.
-    return { ...files.get(path), ...inherited };
+    return { ...expandPaths(files.get(path), home), ...inherited };
 }
 
 export function taskEnvironment(inherited = process.env, configPath = inherited.TASKIX_CONFIG) {
