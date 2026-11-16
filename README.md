@@ -56,7 +56,7 @@ Edit `~/.config/agentix/config.toml`:
 
 1. Enable the backend you use: `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, `[agent.claude]`, `[agent.opencode]`, or `[agent.antigravity]`. The example enables Codex; each table selects its backend without a `kind` field.
 2. Set `[channel].kind` to `telegram`, `feishu`, or `slack`.
-3. Fill in the matching channel table: Telegram `token`, Feishu `app_id` and `app_secret`, or Slack `bot_token` and `app_token`.
+3. Fill in the matching channel table: Telegram `token`, Feishu `app_id` and `app_secret`, or Slack `bot_token` and `app_token`. Each secret also accepts a direct pass entry via its `_pass` field; configure pinentry first ([setup](docs/pass-secrets.md)).
 4. Leave the selected channel's owner list empty for first-time claiming.
 
 Pi/OMP need the [live-session bridge](https://github.com/tenfyzhong/agentix/wiki/Pi-and-OMP) loaded in the original terminal. Claude Code needs the [bridge plugin and terminal setup](https://github.com/tenfyzhong/agentix/wiki/Claude-Code). OpenCode 2.0.32+ uses the [OpenCode TUI and server plugins](https://github.com/tenfyzhong/agentix/wiki/OpenCode). Antigravity agy 1.5.5 uses the [native plugins and terminal bridge](https://github.com/tenfyzhong/agentix/wiki/Antigravity). For Windows configuration, bot creation, and other settings, see [Getting started](https://github.com/tenfyzhong/agentix/wiki/Getting-Started) and [configuration and operations](https://github.com/tenfyzhong/agentix/wiki/Configuration-and-Operations).

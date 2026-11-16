@@ -23,8 +23,11 @@ pub(crate) enum AuthPolicy {
 }
 impl AuthPolicy {
     pub(crate) fn load(options: &ProxyOptions) -> Result<Self> {
-        let capability = options.ws_token_file.is_some() || options.ws_token_sha256.is_some();
+        let capability = options.ws_token_file.is_some()
+            || options.ws_token_sha256.is_some()
+            || options.ws_token_pass.is_some();
         let signed = options.ws_shared_secret_file.is_some()
+            || options.ws_shared_secret_pass.is_some()
             || options.ws_issuer.is_some()
             || options.ws_audience.is_some()
             || options.ws_max_clock_skew_seconds.is_some();
@@ -41,9 +44,13 @@ impl AuthPolicy {
                     !signed,
                     "signed bearer options require ws_auth signed-bearer-token"
                 );
-                let hash = match (&options.ws_token_file, &options.ws_token_sha256) {
-                    (Some(path), None) => Sha256::digest(secret(path)?.as_bytes()).into(),
-                    (None, Some(hex)) => {
+                let hash = match (
+                    &options.ws_token_file,
+                    &options.ws_token_sha256,
+                    &options.ws_token_pass,
+                ) {
+                    (Some(path), None, None) => Sha256::digest(secret(path)?.as_bytes()).into(),
+                    (None, Some(hex), None) => {
                         ensure!(
                             hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()),
                             "ws_token_sha256 must contain 64 hex digits"
@@ -54,8 +61,11 @@ impl AuthPolicy {
                         }
                         digest
                     }
+                    (None, None, Some(entry)) => {
+                        Sha256::digest(agentix_secrets::key(entry)?.as_bytes()).into()
+                    }
                     _ => anyhow::bail!(
-                        "capability-token requires exactly one of ws_token_file or ws_token_sha256"
+                        "capability-token requires exactly one of ws_token_file, ws_token_sha256 or ws_token_pass"
                     ),
                 };
                 Ok(Self::Capability(hash))
@@ -65,15 +75,19 @@ impl AuthPolicy {
                     !capability,
                     "capability options require ws_auth capability-token"
                 );
-                let secret = secret(
-                    options
-                        .ws_shared_secret_file
-                        .as_deref()
-                        .context("ws_shared_secret_file is required")?,
-                )?;
+                let secret = match (
+                    &options.ws_shared_secret_file,
+                    &options.ws_shared_secret_pass,
+                ) {
+                    (Some(path), None) => secret(path)?,
+                    (None, Some(entry)) => agentix_secrets::key(entry)?,
+                    _ => anyhow::bail!(
+                        "exactly one of ws_shared_secret_file or ws_shared_secret_pass is required"
+                    ),
+                };
                 ensure!(
                     secret.len() >= 32,
-                    "ws_shared_secret_file must contain at least 32 bytes"
+                    "shared secret must contain at least 32 bytes"
                 );
                 Ok(Self::Signed {
                     key: DecodingKey::from_secret(secret.as_bytes()),
@@ -182,4 +196,67 @@ fn reject(status: StatusCode) -> ErrorResponse {
         .status(status)
         .body(Some("WebSocket access denied".into()))
         .unwrap()
+}
+
+#[cfg(all(test, unix))]
+mod pass_tests {
+    use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+
+    #[test]
+    fn pass_authentication_accepts_only_resolved_credentials() {
+        if std::env::var_os("AGENTIX_PROXY_PASS_TEST").is_some() {
+            let options = |value| serde_json::from_value::<ProxyOptions>(value).unwrap();
+            let capability = AuthPolicy::load(&options(serde_json::json!({
+                "ws_auth":"capability-token", "ws_token_pass":"test/proxy"
+            })))
+            .unwrap();
+            let key = "test-secret-with-at-least-32-bytes";
+            assert!(capability.accepts(key));
+            assert!(!capability.accepts("wrong"));
+            let signed = AuthPolicy::load(&options(serde_json::json!({
+                "ws_auth":"signed-bearer-token", "ws_shared_secret_pass":"test/proxy"
+            })))
+            .unwrap();
+            let token = jsonwebtoken::encode(
+                &jsonwebtoken::Header::default(),
+                &serde_json::json!({"exp": jsonwebtoken::get_current_timestamp() + 60}),
+                &jsonwebtoken::EncodingKey::from_secret(key.as_bytes()),
+            )
+            .unwrap();
+            assert!(signed.accepts(&token));
+            assert!(!signed.accepts(key));
+            for invalid in [
+                serde_json::json!({"ws_token_pass":"test/proxy"}),
+                serde_json::json!({"ws_auth":"capability-token", "ws_token_pass":"test/proxy", "ws_token_file":"/unused"}),
+                serde_json::json!({"ws_auth":"capability-token", "ws_token_pass":"test/proxy", "ws_token_sha256":"00".repeat(32)}),
+                serde_json::json!({"ws_auth":"signed-bearer-token", "ws_shared_secret_pass":"test/proxy", "ws_shared_secret_file":"/unused"}),
+                serde_json::json!({"ws_auth":"capability-token", "ws_shared_secret_pass":"test/proxy"}),
+                serde_json::json!({"ws_auth":"signed-bearer-token", "ws_token_pass":"test/proxy"}),
+            ] {
+                assert!(AuthPolicy::load(&options(invalid)).is_err());
+            }
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pass");
+        fs::write(&path, "#!/bin/sh\n[ \"$1\" = show ] && [ \"$2\" = -- ] && [ \"$3\" = test/proxy ] || exit 3\nprintf 'test-secret-with-at-least-32-bytes\\n'\n").unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "proxy_auth::pass_tests::pass_authentication_accepts_only_resolved_credentials",
+                "--nocapture",
+            ])
+            .env("AGENTIX_PROXY_PASS_TEST", "1")
+            .env("PATH", dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

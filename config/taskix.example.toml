@@ -38,6 +38,9 @@ path = "~/.local/share/taskix/memory.sqlite3"
 api = "responses"
 protocol = "openai"
 base_url = "https://api.openai.com/v1"
+## Plaintext API keys remain supported without pass or pinentry: use api_key_env
+## below and store the actual key in that variable in taskix.env or the environment.
+## Omit api_key_pass and the corresponding *_PASS variable in plaintext mode.
 ## Choose api_key_env OR api_key_pass, never both.
 ## api_key_env also accepts OPENAI_API_KEY_PASS when OPENAI_API_KEY is unset.
 api_key_env = "OPENAI_API_KEY"

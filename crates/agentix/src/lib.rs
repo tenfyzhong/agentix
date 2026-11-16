@@ -216,22 +216,26 @@ pub struct StorageConfig {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TelegramConfig {
     #[serde(default)]
     pub token: String,
     #[serde(default)]
+    pub token_pass: Option<String>,
+    #[serde(default)]
     pub owner_user_ids: Vec<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeishuConfig {
     #[serde(default)]
     pub app_id: String,
     #[serde(default)]
     pub app_secret: String,
+    #[serde(default)]
+    pub app_secret_pass: Option<String>,
     #[serde(default)]
     pub owner_open_ids: Vec<String>,
 }
@@ -248,7 +252,11 @@ pub struct SlackConfig {
     #[serde(default)]
     pub bot_token: String,
     #[serde(default)]
+    pub bot_token_pass: Option<String>,
+    #[serde(default)]
     pub app_token: String,
+    #[serde(default)]
+    pub app_token_pass: Option<String>,
     #[serde(default)]
     pub owner_user_ids: Vec<String>,
 }
@@ -286,7 +294,7 @@ impl std::fmt::Debug for SlackConfig {
             .field("bot_token", &"[redacted]")
             .field("app_token", &"[redacted]")
             .field("owner_user_ids", &self.owner_user_ids)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -406,12 +414,16 @@ impl Config {
                 }) {
                     bail!("channel.slack.app_id must be a Slack app ID starting with A");
                 }
-                if slack.bot_token.trim().is_empty() {
-                    bail!("channel.slack.bot_token must not be missing or blank");
-                }
-                if slack.app_token.trim().is_empty() {
-                    bail!("channel.slack.app_token must not be missing or blank");
-                }
+                validate_credential(
+                    &slack.bot_token,
+                    slack.bot_token_pass.as_deref(),
+                    "channel.slack.bot_token",
+                )?;
+                validate_credential(
+                    &slack.app_token,
+                    slack.app_token_pass.as_deref(),
+                    "channel.slack.app_token",
+                )?;
                 if slack
                     .owner_user_ids
                     .iter()
@@ -424,9 +436,11 @@ impl Config {
                 let telegram = self.channel.telegram.as_ref().context(
                     "selected telegram channel requires [channel.telegram] configuration",
                 )?;
-                if telegram.token.trim().is_empty() {
-                    bail!("channel.telegram.token must not be missing or blank");
-                }
+                validate_credential(
+                    &telegram.token,
+                    telegram.token_pass.as_deref(),
+                    "channel.telegram.token",
+                )?;
             }
             ImChannel::Feishu => {
                 let feishu =
@@ -436,9 +450,11 @@ impl Config {
                 if feishu.app_id.trim().is_empty() {
                     bail!("channel.feishu.app_id must not be missing or blank");
                 }
-                if feishu.app_secret.trim().is_empty() {
-                    bail!("channel.feishu.app_secret must not be missing or blank");
-                }
+                validate_credential(
+                    &feishu.app_secret,
+                    feishu.app_secret_pass.as_deref(),
+                    "channel.feishu.app_secret",
+                )?;
             }
         }
         if self.storage.path.as_os_str().is_empty() {
@@ -714,4 +730,93 @@ const fn default_max_log_files() -> usize {
 
 fn default_claude_command() -> PathBuf {
     PathBuf::from("claude")
+}
+
+impl TelegramConfig {
+    /// Resolve the credential only when its channel is used.
+    pub fn resolve_token(&self) -> Result<String> {
+        resolve_credential(
+            &self.token,
+            self.token_pass.as_deref(),
+            "channel.telegram.token",
+        )
+    }
+}
+
+impl FeishuConfig {
+    /// Resolve the credential only when its channel is used.
+    pub fn resolve_app_secret(&self) -> Result<String> {
+        resolve_credential(
+            &self.app_secret,
+            self.app_secret_pass.as_deref(),
+            "channel.feishu.app_secret",
+        )
+    }
+}
+
+impl SlackConfig {
+    /// Resolve the credential only when its channel is used.
+    pub fn resolve_bot_token(&self) -> Result<String> {
+        resolve_credential(
+            &self.bot_token,
+            self.bot_token_pass.as_deref(),
+            "channel.slack.bot_token",
+        )
+    }
+}
+
+impl SlackConfig {
+    /// Resolve the credential only when its channel is used.
+    pub fn resolve_app_token(&self) -> Result<String> {
+        resolve_credential(
+            &self.app_token,
+            self.app_token_pass.as_deref(),
+            "channel.slack.app_token",
+        )
+    }
+}
+
+impl std::fmt::Debug for TelegramConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelegramConfig")
+            .field("token", &"[redacted]")
+            .field("owner_user_ids", &self.owner_user_ids)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for FeishuConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FeishuConfig")
+            .field("app_id", &self.app_id)
+            .field("app_secret", &"[redacted]")
+            .field("owner_open_ids", &self.owner_open_ids)
+            .finish_non_exhaustive()
+    }
+}
+
+fn validate_credential(direct: &str, entry: Option<&str>, name: &str) -> Result<()> {
+    if let Some(entry) = entry {
+        anyhow::ensure!(
+            direct.trim().is_empty(),
+            "{name} and {name}_pass are mutually exclusive"
+        );
+        agentix_secrets::validate_entry(entry).with_context(|| format!("invalid {name}_pass"))?;
+    } else {
+        anyhow::ensure!(
+            !direct.trim().is_empty(),
+            "{name} must not be missing or blank"
+        );
+    }
+    Ok(())
+}
+
+fn resolve_credential(direct: &str, entry: Option<&str>, name: &str) -> Result<String> {
+    validate_credential(direct, entry, name)?;
+    match entry {
+        Some(entry) => {
+            agentix_secrets::key(entry).with_context(|| format!("failed to resolve {name}_pass"))
+        }
+        None => Ok(direct.to_owned()),
+    }
 }

@@ -290,3 +290,15 @@ async fn capability_digest_origin_and_duplicate_authorization_are_checked() {
     }
     proxy.shutdown().await;
 }
+
+#[test]
+fn proxy_pass_options_decode_and_overlay() {
+    for field in ["ws_token_pass", "ws_shared_secret_pass"] {
+        let source = json!({field: "agentix/proxy"});
+        let parsed: ProxyOptions = serde_json::from_value(source.clone()).unwrap();
+        let mut merged = ProxyOptions::default();
+        merged.overlay(&parsed);
+        assert_eq!(merged, parsed);
+        assert_ne!(merged, ProxyOptions::default());
+    }
+}

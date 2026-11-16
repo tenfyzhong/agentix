@@ -1,12 +1,13 @@
-# API keys from pass
+# Credentials from pass
 
-Requires a build containing pass support. No new Rust or Node package dependency
+Requires a build containing pass support. No new third-party Rust or Node package
 is needed; pass, GnuPG and a working pinentry are external prerequisites.
 
 ## Configure pinentry first
 
 **Configure and verify pinentry for the service/plugin user BEFORE enabling pass.
-Otherwise configure the actual API key directly in the environment or taskix.env.**
+Otherwise configure API keys directly in the environment or taskix.env, and Agentix
+channel secrets directly in TOML (or proxy credentials in their existing files).**
 Do not commit plaintext keys to Git.
 
 On Apple Silicon macOS, install pass and pinentry-mac. Add this to
@@ -31,6 +32,53 @@ on a visible dialog. `pinentry-mode loopback` does not use normal pinentry.
 Verify decryption under the service user's context. Host hooks may have shorter
 deadlines: unlock GPG before launching those hosts. Cancellation or timeout is
 an error, not an automatic switch to another credential.
+
+## Agentix channel and proxy credentials
+
+Configure the pass entry directly in `agentix/config.toml`; no env indirection is
+needed. Keep only the table for the channel you select:
+
+```toml
+[channel.telegram]
+token_pass = "agentix/telegram/token"
+
+[channel.feishu]
+app_id = "your-app-id"
+app_secret_pass = "agentix/feishu/app-secret"
+
+[channel.slack]
+bot_token_pass = "agentix/slack/bot-token"
+app_token_pass = "agentix/slack/app-token"
+```
+
+Each `_pass` field is mutually exclusive with a nonblank direct `token`,
+`app_secret`, `bot_token` or `app_token`. App IDs are identifiers and remain direct
+values. Loading/validating configuration and exporting environment scripts do not
+decrypt credentials. Only the selected channel resolves its credentials when it
+is used, including connectivity checks that use that channel.
+
+For a Codex proxy, choose exactly one capability credential source:
+
+```toml
+[agent.codex.proxy]
+ws_auth = "capability-token"
+ws_token_pass = "agentix/codex/token"
+```
+
+`ws_token_pass`, `ws_token_file` and `ws_token_sha256` are mutually exclusive.
+For `ws_auth = "signed-bearer-token"`, use `ws_shared_secret_pass` instead of
+`ws_shared_secret_file`; the resolved secret must contain at least 32 bytes.
+The corresponding `--ws-token-pass` and `--ws-shared-secret-pass` flags are also
+available on `agentix serve`. CLI fields override the same TOML fields; switching
+source types requires removing the other source from TOML.
+
+Pass returns the credential on its first line. Successful resolutions are cached
+in the process; restart Agentix after rotating a stored credential. Decryption
+errors abort the operation without falling back or exposing pass output.
+
+**Verify pinentry before using these fields.** Without working pinentry, remove
+the pass field and use the existing direct credential setting instead. Protect
+plaintext configuration with file permissions and keep it out of Git.
 
 ## Direct Memory reference
 
