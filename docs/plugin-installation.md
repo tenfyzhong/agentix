@@ -165,7 +165,7 @@ checkout containing it until the first release with this policy is published.
 
 Agentix, Taskix, both host plugins, and Taskix Sync use the same release tag.
 CI-produced CLI archives contain the release version; direct Git plugin installs
-keep the committed development manifest version (see Preparing a release below).
+keep the committed development manifest version (see Release packaging below).
 The commands above use `main`, a development channel. To install a stable release,
 select a published numeric tag from [Releases](https://github.com/tenfyzhong/agentix/releases)
 and replace `main` in the Codex, Claude, Pi, OpenCode and agy source references
@@ -221,14 +221,10 @@ sources report `modified`. Missing metadata, deleted branches, API rate limits
 and network failures report `unknown`, never `current`. This command is read-only
 and does not refresh caches or change host registrations.
 
-### Preparing a release
+### Release packaging
 
 Keep `VERSION`, Cargo/npm metadata, lockfiles, and plugin manifests at
-`0.0.0-dev` on `main`. Check their consistency before tagging:
-
-```sh
-make check-versions
-```
+`0.0.0-dev` on `main`. PR CI checks their consistency automatically.
 
 After release acceptance, create and push a numeric tag such as `1.2.3` (without
 `v`). Release CI reads the tag, validates source consistency, and replaces the
@@ -244,7 +240,3 @@ code but does not change the host's displayed manifest version. Identify these
 installs by their source ref and commit; the status tool may report `unknown` for
 release comparison when the manifest and tag differ or Git metadata is absent.
 Do not infer that two installations contain the same code from `0.0.0-dev` alone.
-
-For local packaging experiments, `make prepare-release VERSION=1.2.3` still stamps
-all component metadata without committing, tagging, or publishing. These are
-temporary working-tree changes, not part of the normal release process.

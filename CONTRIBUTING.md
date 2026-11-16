@@ -408,13 +408,11 @@ Run the focused packaging regressions with `cargo test -p agentix --all-features
 
 When the source URL changes for a new tag, the Homebrew workflow also removes the formula's old `revision` so the new upstream version starts at revision zero. Re-running the same tag preserves its revision while rebuilding the bottle.
 
-`make check-versions` verifies that source metadata agrees with `VERSION`; PR CI
-continues to reject partial version changes. Release CI first checks that source
+PR CI verifies that source metadata agrees with `VERSION` and rejects partial
+version changes. Release CI first checks that source
 consistency, then uses `scripts/plugin-version.mjs prepare X.Y.Z` and `check X.Y.Z`
 to stamp and verify its temporary checkout. Historical tags without `VERSION`
-retain the legacy Cargo-only version setter. `make prepare-release VERSION=X.Y.Z`
-remains available for local packaging experiments; do not commit those temporary
-version changes as part of the normal release process.
+retain the legacy Cargo-only version setter.
 
 The Taskix release archive contains tracked plugin files from the stamped working
 tree, excluding untracked caches and dependencies. Git tags and GitHub-generated
