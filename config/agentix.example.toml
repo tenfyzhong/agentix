@@ -183,5 +183,5 @@ listen = "127.0.0.1:9464"
 # Do not persist per-pane TMUX, TMUX_PANE, REX_SESSION, REX_BLOCK or REX_SERVER.
 # AGENTIX_SERVICE_ENVIRONMENT_PID is an internal bootstrap marker; do not set it.
 # Channel credentials belong in [channel.<kind>], not environment variables.
-# Taskix host settings (AGENT_TASK_LANG, TASKIX_*, provider keys) are documented
+# Taskix host settings (TASKIX_LANG, TASKIX_*, provider keys) are documented
 # in taskix.example.toml; apply both env commands when using both plugins.
