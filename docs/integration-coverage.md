@@ -579,13 +579,14 @@ checks do not establish live provider/IM or service-manager environment behavior
 ## CI test cost
 
 Lightweight classification jobs in Tests and CI skip tests, formatting/Clippy,
-monitoring, and tmux checks only for same-repository
-`release/X.Y.Z` pull requests whose full tree is exactly the base commit with
-`prepare-release` version changes applied. Version consistency is verified while
-classifying. Ordinary PRs, mixed changes, main pushes and manual dispatches retain
-the full test and CI jobs.
-`plugins/taskix-manager/tests/release-pr.test.mjs` exercises real Git trees for
-pure releases and code/dependency changes hidden in release-named branches.
+monitoring, and tmux checks only for same-repository `release/X.Y.Z` and
+`development/X.Y.Z` pull requests whose full tree is exactly the base commit
+with the expected version changes applied. Development branches must change
+`X.Y.Z` to `X.Y.Z+dev`. Version consistency is verified while classifying.
+Ordinary PRs, mixed changes, main pushes and manual dispatches retain the full
+checks. `plugins/taskix-manager/tests/release-pr.test.mjs` exercises real Git trees
+for pure release/development changes, mismatched development versions and bases,
+and code/dependency changes hidden in version branches.
 
 Plugin tests run in parallel with Rust tests on each supported operating system.
 Rust CI uses pinned cargo-nextest 0.9.146 to schedule tests across binaries, with
