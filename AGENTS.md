@@ -21,7 +21,3 @@ When modifying user manuals, update the corresponding pages in this repository's
 ## Commit & Pull Request Guidelines
 
 Pull before editing. Create branches such as `docs/example` from current `main`, with matching worktrees under `.git/wtm/docs/example`. Never commit or push to `main`. Use concise English subjects with prefixes such as `feat:`, `fix:`, or `docs:` and sign off every commit using `git commit -s`. PRs should explain the problem, resulting behavior, validation, and compatibility impact. Keep titles/descriptions accurate, synchronize documentation, and exclude secrets and build artifacts. See `CONTRIBUTING.md` for the full workflow.
-
-## Repository Skills
-
-- [release-version](.agents/skills/release-version/SKILL.md): Release a user-supplied version through a checked release PR, squash merge, and pushed annotated tag.
