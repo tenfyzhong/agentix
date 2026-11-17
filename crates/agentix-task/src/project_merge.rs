@@ -36,6 +36,12 @@ pub(crate) fn apply(
             .is_some_and(|r| !r.trim().is_empty() && b.remote.as_deref() == Some(r)),
         "invalid: Projects must have the same nonblank Git remote"
     );
+    // Establish a stable fallback before evaluating names; argument order is irrelevant.
+    let (a, b) = if (a.created_at, &a.id) <= (b.created_at, &b.id) {
+        (a, b)
+    } else {
+        (b, a)
+    };
     // A numeric ending alone is not proof of an allocated duplicate suffix.
     let key = if base_key(&b.key) == a.key {
         a.key.clone()
@@ -62,6 +68,7 @@ pub(crate) fn apply(
                 .copied()
                 .unwrap_or((p.created_at, 0)),
             p.created_at,
+            p.id.clone(),
         )
     });
     let root = candidates
@@ -93,7 +100,9 @@ pub(crate) fn apply(
     reallocate_sequences(state, &keep, &duplicate)?;
     relocate_work(state, &keep, &members, &directory)?;
     state.projects.retain(|p| !members.contains(&p.id));
-    let result = serde_json::to_value(&keep)?;
+    let mut result = serde_json::to_value(&keep)?;
+    result["retained_id"] = serde_json::json!(keep.id);
+    result["removed_id"] = serde_json::json!(duplicate.id);
     state.projects.push(keep);
     Ok(result)
 }
@@ -506,5 +515,89 @@ impl crate::Store {
                 .fetch_all(&self.pool)
                 .await?,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn merge_is_symmetric_for_identity_root_and_result() {
+        let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+        for root in &roots {
+            for args in [vec!["init"], vec!["remote", "add", "origin", "same"]] {
+                assert!(
+                    std::process::Command::new("git")
+                        .arg("-C")
+                        .arg(root.path())
+                        .args(args)
+                        .output()
+                        .unwrap()
+                        .status
+                        .success()
+                );
+            }
+        }
+        for (keys, dates, expected) in [
+            (["demo", "demo-2"], [20, 10], "prj_a"),
+            (["demo-2", "demo"], [10, 20], "prj_b"),
+            (["demo-2", "demo-3"], [20, 10], "prj_b"),
+            (["alpha", "beta"], [20, 10], "prj_b"),
+            (["alpha", "beta"], [10, 10], "prj_a"),
+            (["release-2026", "release-2026-2"], [20, 10], "prj_a"),
+        ] {
+            let mut original = Snapshot::default();
+            for i in 0..2 {
+                original.projects.push(Project {
+                    id: ["prj_a", "prj_b"][i].into(),
+                    key: keys[i].into(),
+                    name: keys[i].into(),
+                    root: roots[i].path().to_string_lossy().into_owned(),
+                    remote: Some("same".into()),
+                    revision: 1,
+                    created_at: dates[i],
+                    archived_at: None,
+                    document_directory: None,
+                });
+            }
+            let mut first = original.clone();
+            let mut second = original;
+            let forward = apply(
+                &mut first,
+                &json!({"project":"prj_a", "source":"prj_b"}),
+                &WriteOptions::default(),
+            )
+            .unwrap();
+            let reverse = apply(
+                &mut second,
+                &json!({"project":"prj_b", "source":"prj_a"}),
+                &WriteOptions::default(),
+            )
+            .unwrap();
+            assert_eq!(forward, reverse, "{keys:?} {dates:?}");
+            assert_eq!(first.projects, second.projects);
+            assert_eq!(forward["id"], expected);
+            assert_eq!(forward["retained_id"], expected);
+            assert_eq!(
+                forward["removed_id"],
+                if expected == "prj_a" {
+                    "prj_b"
+                } else {
+                    "prj_a"
+                }
+            );
+            let latest = usize::from(dates[1] >= dates[0]);
+            assert_eq!(
+                forward["root"],
+                roots[latest]
+                    .path()
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .as_ref()
+            );
+        }
     }
 }

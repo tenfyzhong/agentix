@@ -287,7 +287,7 @@ async fn schema_nineteen_migrates_workspace_paths_and_preserves_history_and_curs
         .fetch_one(&migrated.pool)
         .await
         .unwrap();
-    assert_eq!(version, 26);
+    assert_eq!(version, 27);
     assert!(
         migrated
             .events(None, 0, 100)
@@ -575,7 +575,7 @@ async fn schema_sixteen_and_seventeen_upgrade_to_relative_document_paths() {
             .fetch_one(&reopened.pool)
             .await
             .unwrap();
-        assert_eq!(version, 26);
+        assert_eq!(version, 27);
         assert_eq!(
             reopened.snapshot().await.unwrap().projects,
             snapshot.projects
@@ -621,7 +621,7 @@ async fn assert_schema_fifteen_upgrade(has_memory: bool) {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(version, 26);
+    assert_eq!(version, 27);
     assert!(
         store.event_policy(None, None, None).await.unwrap()["enabled"]
             .as_bool()
@@ -803,4 +803,65 @@ async fn current_schema_open_does_not_wait_for_existing_writer() {
         "opening current schema must not take the writer lock"
     );
     result.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn schema_twenty_six_upgrades_project_merge_storage_without_data_loss() {
+    for had_merges in [false, true] {
+        let (dir, store, snapshot) = fixture().await;
+        store.set_background_maintenance(false);
+        if had_merges {
+            sqlx::query("INSERT INTO project_merges(source,target) VALUES('old','retained')")
+                .execute(&store.pool)
+                .await
+                .unwrap();
+        } else {
+            sqlx::raw_sql("DROP TABLE project_merges; DROP INDEX projects_by_remote;")
+                .execute(&store.pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("PRAGMA user_version=26")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        store.pool.close().await;
+        store.maintenance_pool.close().await;
+        let path = dir.path().join("tasks.sqlite3");
+        for _ in 0..2 {
+            let reopened = Store::open(&path).await.unwrap();
+            let rows: Vec<(String, String)> =
+                sqlx::query_as("SELECT source,target FROM project_merges")
+                    .fetch_all(&reopened.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                rows,
+                if had_merges {
+                    vec![("old".into(), "retained".into())]
+                } else {
+                    vec![]
+                }
+            );
+            let indexes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND name='projects_by_remote'")
+                .fetch_one(&reopened.pool).await.unwrap();
+            assert_eq!(indexes, 1);
+            let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+                .fetch_one(&reopened.pool)
+                .await
+                .unwrap();
+            assert_eq!(version, 27);
+            let reader = Store::open_read_only(&path).await.unwrap();
+            assert_eq!(reader.snapshot().await.unwrap().projects, snapshot.projects);
+            reader.pool.close().await;
+            assert_eq!(
+                reopened.snapshot().await.unwrap().projects,
+                snapshot.projects
+            );
+            assert_eq!(reopened.snapshot().await.unwrap().jobs, snapshot.jobs);
+            assert_eq!(reopened.snapshot().await.unwrap().tasks, snapshot.tasks);
+            reopened.pool.close().await;
+            reopened.maintenance_pool.close().await;
+        }
+    }
 }

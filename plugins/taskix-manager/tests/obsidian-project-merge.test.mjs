@@ -16,10 +16,11 @@ test("project merge menu uses authoritative matching remotes and both revisions"
     await action;
     assert.equal(offered.candidates.length, 1);
     const merge = f.plugin.mergeProject(offered.project, offered.candidates[0]);
-    assert.deepEqual(Array.from(f.requests.at(-1).args.slice(-11,-1)), ["project", "merge", "prj_demo", "--source", "prj_other", "--source-revision", "4", "--expect-revision", "3", "--idempotency-key"]);
-    f.reply(null, undefined, { id: "prj_demo" });
+    assert.deepEqual(Array.from(f.requests.at(-1).args.slice(-10,-1)), ["project", "merge", "prj_demo", "prj_other", "--second-revision", "4", "--expect-revision", "3", "--idempotency-key"]);
+    f.reply(null, undefined, { id: "prj_demo", retained_id: "prj_demo", removed_id: "prj_other", root: "/new/repo", document_directory: "Projects/demo" });
     await merge;
     assert.match(f.notices.at(-1).message, /merged/);
+    for (const field of ["prj_demo", "prj_other", "/new/repo", "Projects/demo"]) assert.ok(f.notices.at(-1).message.includes(field));
 });
 
 test("copied project board cannot offer a merge", async () => {

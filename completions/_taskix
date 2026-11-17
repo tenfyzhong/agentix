@@ -1613,8 +1613,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (merge)
 _arguments "${_arguments_options[@]}" : \
-'--source=[]:SOURCE:_default' \
-'--source-revision=[]:SOURCE_REVISION:_default' \
+'--second-revision=[Expected revision of the second Project (--expect-revision guards the first)]:SECOND_REVISION:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
 '--actor=[]:ACTOR:_default' \
@@ -1627,7 +1626,8 @@ _arguments "${_arguments_options[@]}" : \
 '--json[]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':id:_default' \
+':first -- First Project ID; argument order does not choose the retained Project:_default' \
+':second -- Second Project ID:_default' \
 && ret=0
 ;;
 (list)

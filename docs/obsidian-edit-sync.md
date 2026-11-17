@@ -82,7 +82,7 @@ Update and reload the Obsidian Taskix Sync plugin to enable these behaviors.
 The managed Project folder and Board context menu offers **Merge project** when
 its stored origin is present. The dialog lists active and archived Projects with
 the exact same origin, verifies the clicked Board against the registered path,
-and submits both revisions to `taskix project merge PROJECT_ID --source OTHER_ID`.
+and submits both revisions to `taskix project merge PROJECT_A PROJECT_B`.
 The backend validates an existing local repository, preserves work identities and
 authored documents, selects the latest valid root, removes allocated numeric
 suffixes and deletes obsolete folders only after copying their contents. Custom

@@ -248,11 +248,13 @@ enum ProjectCommand {
     },
     /// Combine duplicate Projects with the same Git origin and preserve their work.
     Merge {
-        id: String,
+        /// First Project ID; argument order does not choose the retained Project.
+        first: String,
+        /// Second Project ID.
+        second: String,
+        /// Expected revision of the second Project (--expect-revision guards the first).
         #[arg(long)]
-        source: String,
-        #[arg(long)]
-        source_revision: Option<i64>,
+        second_revision: Option<i64>,
     },
     /// List unarchived Projects, or archived Projects with --archived.
     List {
@@ -691,7 +693,15 @@ fn response(result: Value) -> Value {
     envelope
 }
 fn print_human(value: &Value) {
-    if let Some(items) = value.as_array() {
+    if let (Some(retained), Some(removed)) =
+        (value["retained_id"].as_str(), value["removed_id"].as_str())
+    {
+        println!(
+            "Retained Project: {retained}\nRemoved Project: {removed}\nRoot: {}\nObsidian directory: {}",
+            value["root"].as_str().unwrap_or(""),
+            value["document_directory"].as_str().unwrap_or("")
+        );
+    } else if let Some(items) = value.as_array() {
         for item in items {
             print_human(item);
         }
@@ -1133,11 +1143,11 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
             .await
         }
         ProjectCommand::Merge {
-            id,
-            source,
-            source_revision,
+            first,
+            second,
+            second_revision,
         } => {
-            let result = mutate(cli, service, json!({"command":"project.merge","project":id,"source":source,"source_revision":source_revision})).await?;
+            let result = mutate(cli, service, json!({"command":"project.merge","project":first,"source":second,"source_revision":second_revision})).await?;
             memory::project_merge::sync(&cli.config_path()?, service)
                 .await
                 .context("Project merged; retry pending Memory migration with taskix sync")?;
