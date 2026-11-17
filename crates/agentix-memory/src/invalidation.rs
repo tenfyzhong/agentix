@@ -10,8 +10,9 @@ impl MemoryStore {
             return Ok(());
         };
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        bind_turn(&mut tx, source, job).await?;
-        index_receipts(&mut tx, source).await?;
+        let source = crate::project_merge::source(&mut tx, source).await?;
+        bind_turn(&mut tx, &source, job).await?;
+        index_receipts(&mut tx, &source).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -35,6 +36,8 @@ impl MemoryStore {
         at: i64,
     ) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let canonical_project = crate::project_merge::canonical(&mut tx, project).await?;
+        let project = canonical_project.as_str();
         sqlx::query("INSERT INTO cancelled_jobs(project_id,job_id,revision,cancelled_at) VALUES(?,?,?,?) ON CONFLICT(project_id,job_id) DO UPDATE SET revision=max(revision,excluded.revision),cancelled_at=max(cancelled_at,excluded.cancelled_at)")
             .bind(project).bind(job).bind(revision).bind(at).execute(&mut *tx).await?;
         invalidate(&mut tx, project, job, at).await?;

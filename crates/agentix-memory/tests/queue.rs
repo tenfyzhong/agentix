@@ -332,3 +332,34 @@ async fn queue_notifications_follow_commits_and_ignore_duplicate_ingest() {
     store.ingest(&input).await.unwrap();
     assert!(!work.has_changed().unwrap());
 }
+
+#[tokio::test]
+async fn project_merge_fences_running_work_and_replays_sources_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("memory.db");
+    let store = MemoryStore::open(&path).await.unwrap();
+    let original = source("old", "receipt", "turn", 1);
+    store.ingest(&original).await.unwrap();
+    let config = AgentConfig::default();
+    let lease = store
+        .claim_work_item("worker", &config, 100, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    store.merge_project("old", "kept").await.unwrap();
+    assert!(!store.work_is_current(&lease, 100).await.unwrap());
+    drop(store);
+    let store = MemoryStore::open(&path).await.unwrap();
+    assert!(!store.ingest(&original).await.unwrap());
+    let lease = store
+        .claim_work_item("new-worker", &config, 100, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(lease.project_id, "kept");
+    assert!(store.work_is_current(&lease, 100).await.unwrap());
+    let recovered = store.recovery_sources("", 100).await.unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].project_id, "kept");
+    assert_eq!(recovered[0].messages, original.messages);
+}

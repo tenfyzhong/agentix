@@ -55,6 +55,7 @@ pub(crate) fn apply(
         }
         "project.register" => register_project(state, request, now),
         "project.move" => move_project(state, request, options),
+        "project.merge" => crate::project_merge::apply(state, request, options),
         "project.rename" | "project.relocate" => {
             crate::project_rename::rename(state, request, options)
         }
@@ -262,9 +263,34 @@ fn register_project(state: &mut Snapshot, request: &Value, now: i64) -> Result<V
     let root = required(request, "root")?;
     if let Some(project) = state
         .projects
-        .iter()
+        .iter_mut()
         .find(|p| p.root == root || state.query_context.registered_project.as_ref() == Some(&p.id))
     {
+        if let Some(remote) = request["remote"].as_str().filter(|v| !v.trim().is_empty()) {
+            ensure!(
+                project.remote.as_deref().is_none_or(|old| old == remote),
+                "conflict: registered root belongs to a different Git remote"
+            );
+            if project.remote.is_none() {
+                project.remote = Some(remote.to_owned());
+                project.revision += 1;
+            }
+        }
+        if project.root != root
+            && request["remote"]
+                .as_str()
+                .is_some_and(|remote| project.remote.as_deref() == Some(remote))
+        {
+            ensure!(
+                std::path::Path::new(root).is_dir(),
+                "invalid: Project root must be an existing directory"
+            );
+            project.root = std::path::Path::new(root)
+                .canonicalize()?
+                .to_string_lossy()
+                .into_owned();
+            project.revision += 1;
+        }
         return Ok(serde_json::to_value(project)?);
     }
     let name = required(request, "name")?;

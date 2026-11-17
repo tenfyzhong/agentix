@@ -32,6 +32,7 @@ mod naming;
 mod project;
 mod project_archive;
 mod project_lookup;
+mod project_merge;
 mod project_rename;
 mod projection;
 mod publication;

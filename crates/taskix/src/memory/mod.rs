@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
 pub(crate) mod daemon;
+pub(crate) mod project_merge;
 mod triage;
 
 pub async fn run(cli: &Cli, action: &MemoryCommand) -> Result<Value> {

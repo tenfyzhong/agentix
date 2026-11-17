@@ -431,6 +431,9 @@ impl Store {
         )
         .await?;
         crate::deletion::check_pending_paths(&mut tx, &before, &state).await?;
+        if command == "project.merge" {
+            crate::project_merge::prepare(&mut tx, &before, &state).await?;
+        }
         persist(&mut tx, &before, &state, &command, &options, self.now()).await?;
         if matches!(command.as_str(), "project.rename" | "project.relocate") {
             crate::project_rename::rebase_registry(&mut tx, &before, &state).await?;

@@ -234,13 +234,14 @@ impl MemoryStore {
             "invalid replay progress"
         );
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let source = crate::project_merge::source(&mut tx, source).await?;
         let data: Option<String> =
             sqlx::query_scalar("SELECT data FROM sources WHERE receipt_id=?")
                 .bind(&source.receipt_id)
                 .fetch_optional(&mut *tx)
                 .await?;
         ensure!(
-            data.as_deref() == Some(serde_json::to_string(source)?.as_str()),
+            data.as_deref() == Some(serde_json::to_string(&source)?.as_str()),
             "replay source must be persisted before checkpointing"
         );
         let result =
@@ -283,8 +284,10 @@ impl MemoryStore {
                 .all(|m| !m.id.is_empty() && matches!(m.role.as_str(), "user" | "assistant")),
             "invalid: source messages"
         );
-        let data = serde_json::to_string(source)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let canonical_source = crate::project_merge::source(&mut tx, source).await?;
+        let source = &canonical_source;
+        let data = serde_json::to_string(source)?;
         let bound: Option<String> =
             sqlx::query_scalar("SELECT value FROM memory_metadata WHERE key='source_instance'")
                 .fetch_optional(&mut *tx)
@@ -692,6 +695,10 @@ pub(crate) async fn validate_evidence(
 }
 
 pub(crate) async fn save(conn: &mut SqliteConnection, memory: &Memory) -> Result<()> {
+    ensure!(
+        crate::project_merge::canonical(conn, &memory.project_id).await? == memory.project_id,
+        "conflict: Project merged; reload memory ownership"
+    );
     crate::invalidation::validate_memory(conn, memory).await?;
     crate::facts::validate_version(conn, memory).await?;
     let data = serde_json::to_string(memory)?;

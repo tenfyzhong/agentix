@@ -269,6 +269,7 @@ pub struct Snapshot {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryContext {
+    pub(crate) project_activity: std::collections::BTreeMap<String, (i64, i64)>,
     /// Present only for scoped Milestone publication snapshots.
     pub(crate) milestone_progress:
         std::collections::BTreeMap<String, crate::issue_read::MilestoneProgress>,

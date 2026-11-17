@@ -523,6 +523,8 @@ class TaskixSyncPlugin extends Plugin {
             const properties = this.app.metadataCache.getFileCache(board)?.frontmatter;
             if (properties?.["taskix-generated"] !== true || !/^prj_/.test(properties.id) ||
                 !["ACTIVE", "ARCHIVED"].includes(properties.status)) return;
+            if (properties.remote) menu.addItem(item => item.setTitle("Merge project")
+                .setIcon("merge").onClick(() => this.prepareProjectMerge(properties.id, board.path)));
             const archive = properties.status === "ACTIVE";
             menu.addItem(item => item.setTitle(archive ? "Archive project" : "Restore project")
                 .setIcon(archive ? "archive" : "archive-restore")
@@ -843,6 +845,67 @@ class TaskixSyncPlugin extends Plugin {
         if (this.stopped) return response;
         if (file) await this.app.workspace.getLeaf(false).openFile(file);
         else new Notice(`${kind} created. Refresh the vault before opening its document.`, 10000);
+        return response;
+    }
+
+    async prepareProjectMerge(id, boardPath) {
+        try {
+            const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
+            const { result: project } = await runCli(settings, ["project", "show", id], this.children);
+            const directory = project?.document_directory || `Projects/${project?.key}`;
+            const relative = directory.startsWith("Archived Projects/")
+                ? path.posix.join(this.engine.archiveDirectory || "Archived Projects", directory.slice("Archived Projects/".length))
+                : path.posix.join(this.engine.directory, directory);
+            if (project?.id !== id || !Number.isInteger(project.revision) ||
+                path.posix.isAbsolute(directory) || /^[A-Za-z]:/.test(directory) || directory.replace(/\\/g, "/").split("/").includes("..") ||
+                boardPath !== path.posix.join(relative, "Board.md")) throw new Error("This Board does not match the registered Project folder.");
+            if (!project.remote?.trim()) throw new Error("Project has no Git remote.");
+            const { result: active } = await runCli(settings, ["project", "list"], this.children);
+            const { result: archived } = await runCli(settings, ["project", "list", "--archived"], this.children);
+            if (!Array.isArray(active) || !Array.isArray(archived)) throw new Error("Invalid Project list.");
+            const candidates = [...active, ...archived].filter(other => other.id !== id &&
+                other.remote === project.remote && Number.isInteger(other.revision));
+            if (!candidates.length) throw new Error("No other Project has the same Git remote.");
+            if (!this.stopped) this.openProjectMergeDialog(project, candidates);
+        } catch (error) {
+            if (!this.stopped) new Notice(`Could not merge project: ${error.message}`, 10000);
+        }
+    }
+
+    openProjectMergeDialog(project, candidates) {
+        const plugin = this;
+        class ProjectMergeDialog extends Modal {
+            onOpen() {
+                this.contentEl.createEl("h2", { text: "Merge project" });
+                this.contentEl.createEl("p", { text: "Combine work and notes from the same Git repository. The latest valid local root is retained and duplicate folders are removed." });
+                let selected = candidates[0];
+                new Setting(this.contentEl).setName("Duplicate project").addDropdown(dropdown => {
+                    for (const candidate of candidates) dropdown.addOption(candidate.id, `${candidate.name} — ${candidate.root}`);
+                    dropdown.setValue(selected.id).onChange(id => { selected = candidates.find(candidate => candidate.id === id); });
+                });
+                new Setting(this.contentEl).addButton(button => button.setButtonText("Merge").setCta().onClick(async () => {
+                    if (this.saving) return;
+                    this.saving = true;
+                    button.setDisabled(true);
+                    try { await plugin.mergeProject(project, selected); this.close(); }
+                    catch (error) { new Notice(`Could not merge project: ${error.message}`, 10000); this.saving = false; button.setDisabled(false); }
+                }));
+            }
+            onClose() { this.contentEl.empty(); }
+        }
+        new ProjectMergeDialog(this.app).open();
+    }
+
+    async mergeProject(project, source) {
+        const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
+        const response = await runCli(settings, ["project", "merge", project.id, "--source", source.id,
+            "--source-revision", String(source.revision), "--expect-revision", String(project.revision),
+            "--idempotency-key", randomUUID()], this.children);
+        if (this.stopped) return response;
+        await this.engine?.reconcile();
+        new Notice(response.projection_pending
+            ? `Project merged; document synchronization is pending: ${response.projection_pending}. Run taskix sync after resolving the conflict.`
+            : "Projects merged.", 10000);
         return response;
     }
 

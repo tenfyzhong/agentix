@@ -296,3 +296,11 @@ CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '
 
 CREATE INDEX IF NOT EXISTS memory_sources_by_job ON memory_source_outbox(json_extract(snapshot,'$.job_id'),sequence);
 CREATE INDEX IF NOT EXISTS memory_sources_by_turn ON memory_source_outbox(session_id,turn_id);
+
+CREATE INDEX IF NOT EXISTS projects_by_remote ON projects(json_extract(data, '$.remote'));
+
+CREATE TABLE IF NOT EXISTS project_merges (
+    source TEXT PRIMARY KEY,
+    target TEXT NOT NULL,
+    CHECK(source<>target)
+);

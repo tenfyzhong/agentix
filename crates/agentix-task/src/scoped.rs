@@ -206,6 +206,11 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
             }
         }
     }
+    if command == "project.merge" {
+        scope
+            .projects
+            .insert(resolve(conn, "projects", required(request, "source")?).await?);
+    }
     if command == "project.register" {
         scope.projects = ids(
             conn,
@@ -213,6 +218,14 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
             &crate::project_lookup::canonical_root(required(request, "root")?)?,
         )
         .await?;
+    }
+    if command == "project.register"
+        && let Some(remote) = request["remote"].as_str().filter(|v| !v.trim().is_empty())
+    {
+        let matches = ids(conn, crate::project_lookup::BY_REMOTE, remote).await?;
+        if !matches.is_empty() {
+            scope.projects = matches;
+        }
     }
     if command.starts_with("session.") {
         session_scope(conn, &mut scope, request).await?;
@@ -223,6 +236,7 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
         "project.archive"
             | "project.unarchive"
             | "project.delete"
+            | "project.merge"
             | "project.rename"
             | "project.relocate"
     );
@@ -264,6 +278,7 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
             | "job.followup"
             | "job.delete"
             | "project.delete"
+            | "project.merge"
             | "project.rename"
             | "project.relocate"
     ) || command == "issue.cancel"
@@ -362,6 +377,7 @@ pub(crate) async fn load_request(
             | "task.add"
             | "job.delete"
             | "project.delete"
+            | "project.merge"
             | "issue.create"
             | "milestone.create"
             | "milestone.delete"
@@ -390,6 +406,25 @@ async fn load_query_context(
             state.query_context.available_project_key =
                 Some(crate::project_lookup::available_key(conn, required(request, "name")?).await?);
         }
+    }
+    if command == "project.merge" {
+        for project in &state.projects {
+            let activity: Option<(i64,i64)> = sqlx::query_as("SELECT json_extract(data,'$.occurred_at'),sequence FROM task_events WHERE json_extract(data,'$.project_id')=? AND json_extract(data,'$.event_type') IN ('project.register','project.move') ORDER BY sequence DESC LIMIT 1")
+                .bind(&project.id).fetch_optional(&mut *conn).await?;
+            state.query_context.project_activity.insert(
+                project.id.clone(),
+                activity.unwrap_or((project.created_at, 0)),
+            );
+        }
+        let mut preview = state.clone();
+        let result =
+            crate::project_merge::apply(&mut preview, request, &crate::WriteOptions::default())?;
+        let collision:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM project_lookup WHERE folded_key=? AND project_id NOT IN (SELECT value FROM json_each(?)))")
+            .bind(result["key"].as_str().unwrap().to_lowercase()).bind(json!(state.projects.iter().map(|p| &p.id).collect::<Vec<_>>()).to_string()).fetch_one(&mut *conn).await?;
+        ensure!(
+            !collision,
+            "conflict: merged Project name is already registered"
+        );
     }
     if command == "project.rename" {
         let project = &state.projects[state.project_index(required(request, "project")?)?];
@@ -562,6 +597,13 @@ impl Store {
         Ok(entities(&mut tx, "projects", &BTreeSet::from([id]))
             .await?
             .remove(0))
+    }
+
+    /// Resolve remote identity without decoding unrelated Project records.
+    pub async fn project_by_remote(&self, remote: &str) -> Result<Option<crate::Project>> {
+        let data: Option<String> = sqlx::query_scalar("SELECT data FROM projects WHERE id=(SELECT id FROM projects WHERE json_extract(data,'$.remote')=? ORDER BY rowid LIMIT 1)")
+            .bind(remote).fetch_optional(&self.pool).await?;
+        data.map(|v| crate::stored_paths::from_str(&v)).transpose()
     }
 
     /// Indexed lookup by canonical directory identity, without filesystem access.

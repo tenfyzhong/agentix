@@ -228,3 +228,9 @@ CREATE TABLE IF NOT EXISTS source_job_turns (
     job_id TEXT NOT NULL,
     PRIMARY KEY(instance_id,session_id,turn_id,job_id)
 );
+
+CREATE TABLE IF NOT EXISTS project_merges (
+    source TEXT PRIMARY KEY,
+    target TEXT NOT NULL,
+    CHECK(source<>target)
+);

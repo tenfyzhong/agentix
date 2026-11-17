@@ -46,7 +46,7 @@ A Job has zero or one Issue. Resolve Job ownership first, preserve its existing 
 
 Issues have TODO, ACTIVE, PENDING_REVIEW, COMPLETED and CANCELLED states. Job completion and human Job approval leave the Issue ACTIVE. Submit it separately after all related Jobs are COMPLETED/CANCELLED (a title alone is sufficient), then obtain human Issue approval. A zero-Job Issue uses the same flow. Rejection returns ACTIVE with a reason; reopening preserves history. Cancellation stops unfinished related Jobs/Tasks and revokes their Task leases; `issue_cancellations` tells affected sessions to stop at a safe boundary. Issues have no lease and can span concurrent Job rounds. No hook starts another Issue or Job automatically. The Task state machine is unchanged.
 
-Outside Git, `context` and implicit Job/Issue selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh, and lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 26; old binaries cannot maintain Issue type labels, Milestone lifecycle state, document-only Issue content, portable workspace roots and relative document paths, lookup indexes and event retention watermarks. Issue content migration exports the vault copy before removing the legacy JSON keys; run `taskix sync` after upgrading.
+Outside Git, `context` and implicit Job/Issue selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh. Git origin is the primary identity when present; lookup refreshes a moved repository root. Without an origin, lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 26; old binaries cannot maintain Issue type labels, Milestone lifecycle state, document-only Issue content, portable workspace roots and relative document paths, lookup indexes and event retention watermarks. Issue content migration exports the vault copy before removing the legacy JSON keys; run `taskix sync` after upgrading.
 
 Configuration defaults to `~/.config/taskix/config.toml`; `TASKIX_CONFIG` or `--config` selects another file. Run `taskix <command> --help` for arguments. `--json` always has `schema_version`, `ok`, and `result` or `error`. Exit codes: 0 success, 1 business/runtime failure, 2 argument error.
 
@@ -103,7 +103,7 @@ Job and Task note filenames receive an automatic `YYMMDD-seq-` prefix (UTC creat
 
 Use `job update --name` and `task update --name` to improve display names, including after completion. Every Task has one note in `Tasks/`, including Tasks without a published Plan. Plan revisions update its body in place, with status, revision, and local lifecycle timestamps in frontmatter. The agent freely chooses the body’s structure and content. Use `project archive PROJECT_ID` after closing all Jobs; `project list --archived` and `project unarchive PROJECT_ID` browse and restore projects. `TASKIX_LANG` in `taskix.env` or the host environment configures the skill’s language for task decomposition and authored text. Hooks and extensions expose it as `task_language`; taskix does not interpret it or store language configuration.
 
-After moving or renaming a workspace directory, run `project mv PROJECT_ID
+Git repositories with an unchanged origin are recognized automatically after moving or renaming the workspace; lookup updates the registered root. For non-Git directories or an intentionally changed origin, run `project mv PROJECT_ID
 --root /new/workspace` before starting work there. The ID, its unambiguous prefix,
 or the existing Project name selects the original Project. `--root` defaults to
 the current directory; Git worktrees resolve to their common repository root.
@@ -111,7 +111,7 @@ The command refreshes `remote` from the destination's Git origin (or clears it
 when no origin exists); `--remote URL` overrides that value. It updates root,
 remote and the directory index atomically, preserving IDs, Project name/key,
 document locations, Jobs, Tasks, Plans, history and archival state. A root already
-registered to another Project is rejected; Projects are not merged. The command
+registered to another Project is rejected; use `project merge` for same-origin duplicates. The command
 supports `--expect-revision` and `--idempotency-key`. It updates Taskix metadata;
 move the actual workspace directory separately. If document publication reports
 `projection_pending`, repair the reported vault issue and run `taskix sync`.
@@ -310,3 +310,34 @@ to retrieve memory. See [Taskix memory in the Wiki](https://github.com/tenfyzhon
 read-only projection recovery, provider budgets and dual-database recovery.
 Obsidian memory notes are read-only; file edits are never imported and are
 replaced from SQLite on synchronization. Use the memory CLI to change content.
+
+
+## Merge duplicate Projects
+
+Use `taskix project merge PROJECT_ID --source DUPLICATE_ID` to combine existing
+records with the same nonblank Git origin URL. Both origins must match exactly,
+and at least one stored local root must still be a Git repository with that
+origin. The most recently recorded valid repository root wins. Project lookup
+and registration use origin before path, preventing new duplicates after moves.
+
+The merge prefers the Project without an allocated numeric suffix and removes
+that suffix from the retained folder name. An unrelated Project occupying the
+canonical name is a conflict. Jobs, Tasks, Plans, Issues, Milestones, associations
+and active Task leases retain their identities. Incoming daily sequences are
+reallocated to avoid filename collisions. Custom files are copied before old
+folders are removed; different custom files at the same destination reject the
+merge. Generated project boards and Bases are rebuilt. Project Memory records, evidence, source receipts and queued work migrate too,
+preserving IDs and immutable historical versions. Overlapping active facts are
+retained as conflicts for review. Search indexes are refreshed; embeddings are
+rebuilt by the Memory service. Migration also works when that service is stopped
+or disabled. Durable ownership mappings let `taskix sync` resume interrupted
+Memory migration and refresh the retained Project’s notes.
+
+In Obsidian, right-click a managed Project folder or its Board, choose **Merge
+project**, select a same-origin duplicate, then choose **Merge**. The dialog
+checks both Project revisions; copied Boards cannot initiate a merge. CLI callers
+can provide `--expect-revision`, `--source-revision` and `--idempotency-key`.
+If publication reports `projection_pending`, resolve its filesystem conflict and
+run `taskix sync`; the durable migration journal resumes before old folders are
+cleaned. Review custom links that explicitly reference old folder or renamed
+numbered filenames.
