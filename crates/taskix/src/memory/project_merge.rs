@@ -25,13 +25,17 @@ pub(crate) async fn sync(path: &Path, service: &Service) -> Result<()> {
     let config = service.config();
     let targets: std::collections::BTreeSet<_> =
         merges.into_iter().map(|(_, target)| target).collect();
+    let projects = service.store().projects().await?;
     for target in targets {
-        let project = service.store().project_result(&target).await?;
+        // Keep replay aliases even after the retained Project has been deleted.
+        let Some(project) = projects.iter().find(|project| project.id == target) else {
+            continue;
+        };
         let directory = config
             .vault_relative_path(Path::new(&project.document_directory()))
             .join("Memory");
         let projection = MemoryProjection::new(store.clone(), &config.documents.root, &directory)?
-            .with_project_link(config.project_link(&project));
+            .with_project_link(config.project_link(project));
         let mut after = String::new();
         loop {
             let page = projection.sync(&target, &after, 100).await?;

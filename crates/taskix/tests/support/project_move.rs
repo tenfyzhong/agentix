@@ -400,4 +400,13 @@ fn assert_project_memory_merge(recover: bool) {
     assert!(note.contains(merged["id"].as_str().unwrap()));
     assert!(!config.output_dir().join("Projects/demo-2").exists());
     cli.ok(&["sync"]);
+    cli.ok(&["project", "delete", merged["id"].as_str().unwrap()]);
+    cli.ok(&["sync"]);
+    assert!(!config.output_dir().join("Projects/demo").exists());
+    runtime.block_on(async {
+        let store = agentix_task::Store::open(&config.storage.path)
+            .await
+            .unwrap();
+        assert_eq!(store.project_merges().await.unwrap().len(), 1);
+    });
 }

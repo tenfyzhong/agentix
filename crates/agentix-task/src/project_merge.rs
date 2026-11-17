@@ -36,7 +36,17 @@ pub(crate) fn apply(
             .is_some_and(|r| !r.trim().is_empty() && b.remote.as_deref() == Some(r)),
         "invalid: Projects must have the same nonblank Git remote"
     );
-    let (mut keep, duplicate) = if a.key == base_key(&a.key) || b.key != base_key(&b.key) {
+    // A numeric ending alone is not proof of an allocated duplicate suffix.
+    let key = if base_key(&b.key) == a.key {
+        a.key.clone()
+    } else if base_key(&a.key) == b.key {
+        b.key.clone()
+    } else if base_key(&a.key) == base_key(&b.key) {
+        base_key(&a.key).to_owned()
+    } else {
+        a.key.clone()
+    };
+    let (mut keep, duplicate) = if a.key == key || b.key != key {
         (a, b)
     } else {
         (b, a)
@@ -65,7 +75,6 @@ pub(crate) fn apply(
         })
         .context("invalid: no existing local repository with the same Git remote")?;
     keep.root = root.to_string_lossy().into_owned();
-    let key = base_key(&keep.key).to_owned();
     keep.key = key;
     keep.name.clone_from(&keep.key);
     keep.archived_at = keep.archived_at.filter(|_| duplicate.archived_at.is_some());
@@ -204,7 +213,12 @@ fn relocate_work(
         issue.project_id.clone_from(&keep.id);
         issue.revision += 1;
         issue.document_path = format!(
-            "{directory}/Issues/{}.md",
+            "{directory}/Issues/{}{}.md",
+            if issue.archived_at.is_some() {
+                "Archived/"
+            } else {
+                ""
+            },
             crate::naming::numbered_name(&issue.name, issue.created_at, issue.sequence)?
         );
     }
@@ -216,7 +230,12 @@ fn relocate_work(
         milestone.project_id.clone_from(&keep.id);
         milestone.revision += 1;
         milestone.document_path = format!(
-            "{directory}/Milestones/{}.md",
+            "{directory}/Milestones/{}{}.md",
+            if milestone.archived_at.is_some() {
+                "Archived/"
+            } else {
+                ""
+            },
             crate::naming::numbered_name(
                 &milestone.name,
                 milestone.created_at,

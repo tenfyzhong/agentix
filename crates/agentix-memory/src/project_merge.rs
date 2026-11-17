@@ -83,7 +83,7 @@ async fn migrate_associations(
     .execute(&mut *conn)
     .await?;
     // Existing workers must reclaim under their new Project, never publish stale results.
-    sqlx::query("UPDATE work_items SET state='pending',generation=generation+1,owner=NULL,lease_until=NULL WHERE project_id=? AND state='running'")
+    sqlx::query("UPDATE work_items SET state='pending',attempts=max(0,attempts-1),generation=generation+1,owner=NULL,lease_until=NULL WHERE project_id=? AND state='running'")
         .bind(source).execute(&mut *conn).await?;
     for table in [
         "memories",

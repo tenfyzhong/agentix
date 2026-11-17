@@ -340,7 +340,10 @@ async fn project_merge_fences_running_work_and_replays_sources_after_restart() {
     let store = MemoryStore::open(&path).await.unwrap();
     let original = source("old", "receipt", "turn", 1);
     store.ingest(&original).await.unwrap();
-    let config = AgentConfig::default();
+    let config = AgentConfig {
+        max_attempts: 1,
+        ..AgentConfig::default()
+    };
     let lease = store
         .claim_work_item("worker", &config, 100, 1)
         .await

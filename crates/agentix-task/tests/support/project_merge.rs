@@ -288,7 +288,7 @@ async fn project_merge_cleans_both_suffixed_folders_and_recovers_after_restart()
     let duplicate = f
         .service
         .execute(
-            json!({"command":"project.register","name":"demo-2","root":root.path()}),
+            json!({"command":"project.register","name":"demo-3","root":root.path()}),
             WriteOptions::default(),
         )
         .await
@@ -318,10 +318,168 @@ async fn project_merge_cleans_both_suffixed_folders_and_recovers_after_restart()
     .unwrap();
     service.sync().await.unwrap();
     assert!(!output.join("Projects/demo-2").exists());
-    assert!(!output.join("Projects/demo-2-2").exists());
+    assert!(!output.join("Projects/demo-3").exists());
     assert_eq!(
         std::fs::read_to_string(output.join("Projects/demo/extra.md")).unwrap(),
         "Retained extra"
     );
     service.sync().await.unwrap();
+}
+
+#[tokio::test]
+async fn project_merge_preserves_archived_issues_and_milestones() {
+    let f = Fixture::new().await;
+    let root = tempfile::tempdir().unwrap();
+    let remote = "git@example.com:team/demo.git";
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(root.path())
+            .arg("init")
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(root.path())
+            .args(["remote", "add", "origin", remote])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let duplicate = f
+        .service
+        .execute(
+            json!({"command":"project.register","name":"demo","root":root.path()}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    // Model legacy duplicate records created before remote-based registration.
+    let mut conn = super::incremental::connection(&f).await;
+    sqlx::query("UPDATE projects SET data=json_set(data,'$.remote',?) WHERE id IN (?,?)")
+        .bind(remote)
+        .bind(&f.project)
+        .bind(duplicate["id"].as_str().unwrap())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+    let mut ids = Vec::new();
+    for project in [json!(f.project), duplicate["id"].clone()] {
+        for kind in ["issue", "milestone"] {
+            let entity = f.service.execute(json!({"command":format!("{kind}.create"),"project":project,"title":"Archived","goal":"Preserve"}), WriteOptions::default()).await.unwrap().result;
+            let id = entity["id"].as_str().unwrap();
+            for action in ["cancel", "archive"] {
+                f.service
+                    .execute(
+                        json!({"command":format!("{kind}.{action}"),kind:id}),
+                        WriteOptions::default(),
+                    )
+                    .await
+                    .unwrap();
+            }
+            ids.push((kind, id.to_owned()));
+        }
+    }
+    f.service
+        .execute(
+            json!({"command":"project.merge","project":f.project,"source":duplicate["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    for (kind, id) in ids {
+        let path = if kind == "issue" {
+            &state
+                .issues
+                .iter()
+                .find(|v| v.id == id)
+                .unwrap()
+                .document_path
+        } else {
+            &state
+                .milestones
+                .iter()
+                .find(|v| v.id == id)
+                .unwrap()
+                .document_path
+        };
+        assert!(path.contains("/Archived/"), "{path}");
+        assert!(f.service.config().output_dir().join(path).exists());
+        assert!(
+            !f.service
+                .config()
+                .output_dir()
+                .join(path.replace("/Archived/", "/"))
+                .exists()
+        );
+    }
+    f.service.sync().await.unwrap();
+}
+
+#[tokio::test]
+async fn project_merge_preserves_numeric_original_name() {
+    for reverse in [false, true] {
+        let f = Fixture::new().await;
+        let root = tempfile::tempdir().unwrap();
+        for args in [vec!["init"], vec!["remote", "add", "origin", "same"]] {
+            assert!(
+                std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(root.path())
+                    .args(args)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+        let original = f.service.execute(json!({"command":"project.register","name":"release-2026","root":root.path().join("old")}),WriteOptions::default()).await.unwrap().result;
+        let duplicate = f
+            .service
+            .execute(
+                json!({"command":"project.register","name":"release-2026","root":root.path()}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        f.service.execute(json!({"command":"project.register","name":"release","root":root.path().join("unrelated")}),WriteOptions::default()).await.unwrap();
+        let mut conn = super::incremental::connection(&f).await;
+        sqlx::query("UPDATE projects SET data=json_set(data,'$.remote','same') WHERE id IN (?,?)")
+            .bind(original["id"].as_str().unwrap())
+            .bind(duplicate["id"].as_str().unwrap())
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        let (a, b) = if reverse {
+            (&duplicate, &original)
+        } else {
+            (&original, &duplicate)
+        };
+        let merged = f
+            .service
+            .execute(
+                json!({"command":"project.merge","project":a["id"],"source":b["id"]}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(merged.result["key"], "release-2026");
+        assert_eq!(merged.result["id"], original["id"]);
+        assert!(
+            !f.service
+                .config()
+                .output_dir()
+                .join("Projects/release-2026-2")
+                .exists()
+        );
+    }
 }
