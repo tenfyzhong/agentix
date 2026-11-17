@@ -46,7 +46,7 @@ A Job has zero or one Issue. Resolve Job ownership first, preserve its existing 
 
 Issues have TODO, ACTIVE, PENDING_REVIEW, COMPLETED and CANCELLED states. Job completion and human Job approval leave the Issue ACTIVE. Submit it separately after all related Jobs are COMPLETED/CANCELLED (a title alone is sufficient), then obtain human Issue approval. A zero-Job Issue uses the same flow. Rejection returns ACTIVE with a reason; reopening preserves history. Cancellation stops unfinished related Jobs/Tasks and revokes their Task leases; `issue_cancellations` tells affected sessions to stop at a safe boundary. Issues have no lease and can span concurrent Job rounds. No hook starts another Issue or Job automatically. The Task state machine is unchanged.
 
-Outside Git, `context` and implicit Job/Issue selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh. Git origin is the primary identity when present; lookup refreshes a moved repository root. Without an origin, lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 26; old binaries cannot maintain Issue type labels, Milestone lifecycle state, document-only Issue content, portable workspace roots and relative document paths, lookup indexes and event retention watermarks. Issue content migration exports the vault copy before removing the legacy JSON keys; run `taskix sync` after upgrading.
+Outside Git, `context` and implicit Job/Issue selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh. Git origin is the primary identity when present; lookup refreshes a moved repository root. Without an origin, lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 27; old binaries cannot maintain Issue type labels, Milestone lifecycle state, document-only Issue content, portable workspace roots and relative document paths, lookup indexes and event retention watermarks. Issue content migration exports the vault copy before removing the legacy JSON keys; run `taskix sync` after upgrading.
 
 Configuration defaults to `~/.config/taskix/config.toml`; `TASKIX_CONFIG` or `--config` selects another file. Run `taskix <command> --help` for arguments. `--json` always has `schema_version`, `ok`, and `result` or `error`. Exit codes: 0 success, 1 business/runtime failure, 2 argument error.
 
@@ -137,7 +137,7 @@ runtime callers. Workspace roots outside home remain unchanged. It also abbrevia
 home paths in generated events, replay results and sync cursor keys, preserving
 cursor watermarks and authored conversation.
 Database triggers reject absolute document locations written by older processes
-that still hold open connections. Upgrade Agentix and Taskix together for schema 26.
+that still hold open connections. Upgrade Agentix and Taskix together for schema 27.
 Obsidian's Taskix Sync context menu offers Archive project / Restore project on
 the managed Board or project folder. Resolve destination conflicts before
 running `sync` to retry a pending move.
@@ -313,6 +313,10 @@ replaced from SQLite on synchronization. Use the memory CLI to change content.
 
 
 ## Merge duplicate Projects
+
+Schema 27 creates the merge journal and Git remote lookup index when upgrading
+existing databases, including schema 26 installations. Upgrade Agentix and Taskix
+together; opening the database with the updated CLI applies this migration automatically.
 
 Use `taskix project merge PROJECT_A PROJECT_B` to combine existing
 records with the same nonblank Git origin URL. Both origins must match exactly,

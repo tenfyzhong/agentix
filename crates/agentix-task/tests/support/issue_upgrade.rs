@@ -147,7 +147,7 @@ async fn issue_upgrade_removes_registered_intake_without_converting_or_losing_wo
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(version, 26);
+    assert_eq!(version, 27);
 }
 
 #[cfg(unix)]

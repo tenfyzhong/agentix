@@ -290,7 +290,7 @@ BEGIN
     SELECT RAISE(ABORT, 'invalid Issue type; upgrade Agentix and Taskix together');
 END;
 
-PRAGMA user_version = 26;
+PRAGMA user_version = 27;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 
