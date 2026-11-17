@@ -246,6 +246,14 @@ enum ProjectCommand {
         #[arg(long)]
         remote: Option<String>,
     },
+    /// Combine duplicate Projects with the same Git origin and preserve their work.
+    Merge {
+        id: String,
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        source_revision: Option<i64>,
+    },
     /// List unarchived Projects, or archived Projects with --archived.
     List {
         #[arg(long)]
@@ -919,6 +927,7 @@ async fn dispatch_task_command(cli: &Cli, service: &Service) -> Result<Value> {
             } else {
                 service.sync().await?;
             }
+            memory::project_merge::sync(&cli.config_path()?, service).await?;
             Ok(response(json!({"synced":true})))
         }
         Command::Project { action } => project(cli, service, action).await,
@@ -1122,6 +1131,17 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
                 json!({"command":"project.move","project":id,"root":root,"remote":remote}),
             )
             .await
+        }
+        ProjectCommand::Merge {
+            id,
+            source,
+            source_revision,
+        } => {
+            let result = mutate(cli, service, json!({"command":"project.merge","project":id,"source":source,"source_revision":source_revision})).await?;
+            memory::project_merge::sync(&cli.config_path()?, service)
+                .await
+                .context("Project merged; retry pending Memory migration with taskix sync")?;
+            Ok(result)
         }
         ProjectCommand::List { archived } => Ok(response(json!(
             service

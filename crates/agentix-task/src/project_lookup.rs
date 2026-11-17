@@ -3,6 +3,9 @@ use anyhow::{Context, Result};
 use sqlx::{Row, SqliteConnection};
 use std::path::Path;
 
+pub(crate) const BY_REMOTE: &str =
+    "SELECT id FROM projects WHERE json_extract(data,'$.remote')=? ORDER BY rowid LIMIT 1";
+
 pub(crate) const BY_ROOT: &str = "SELECT p.id FROM project_lookup l JOIN projects p ON p.id=l.project_id WHERE l.canonical_root=? ORDER BY p.rowid LIMIT 1";
 
 pub(crate) fn canonical_root(root: &str) -> Result<String> {

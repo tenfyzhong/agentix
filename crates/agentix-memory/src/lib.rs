@@ -6,6 +6,7 @@ mod domain;
 mod id_migration;
 mod ids;
 mod invalidation;
+mod project_merge;
 mod providers;
 mod retrieval;
 mod store;

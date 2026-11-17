@@ -250,3 +250,70 @@ async fn project_lookup_failed_migration_rolls_back_and_can_retry() {
         .unwrap();
     assert!(Store::open(&f.service.config().storage.path).await.is_ok());
 }
+
+#[tokio::test]
+async fn remote_registration_reuses_project_after_directory_move() {
+    let f = Fixture::new().await;
+    let old = tempfile::tempdir().unwrap();
+    let new = tempfile::tempdir().unwrap();
+    let remote = "git@example.com:team/repository.git";
+    let first = f.service.execute(json!({"command":"project.register","name":"repository","root":old.path(),"remote":remote}), WriteOptions::default()).await.unwrap().result;
+    let second = f.service.execute(json!({"command":"project.register","name":"repository","root":new.path(),"remote":remote}), WriteOptions::default()).await.unwrap().result;
+    assert_eq!(second["id"], first["id"]);
+    assert_eq!(second["root"], json!(new.path().canonicalize().unwrap()));
+    assert_eq!(second["key"], "repository");
+}
+
+#[tokio::test]
+async fn remote_directory_lookup_repairs_moved_root() {
+    let f = Fixture::new().await;
+    let root = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["init"],
+        vec!["remote", "add", "origin", "git@example.com:team/moved.git"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let original = f.service.execute(json!({"command":"project.register","name":"moved","root":f.dir.path().join("gone"),"remote":"git@example.com:team/moved.git"}), WriteOptions::default()).await.unwrap().result;
+    let found = f
+        .service
+        .project_for_session(Some(root.path()), None)
+        .await
+        .unwrap()
+        .expect("remote identifies moved project");
+    assert_eq!(found.id, original["id"]);
+    assert_eq!(
+        std::path::Path::new(&found.root),
+        root.path().canonicalize().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn registration_refreshes_origin_for_a_previously_local_project() {
+    let f = Fixture::new().await;
+    let registered=f.service.execute(json!({"command":"project.register","root":f.dir.path(),"name":"demo","remote":"origin"}),WriteOptions::default()).await.unwrap().result;
+    assert_eq!(registered["id"], f.project);
+    assert_eq!(registered["remote"], "origin");
+}
+
+#[tokio::test]
+async fn remote_identity_lookup_uses_an_index() {
+    use sqlx::Row;
+    let f = Fixture::new().await;
+    let rows=sqlx::query("EXPLAIN QUERY PLAN SELECT id FROM projects WHERE json_extract(data,'$.remote')=? ORDER BY rowid LIMIT 1").bind("origin").fetch_all(&mut connection(&f).await).await.unwrap();
+    let plan = rows
+        .iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(plan.contains("projects_by_remote"), "{plan}");
+}

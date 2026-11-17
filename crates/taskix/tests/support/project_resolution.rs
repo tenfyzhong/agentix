@@ -2,7 +2,7 @@ use super::*;
 
 #[cfg(unix)]
 #[test]
-fn context_discovers_directory_once_without_reading_remote() {
+fn context_discovers_directory_and_origin_once() {
     use std::os::unix::fs::PermissionsExt;
     let cli = Cli::new();
     let git = Command::new("which").arg("git").output().unwrap();
@@ -45,12 +45,15 @@ fn context_discovers_directory_once_without_reading_remote() {
             let calls = std::fs::read_to_string(&log).unwrap();
             assert_eq!(
                 calls.lines().count(),
-                1,
-                "one discovery per context: {calls}"
+                if git_repo { 2 } else { 1 },
+                "one directory discovery and one origin query per Git context: {calls}"
             );
-            assert!(
-                !calls.contains("remote"),
-                "lookup must not query remote: {calls}"
+            assert_eq!(
+                calls
+                    .lines()
+                    .filter(|line| line.contains("remote get-url origin"))
+                    .count(),
+                usize::from(git_repo)
             );
             let id =
                 serde_json::from_slice::<Value>(&output.stdout).unwrap()["result"]["project_id"]

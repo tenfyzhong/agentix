@@ -9,11 +9,12 @@ use serde_json::json;
 use crate::{Project, Service, WriteOptions};
 
 /// A command-local directory identity, reusable across refreshed database reads.
-/// Discovery never reads remotes or registers a Project.
+/// Discovery captures the origin remote once and never registers a Project.
 #[derive(Debug)]
 pub struct ProjectDirectory {
     root: PathBuf,
     git: bool,
+    remote: Option<String>,
 }
 
 impl ProjectDirectory {
@@ -37,38 +38,63 @@ impl ProjectDirectory {
                 .parent()
                 .context("Git common directory has no parent")?
                 .to_owned();
-            Ok(Self { root, git: true })
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(["remote", "get-url", "origin"])
+                .output()?;
+            let remote = output
+                .status
+                .success()
+                .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                .filter(|v| !v.is_empty());
+            Ok(Self {
+                root,
+                git: true,
+                remote,
+            })
         } else {
-            Ok(Self { root, git: false })
+            Ok(Self {
+                root,
+                git: false,
+                remote: None,
+            })
         }
     }
 }
 
-/// Registration metadata; unlike lookup, this explicitly reads the Git remote.
+/// Discover the common repository root and its origin remote.
 pub fn git_identity(root: &Path) -> Result<(PathBuf, Option<String>)> {
     let directory = ProjectDirectory::discover(root)?;
-    let remote = if directory.git {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&directory.root)
-            .args(["remote", "get-url", "origin"])
-            .output()?;
-        output
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-    } else {
-        None
-    };
-    Ok((directory.root, remote))
+    Ok((directory.root, directory.remote))
 }
 
 impl Service {
-    /// Read exactly one registered Project, without filesystem probes or writes.
+    /// Resolve remote first and refresh a moved repository root.
     pub async fn project_for_directory(
         &self,
         directory: &ProjectDirectory,
     ) -> Result<Option<Project>> {
+        if let Some(remote) = &directory.remote {
+            if let Some(project) = self.store().project_by_remote(remote).await? {
+                if project.root != directory.root.to_string_lossy() {
+                    let result = self.execute(json!({"command":"project.register", "root":directory.root, "remote":remote, "name":project.name}), WriteOptions::default()).await?;
+                    return Ok(Some(serde_json::from_value(result.result)?));
+                }
+                return Ok(Some(project));
+            }
+            // A registered path with a different origin is a different repository.
+            if let Some(project) = self
+                .store()
+                .project_by_root(&directory.root.to_string_lossy())
+                .await?
+                && project.remote.is_none()
+            {
+                let outcome=self.execute(json!({"command":"project.register","root":directory.root,"remote":remote,"name":project.name}),WriteOptions::default()).await?;
+                return Ok(Some(serde_json::from_value(outcome.result)?));
+            }
+            return Ok(None);
+        }
         self.store()
             .project_by_root(&directory.root.to_string_lossy())
             .await
@@ -104,7 +130,7 @@ impl Service {
         Ok(Some(serde_json::from_value(outcome.result)?))
     }
 
-    /// IM policy: directory lookup is read-only; history is used only without a usable cwd.
+    /// IM policy: resolve the current directory; use history only without a usable cwd.
     pub async fn project_for_session(
         &self,
         cwd: Option<&Path>,

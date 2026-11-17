@@ -253,6 +253,7 @@ impl Application {
 #[async_trait]
 impl RequestHandler for Application {
     async fn handle(&self, mut request: Value) -> Result<Value> {
+        super::project_merge::migrate(&self.tasks, &self.store).await?;
         sync_cancellations(&self.tasks, &self.store).await?;
         if request["op"] == "reload" {
             return self.reload().await;
@@ -343,6 +344,7 @@ pub async fn serve(
     let server = IpcServer::bind(&location.path, config.service)?;
     let store = MemoryStore::open(&location.path).await?;
     let tasks = agentix_task::Store::open(&location.task_path).await?;
+    super::project_merge::migrate(&tasks, &store).await?;
     let replay_cursor = store
         .bind_source(&tasks.memory_source_instance().await?)
         .await?;
@@ -418,6 +420,7 @@ async fn poll_sources(app: Arc<Application>, mut replay_cursor: i64) -> Result<(
     let mut cursor = 0;
     loop {
         let runtime = app.runtime.read().await.clone();
+        super::project_merge::migrate(&app.tasks, &app.store).await?;
         let cancellation = sync_cancellations(&app.tasks, &app.store).await;
         app.report(
             "cancellation_sync",
@@ -722,6 +725,9 @@ impl Application {
             "memory projection is disabled"
         );
         let config = agentix_task::Config::load(&self.path)?;
+        let service = agentix_task::Service::new(config.clone(), self.tasks.clone())?;
+        let _output_guard = service.lock_output().await?;
+        super::project_merge::migrate(&self.tasks, &self.store).await?;
         let project = self.tasks.project_result(project).await?;
         let directory = config
             .vault_relative_path(std::path::Path::new(&project.document_directory()))

@@ -430,6 +430,9 @@ _taskix() {
             taskix__subcmd__help__subcmd__project,list)
                 cmd="taskix__subcmd__help__subcmd__project__subcmd__list"
                 ;;
+            taskix__subcmd__help__subcmd__project,merge)
+                cmd="taskix__subcmd__help__subcmd__project__subcmd__merge"
+                ;;
             taskix__subcmd__help__subcmd__project,mv)
                 cmd="taskix__subcmd__help__subcmd__project__subcmd__mv"
                 ;;
@@ -979,6 +982,9 @@ _taskix() {
             taskix__subcmd__project,list)
                 cmd="taskix__subcmd__project__subcmd__list"
                 ;;
+            taskix__subcmd__project,merge)
+                cmd="taskix__subcmd__project__subcmd__merge"
+                ;;
             taskix__subcmd__project,mv)
                 cmd="taskix__subcmd__project__subcmd__mv"
                 ;;
@@ -1005,6 +1011,9 @@ _taskix() {
                 ;;
             taskix__subcmd__project__subcmd__help,list)
                 cmd="taskix__subcmd__project__subcmd__help__subcmd__list"
+                ;;
+            taskix__subcmd__project__subcmd__help,merge)
+                cmd="taskix__subcmd__project__subcmd__help__subcmd__merge"
                 ;;
             taskix__subcmd__project__subcmd__help,mv)
                 cmd="taskix__subcmd__project__subcmd__help__subcmd__mv"
@@ -3449,7 +3458,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__help__subcmd__project)
-            opts="check delete register mv list show archive unarchive"
+            opts="check delete register mv merge list show archive unarchive"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3505,6 +3514,20 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__help__subcmd__project__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__help__subcmd__project__subcmd__merge)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -10198,7 +10221,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__project)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help check delete register mv list show archive unarchive help"
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help check delete register mv merge list show archive unarchive help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -10446,7 +10469,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__project__subcmd__help)
-            opts="check delete register mv list show archive unarchive help"
+            opts="check delete register mv merge list show archive unarchive help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -10529,6 +10552,20 @@ _taskix() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        taskix__subcmd__project__subcmd__help__subcmd__merge)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         taskix__subcmd__project__subcmd__help__subcmd__mv)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
@@ -10592,6 +10629,75 @@ _taskix() {
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__project__subcmd__merge)
+            opts="-h --source --source-revision --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --source)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --source-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --config)
                     local oldifs
                     if [ -n "${IFS+x}" ]; then

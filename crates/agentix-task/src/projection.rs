@@ -174,7 +174,7 @@ impl Service {
         let needs_issues = !state.issues.is_empty()
             || command.starts_with("issue.")
             || command.starts_with("milestone.");
-        let lock = if command == "task.start" || needs_issues {
+        let lock = if matches!(command, "task.start" | "project.merge") || needs_issues {
             Some(self.lock_output().await?)
         } else {
             None
@@ -236,6 +236,16 @@ impl Service {
                 "invalid: current Plan is empty"
             );
         }
+        let source = request.clone();
+        if command == "project.merge" {
+            let state = self.store.request_snapshot(&request).await?;
+            self.validate_project_merge(&state, &request, &options)?;
+            // Protect both identities across the file preflight and database transaction.
+            let project = &state.projects[state.project_index(required(&request, "project")?)?];
+            let source = &state.projects[state.project_index(required(&request, "source")?)?];
+            request["merge_revision"] = json!(project.revision);
+            request["source_revision"] = json!(source.revision);
+        }
         let recording = command == "session.record";
         let project_archive = matches!(command, "project.archive" | "project.unarchive");
         let notify_session = if matches!(
@@ -246,7 +256,6 @@ impl Service {
         } else {
             None
         };
-        let source = request.clone();
         self.prepare_issue_content(&mut request, &options).await?;
         // Keep the file journal on an ambiguous commit failure. The next locked
         // pass removes it only after checking committed metadata and receipts.
@@ -273,7 +282,8 @@ impl Service {
         Ok(outcome)
     }
 
-    pub(crate) async fn lock_output(&self) -> Result<File> {
+    /// Serialize all writers of project documents, including Memory projections.
+    pub async fn lock_output(&self) -> Result<File> {
         self.config.validate()?;
         std::fs::create_dir_all(self.config.output_dir())?;
         let path = self.safe_path(".taskix.lock")?;
@@ -288,6 +298,7 @@ impl Service {
             Ok::<_, anyhow::Error>(lock)
         })
         .await??;
+        self.recover_project_merges_locked().await?;
         self.migrate_legacy_archive_folders_locked().await?;
         self.reconcile_project_folders_locked().await?;
         self.relocate_archived_projects_locked().await?;

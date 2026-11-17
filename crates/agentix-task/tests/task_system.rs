@@ -55,6 +55,9 @@ mod project_rename;
 #[path = "support/project_move.rs"]
 mod project_move;
 
+#[path = "support/project_merge.rs"]
+mod project_merge;
+
 #[path = "support/project_archive.rs"]
 mod project_archive;
 

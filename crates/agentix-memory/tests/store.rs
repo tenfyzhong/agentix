@@ -718,3 +718,98 @@ async fn source_completion_timestamps_survive_ingestion_and_legacy_replay() {
         assert_eq!(serde_json::to_value(restored).unwrap(), value);
     }
 }
+
+#[tokio::test]
+async fn project_merge_preserves_memories_history_sources_and_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&dir.path().join("memory.sqlite3"))
+        .await
+        .unwrap();
+    let original = source("old", "old-receipt");
+    store.ingest(&original).await.unwrap();
+    store.ingest(&source("keep", "keep-receipt")).await.unwrap();
+    store
+        .ingest(&source("other", "other-receipt"))
+        .await
+        .unwrap();
+    let memory = store
+        .create("old", input("old-receipt"), Actor::Agent)
+        .await
+        .unwrap();
+    let other = store
+        .create("other", input("other-receipt"), Actor::Agent)
+        .await
+        .unwrap();
+    let mut revised = input("old-receipt");
+    revised.rationale = "Preserve revised rationale".into();
+    let updated = store
+        .update("old", &memory.id, 1, revised, Actor::Human)
+        .await
+        .unwrap();
+    assert!(store.merge_project("old", "keep").await.unwrap());
+    let moved = store.show("keep", &memory.id, None).await.unwrap();
+    assert_eq!(moved.project_id, "keep");
+    assert_eq!(moved.content, updated.content);
+    assert_eq!(
+        store.show("keep", &memory.id, Some(1)).await.unwrap(),
+        memory
+    );
+    assert_eq!(store.show("other", &other.id, None).await.unwrap(), other);
+    assert!(store.show("old", &memory.id, None).await.is_err());
+    assert_eq!(
+        store.search("keep", "backup_policy", 10).await.unwrap()[0].id,
+        memory.id
+    );
+    assert_eq!(
+        store.source("keep", "old-receipt").await.unwrap().messages,
+        original.messages
+    );
+    assert!(!store.ingest(&original).await.unwrap());
+    assert!(!store.merge_project("old", "keep").await.unwrap());
+    assert!(
+        store
+            .create("old", input("old-receipt"), Actor::Human)
+            .await
+            .is_err()
+    );
+    assert!(store.merge_project("keep", "final").await.unwrap());
+    assert!(!store.ingest(&original).await.unwrap());
+    assert_eq!(
+        store.show("final", &memory.id, None).await.unwrap().id,
+        memory.id
+    );
+}
+
+#[tokio::test]
+async fn project_merge_preserves_conflicting_fact_versions() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&dir.path().join("memory.sqlite3"))
+        .await
+        .unwrap();
+    let mut memories = Vec::new();
+    for (project, receipt, value) in [("keep", "r1", "local"), ("old", "r2", "remote")] {
+        store.ingest(&source(project, receipt)).await.unwrap();
+        let mut body = input(receipt);
+        body.fact = Some(
+            serde_json::from_value(
+                json!({"entity":"backup","attribute":"destination","qualifiers":[],"value":value}),
+            )
+            .unwrap(),
+        );
+        memories.push(store.create(project, body, Actor::Agent).await.unwrap());
+    }
+    store.merge_project("old", "keep").await.unwrap();
+    let conflicts = store.conflicts("keep", "", 100).await.unwrap();
+    assert_eq!(conflicts.len(), 2);
+    for original in memories {
+        assert!(
+            conflicts
+                .iter()
+                .any(|m| m.id == original.id && m.content == original.content)
+        );
+        assert_eq!(
+            store.show("keep", &original.id, Some(1)).await.unwrap(),
+            original
+        );
+    }
+}

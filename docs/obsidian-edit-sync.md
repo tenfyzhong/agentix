@@ -75,3 +75,21 @@ window and existing/new popout windows and disconnect when windows close or the
 plugin unloads. This filtering does not claim to detect or resolve merge conflicts.
 
 Update and reload the Obsidian Taskix Sync plugin to enable these behaviors.
+
+
+## Merging duplicate Projects
+
+The managed Project folder and Board context menu offers **Merge project** when
+its stored origin is present. The dialog lists active and archived Projects with
+the exact same origin, verifies the clicked Board against the registered path,
+and submits both revisions to `taskix project merge PROJECT_ID --source OTHER_ID`.
+The backend validates an existing local repository, preserves work identities and
+authored documents, selects the latest valid root, removes allocated numeric
+suffixes and deletes obsolete folders only after copying their contents. Custom
+file conflicts reject the operation. A pending publication can be retried with
+`taskix sync`. Project Memory, evidence, source receipts and queued work migrate
+with their IDs and historical versions preserved, even with the Memory service
+stopped or disabled. Overlapping active facts are retained for review. Memory
+notes are refreshed under the retained folder. See the taskix command reference
+for custom-link limitations. Subsequent repository discovery uses origin first and
+refreshes root after a directory move.
