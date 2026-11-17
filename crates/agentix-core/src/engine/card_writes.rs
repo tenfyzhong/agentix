@@ -130,10 +130,12 @@ struct Card {
     latest: AtomicU64,
     disabled_through: AtomicU64,
     retain: AtomicBool,
+    delete_retired: AtomicBool,
     state: AsyncMutex<CardState>,
 }
 struct CardState {
     target: Option<MessageRef>,
+    pending_delete: Option<MessageRef>,
     replacement_uncertain: bool,
     replaced: bool,
     applied_revision: u64,
@@ -144,6 +146,13 @@ pub(super) struct Revision {
     number: u64,
 }
 impl Revision {
+    pub(super) async fn applied_target(&self) -> Option<MessageRef> {
+        let state = self.card.state.lock().await;
+        (self.current() && state.applied_revision == self.number)
+            .then(|| state.target.clone())
+            .flatten()
+    }
+
     pub(super) fn current(&self) -> bool {
         self.card.latest.load(Ordering::SeqCst) == self.number
     }
@@ -192,8 +201,10 @@ impl CardWrites {
             latest: AtomicU64::new(0),
             disabled_through: AtomicU64::new(0),
             retain: AtomicBool::new(false),
+            delete_retired: AtomicBool::new(false),
             state: AsyncMutex::new(CardState {
                 target: Some(message.clone()),
+                pending_delete: None,
                 replacement_uncertain: false,
                 replaced: false,
                 applied_revision: 0,
@@ -208,6 +219,16 @@ impl CardWrites {
         let card = self.card(message);
         let number = card.latest.fetch_add(1, Ordering::SeqCst) + 1;
         Revision { card, number }
+    }
+
+    /// Telegram live transcripts delete uncertain targets before replacing them.
+    /// Old remote writes cannot affect the replacement or leave duplicate transcripts.
+    pub(super) fn reserve_turn(&self, message: &MessageRef) -> Revision {
+        let revision = self.reserve(message);
+        if message.conversation.channel == ChannelKind::Telegram {
+            revision.card.delete_retired.store(true, Ordering::SeqCst);
+        }
+        revision
     }
 
     pub(super) async fn update(
@@ -254,7 +275,7 @@ impl CardWrites {
             }
         }
         if let Some(target) = state.target.clone() {
-            let mut attempt = WriteAttempt::new(&mut state, &revision.card.retain, false);
+            let mut attempt = WriteAttempt::new(&mut state, &revision.card, false);
             let result = attempt
                 .delivery
                 .run_if(channel.update(conversation, &target, &view), || async {
@@ -272,15 +293,34 @@ impl CardWrites {
                     state.applied_revision = revision.number;
                     return Ok(true);
                 }
-                Err(error) if definite(&error) => return Err(error),
+                Err(error)
+                    if definite(&error) || revision.card.delete_retired.load(Ordering::SeqCst) =>
+                {
+                    return Err(error);
+                }
                 Err(error) => tracing::warn!(%error, "card update uncertain; retiring message"),
             }
+        }
+        if let Some(retired) = state.pending_delete.clone() {
+            // Keep the fence across cancellation, rejection, and lost delete responses.
+            // No replacement may be sent until absence is acknowledged.
+            let deletion = DeliveryAttempt::default();
+            let result = deletion
+                .run_if(channel.delete_message(&retired), || async {
+                    valid().await && revision.current()
+                })
+                .await;
+            if deletion.invalidated() {
+                return Ok(false);
+            }
+            result?;
+            state.pending_delete = None;
         }
         // Never replay an older state if its version or binding changed during I/O.
         if !revision.current() || !valid().await {
             return Ok(false);
         }
-        let mut attempt = WriteAttempt::new(&mut state, &revision.card.retain, true);
+        let mut attempt = WriteAttempt::new(&mut state, &revision.card, true);
         let result = attempt
             .delivery
             .run_if(channel.send(conversation, &view), || async {
@@ -321,7 +361,7 @@ impl CardWrites {
         let Some(target) = state.target.clone() else {
             return Ok(());
         };
-        let mut attempt = WriteAttempt::new(&mut state, &card.retain, false);
+        let mut attempt = WriteAttempt::new(&mut state, &card, false);
         let result = attempt.delivery.run(channel.disable_actions(&target)).await;
         attempt.finish(&result);
         result
@@ -336,25 +376,28 @@ fn definite(error: &ChannelError) -> bool {
 }
 
 // Cancellation before dispatch must not retire a healthy target. Once dispatched,
-// losing the response leaves the tombstone in place to isolate late remote writes.
+// losing the response normally leaves a tombstone to isolate late remote writes.
+// Telegram turn cards retain the retired ID only for deletion before replacement.
 struct WriteAttempt<'a> {
     state: &'a mut CardState,
     retain: &'a AtomicBool,
+    delete_retired: bool,
     previous: Option<MessageRef>,
     replacement: bool,
     resolved: bool,
     delivery: DeliveryAttempt,
 }
 impl<'a> WriteAttempt<'a> {
-    fn new(state: &'a mut CardState, retain: &'a AtomicBool, replacement: bool) -> Self {
+    fn new(state: &'a mut CardState, card: &'a Card, replacement: bool) -> Self {
         let previous = state.target.take();
         if replacement {
             state.replacement_uncertain = true;
         }
-        retain.store(true, Ordering::SeqCst);
+        card.retain.store(true, Ordering::SeqCst);
         Self {
             state,
-            retain,
+            retain: &card.retain,
+            delete_retired: !replacement && card.delete_retired.load(Ordering::SeqCst),
             previous,
             replacement,
             resolved: false,
@@ -371,17 +414,28 @@ impl<'a> WriteAttempt<'a> {
             Ordering::SeqCst,
         );
     }
+    fn retire(&mut self) {
+        if self.delete_retired {
+            self.state.pending_delete = self.previous.take();
+        }
+    }
     fn finish<T>(&mut self, result: &Result<T, ChannelError>) {
         if result.is_ok() || result.as_ref().is_err_and(definite) {
             self.restore();
+        } else {
+            self.retire();
         }
         self.resolved = true;
     }
 }
 impl Drop for WriteAttempt<'_> {
     fn drop(&mut self) {
-        if !self.resolved && self.delivery.not_dispatched() {
-            self.restore();
+        if !self.resolved {
+            if self.delivery.not_dispatched() {
+                self.restore();
+            } else {
+                self.retire();
+            }
         }
     }
 }

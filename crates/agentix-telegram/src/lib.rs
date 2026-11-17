@@ -494,16 +494,45 @@ impl ChannelAdapter for TelegramAdapter {
                 let keyboard = render_keyboard(&view.actions).unwrap_or_else(|| {
                     InlineKeyboardMarkup::new(Vec::<Vec<InlineKeyboardButton>>::new())
                 });
-                self.request(
-                    request.reply_markup(keyboard),
-                    "editMessageText",
-                    Some(chat_id),
-                )
-                .await
-                .map_err(|error| delivery_error(&error))?;
-                Ok(())
+                match self
+                    .request(
+                        request.reply_markup(keyboard),
+                        "editMessageText",
+                        Some(chat_id),
+                    )
+                    .await
+                {
+                    Ok(_)
+                    | Err(teloxide::RequestError::Api(teloxide::ApiError::MessageNotModified)) => {
+                        Ok(())
+                    }
+                    Err(error) => Err(delivery_error(&error)),
+                }
             })
             .await
+    }
+
+    async fn delete_message(&self, message: &MessageRef) -> Result<(), ChannelError> {
+        let chat_id = parse_chat_id(&message.conversation)?;
+        let message_id = message
+            .message_id
+            .parse::<i32>()
+            .map(MessageId)
+            .map_err(|error| ChannelError::InvalidPayload(error.to_string()))?;
+        match self
+            .request(
+                self.bot.delete_message(chat_id, message_id),
+                "deleteMessage",
+                Some(chat_id),
+            )
+            .await
+        {
+            Ok(_)
+            | Err(teloxide::RequestError::Api(teloxide::ApiError::MessageToDeleteNotFound)) => {
+                Ok(())
+            }
+            Err(error) => Err(delivery_error(&error)),
+        }
     }
 
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {

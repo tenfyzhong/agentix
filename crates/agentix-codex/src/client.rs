@@ -2592,6 +2592,17 @@ impl AgentAdapter for CodexClient {
         self.list_sessions(cursor, limit).await.map_err(agent_error)
     }
 
+    async fn session_metadata(
+        &self,
+        session: &SessionId,
+    ) -> Result<Vec<SessionSummary>, AgentError> {
+        let thread = self
+            .read_thread(session, false)
+            .await
+            .map_err(agent_error)?;
+        Ok(vec![parse_session_summary(&thread).map_err(agent_error)?])
+    }
+
     async fn read_turn_input(
         &self,
         session: &SessionId,

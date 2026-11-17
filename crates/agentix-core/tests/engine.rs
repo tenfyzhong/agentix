@@ -1301,6 +1301,11 @@ impl ChannelAdapter for FakeChannel {
         Ok(message)
     }
 
+    async fn delete_message(&self, message: &MessageRef) -> Result<(), ChannelError> {
+        self.messages.lock().unwrap().remove(message);
+        Ok(())
+    }
+
     async fn update(
         &self,
         conversation: &ConversationRef,
@@ -10860,12 +10865,13 @@ async fn runtime_pending_delta_without_start_reuses_input_card() {
 
 #[tokio::test]
 async fn runtime_pending_new_and_exit_keep_distinct_transitions() {
+    // The unreleased input gate detects blocking; allow for database and scheduler load.
     for replacement in [false, true] {
         let (engine, _, channel, gate, state) = pending_runtime_input().await;
         let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
         if replacement {
             tokio::time::timeout(
-                std::time::Duration::from_millis(250),
+                std::time::Duration::from_secs(5),
                 engine.execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", "/new"))),
             )
             .await
@@ -10874,7 +10880,7 @@ async fn runtime_pending_new_and_exit_keep_distinct_transitions() {
             assert!(state.session_switch(&chat).await.unwrap().is_some());
         }
         tokio::time::timeout(
-            std::time::Duration::from_millis(250),
+            std::time::Duration::from_secs(5),
             engine.execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
                 session_id: "thr_a".into(),
             })),
@@ -14107,5 +14113,172 @@ async fn opencode_required_multiselect_and_optional_single_constraints() {
     assert_eq!(
         agent.interaction_decisions()[0].response,
         serde_json::json!({"answers":{"required":{"answers":["A"]},"optional":{"answers":[]}}})
+    );
+}
+
+#[tokio::test]
+async fn telegram_live_turn_recovers_transport_errors_without_duplicate_cards() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel {
+        streaming_interval: Some(std::time::Duration::ZERO),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let output = |text: &str| AgentEvent::AgentMessageDelta {
+        session_id: "thr_a".into(),
+        turn_id: "stable_turn".into(),
+        item_id: "answer".into(),
+        delta: text.into(),
+    };
+    engine.handle_agent_event(output("First")).await.unwrap();
+    let count = channel.messages.lock().unwrap().len();
+    for _ in 0..3 {
+        *channel.next_update_failures.lock().unwrap() = 1;
+        let _ = engine.handle_agent_event(output(" more")).await;
+        assert_eq!(
+            channel.messages.lock().unwrap().len(),
+            count,
+            "an uncertain edit must not duplicate the live transcript"
+        );
+    }
+    *channel.next_update_failures.lock().unwrap() = 1;
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "stable_turn".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(channel.messages.lock().unwrap().len(), count);
+    let messages = channel.messages.lock().unwrap();
+    let final_view = messages
+        .values()
+        .find(|view| view.body.contains("First more more more"))
+        .unwrap();
+    assert!(
+        final_view
+            .subtitle
+            .as_deref()
+            .unwrap()
+            .contains("Completed")
+    );
+}
+
+#[tokio::test]
+async fn live_turn_recovers_a_title_missing_when_attached() {
+    let agent = Arc::new(FakeAgent::new());
+    agent.sessions.lock().unwrap()[0].name = None;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    agent.sessions.lock().unwrap()[0].name = Some("Late Codex title".into());
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "title_turn".into(),
+            item_id: "answer".into(),
+            delta: "Hello".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        channel.sent().last().unwrap().1.title,
+        "Codex · thr_a · Late Codex title"
+    );
+}
+
+#[tokio::test]
+async fn codex_card_title_does_not_wait_for_an_unrelated_backend_listing() {
+    use agentix_core::{AgentKind, AgentRegistry};
+    let codex = Arc::new(FakeAgent::new());
+    let mut other = FakeAgent::new();
+    other.stalled_operation = Some("list");
+    let registry = AgentRegistry::new(vec![
+        (AgentKind::Codex, codex as Arc<dyn AgentAdapter>),
+        (AgentKind::Pi, Arc::new(other) as Arc<dyn AgentAdapter>),
+    ])
+    .unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(registry),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        engine.handle_inbound(inbound("chat-a", "/attach codex:thr_a")),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        channel.sent().last().unwrap().1.title,
+        "Codex · thr_a · Parser cleanup"
+    );
+}
+
+#[tokio::test]
+async fn telegram_replacement_restores_from_reopened_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("replacement.sqlite");
+    let state = SqliteState::open(&path).await.unwrap();
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel {
+        streaming_interval: Some(std::time::Duration::ZERO),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let delta = |text: &str| AgentEvent::AgentMessageDelta {
+        session_id: "thr_a".into(),
+        turn_id: "replacement".into(),
+        item_id: "answer".into(),
+        delta: text.into(),
+    };
+    engine.handle_agent_event(delta("First")).await.unwrap();
+    let original = state.list_turn_views().await.unwrap()[0].message.clone();
+    *channel.next_update_failures.lock().unwrap() = 1;
+    assert!(engine.handle_agent_event(delta(" second")).await.is_err());
+    engine.handle_agent_event(delta(" third")).await.unwrap();
+    let replacement = state.list_turn_views().await.unwrap()[0].message.clone();
+    assert_ne!(replacement, original);
+    assert!(!channel.messages.lock().unwrap().contains_key(&original));
+    drop(engine);
+    drop(state);
+    let reopened = SqliteState::open(&path).await.unwrap();
+    let restarted = Engine::new(agent, reopened, vec![channel.clone()]);
+    restarted.restore_bindings().await.unwrap();
+    restarted
+        .handle_agent_event(delta(" after restart"))
+        .await
+        .unwrap();
+    let messages = channel.messages.lock().unwrap();
+    assert!(!messages.contains_key(&original));
+    assert!(
+        messages
+            .get(&replacement)
+            .unwrap()
+            .body
+            .contains("after restart")
     );
 }

@@ -2447,22 +2447,18 @@ async fn engine_and_codex_client_complete_an_im_turn_end_to_end() {
     assert!(final_turn.actions.is_empty());
 
     let methods = server.request_methods().await;
-    assert_eq!(methods.len(), 7);
+    assert_eq!(methods.len(), 6);
     assert_eq!(
-        &methods[..4],
-        [
-            "initialize",
-            "thread/read",
-            "thread/resume",
-            "thread/loaded/list"
-        ]
+        &methods[..3],
+        ["initialize", "thread/read", "thread/resume"]
     );
+    assert!(!methods.iter().any(|method| method == "thread/loaded/list"));
     // Optional title metadata and required history are read concurrently.
     // Preserve the request budget without imposing an order between them.
-    let mut attachment_reads = methods[4..6].to_vec();
+    let mut attachment_reads = methods[3..5].to_vec();
     attachment_reads.sort();
     assert_eq!(attachment_reads, ["thread/read", "thread/turns/list"]);
-    assert_eq!(methods[6], "turn/start");
+    assert_eq!(methods[5], "turn/start");
 }
 
 async fn recv_event(receiver: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -> AgentEvent {
@@ -3897,4 +3893,45 @@ async fn settle_background(engine: &Engine) {
     })
     .await
     .expect("background completion must settle");
+}
+
+#[tokio::test]
+async fn session_title_metadata_reads_only_the_requested_thread() {
+    for deferred in [false, true] {
+        let server = MockCodexAppServer::start();
+        server
+            .add_thread(MockThread::new("thr_title", "Target title", "/work"))
+            .await;
+        server
+            .add_thread(MockThread::new("thr_unrelated", "Unrelated", "/other"))
+            .await;
+        let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+        let adapter: Arc<dyn AgentAdapter> = if deferred {
+            let wrapper = agentix_core::DeferredAgent::new("Codex", "/work".into(), move || {
+                let client = client.clone();
+                async move { Ok(client as Arc<dyn AgentAdapter>) }
+            });
+            let mut events = wrapper.subscribe();
+            tokio::time::timeout(Duration::from_secs(1), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            Arc::new(wrapper)
+        } else {
+            client
+        };
+        let summaries = adapter
+            .session_metadata(&SessionId::new("thr_title"))
+            .await
+            .unwrap();
+        assert_eq!(summaries.len(), 1, "deferred={deferred}");
+        assert_eq!(summaries[0].id.as_str(), "thr_title");
+        assert_eq!(summaries[0].name.as_deref(), Some("Target title"));
+        let methods = server.request_methods().await;
+        assert!(!methods.iter().any(|method| method == "thread/loaded/list"));
+        assert_eq!(
+            server.request_params("thread/read").await,
+            vec![json!({"threadId":"thr_title", "includeTurns":false})]
+        );
+    }
 }

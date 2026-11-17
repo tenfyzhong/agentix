@@ -300,6 +300,17 @@ impl AgentAdapter for AgentRegistry {
             sessions: sessions.drain(offset.min(end)..end).collect(),
         })
     }
+    async fn session_metadata(
+        &self,
+        session: &SessionId,
+    ) -> Result<Vec<SessionSummary>, AgentError> {
+        let (key, agent) = self.target(session)?;
+        let mut summaries = agent.session_metadata(key.native_id.adapter_id()).await?;
+        for summary in &mut summaries {
+            Self::qualify(key.agent, summary);
+        }
+        Ok(summaries)
+    }
     async fn read_history(
         &self,
         session: &SessionId,

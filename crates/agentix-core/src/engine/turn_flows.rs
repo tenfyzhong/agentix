@@ -668,6 +668,9 @@ impl Engine {
         if !self.turns.should_render(&key, force, interval).await {
             return Ok(());
         }
+        self.sessions
+            .refresh_session_title(self.agent.clone(), session_id)
+            .await;
         self.restore_turn_input(conversation, session_id, turn_id, delivery)
             .await;
         self.render_turn_view(conversation, session_id, turn_id, delivery)
@@ -692,7 +695,7 @@ impl Engine {
         let existing = self.turns.views.lock().await.get(&key).cloned();
         let revision = existing
             .as_ref()
-            .map(|message| self.card_writes.reserve(message));
+            .map(|message| self.card_writes.reserve_turn(message));
         let session_label = self.session_label(session_id).await;
         let (mut view, is_running, snapshot) = {
             let buffers = self.turns.buffers.lock().await;
@@ -745,6 +748,12 @@ impl Engine {
             view.actions
                 .push(self.attach_action(conversation, owner_id, session_id).await);
         }
+        let recover_final = !is_running
+            && conversation.channel == crate::ChannelKind::Telegram
+            && existing.is_some();
+        if recover_final {
+            self.schedule_final_delivery(conversation, &key).await?;
+        }
         let Some(message) = self
             .deliver_turn_view(
                 conversation,
@@ -762,23 +771,43 @@ impl Engine {
             .mark_elapsed_rendered(&key, snapshot.elapsed_seconds())
             .await;
         if can_stop {
-            self.state
-                .save_turn_view(&StoredTurnView {
-                    session_id: session_id.clone(),
-                    turn_id: turn_id.to_owned(),
-                    message,
-                    owner_id,
-                    user_text: snapshot.user_text,
-                    agent_text: snapshot.agent_text,
-                    status: snapshot.status,
-                })
+            self.persist_turn_receipt(conversation, &key, &snapshot, message)
                 .await?;
         } else {
-            self.state.delete_turn_view(session_id, turn_id).await?;
+            if !recover_final {
+                self.state.delete_turn_view(session_id, turn_id).await?;
+            }
+            self.turns.views.lock().await.insert(key.clone(), message);
         }
         if !is_running {
+            self.turns.final_retries.lock().await.remove(&key);
             self.archive_turn(session_id, turn_id).await?;
         }
+        Ok(())
+    }
+
+    async fn schedule_final_delivery(
+        &self,
+        conversation: &ConversationRef,
+        key: &(SessionId, String),
+    ) -> Result<(), EngineError> {
+        let epoch = self.sessions.epoch(conversation).await;
+        let mut retries = self.turns.final_retries.lock().await;
+        if retries.len() < 128 {
+            retries
+                .entry(key.clone())
+                .or_insert(super::coordinator::FinalDeliveryRetry {
+                    conversation: conversation.clone(),
+                    epoch,
+                    attempts: 0,
+                    next: tokio::time::Instant::now() + Duration::from_secs(2),
+                });
+        } else if !retries.contains_key(key) {
+            tracing::warn!(session = %key.0, turn = %key.1, "final delivery retry queue is full");
+        }
+        drop(retries);
+        // Never restore a completed remote turn as active after restart.
+        self.state.delete_turn_view(&key.0, &key.1).await?;
         Ok(())
     }
 
@@ -897,15 +926,37 @@ impl Engine {
             && snapshot.status == TurnStatus::Completed
             && delivery == DeliveryClass::Live
             && !snapshot.final_card_delivered;
-        if let Some((message, revision)) = existing {
+        if let Some((_message, revision)) = existing {
             if fresh_final {
                 self.finalize_previous_turn_card(conversation, key, &revision, view)
                     .await;
             } else {
-                return Ok(self
+                let mut result = self
                     .update_card_revision(conversation, &revision, view)
-                    .await?
-                    .then_some(message));
+                    .await;
+                if conversation.channel == crate::ChannelKind::Telegram
+                    && !matches!(
+                        snapshot.status,
+                        TurnStatus::InProgress | TurnStatus::Unknown
+                    )
+                    && matches!(
+                        result,
+                        Err(EngineError::Channel(crate::ChannelError::Transport(_)))
+                    )
+                {
+                    // There may be no later stream event after completion. Retry the
+                    // same final snapshot once, still under its revision guard.
+                    result = self
+                        .update_card_revision(conversation, &revision, view)
+                        .await;
+                }
+                if !result? {
+                    return Ok(None);
+                }
+                let Some(target) = revision.applied_target().await else {
+                    return Ok(None);
+                };
+                return Ok(Some(target));
             }
         }
         let message = self.send_view(conversation, view).await?;
@@ -940,7 +991,7 @@ impl Engine {
         if let (Some(message), Some(buffer)) = (message, buffer)
             && matches!(buffer.status, TurnStatus::InProgress | TurnStatus::Unknown)
         {
-            let revision = self.card_writes.reserve(&message);
+            let revision = self.card_writes.reserve_turn(&message);
             let session_label = self.session_label(&key.0).await;
             let view = live_turn_view(
                 self.agent.session_display_name(&key.0),
@@ -1043,15 +1094,94 @@ impl Engine {
         refreshed
     }
 
+    async fn persist_turn_receipt(
+        &self,
+        conversation: &ConversationRef,
+        key: &(SessionId, String),
+        buffer: &TurnBuffer,
+        target: MessageRef,
+    ) -> Result<(), EngineError> {
+        // Only replacement receipts add a write on the duration-only path.
+        let owner_id = self
+            .interactions
+            .owners
+            .lock()
+            .await
+            .get(conversation)
+            .cloned();
+        self.state
+            .save_turn_view(&StoredTurnView {
+                session_id: key.0.clone(),
+                turn_id: key.1.clone(),
+                message: target.clone(),
+                owner_id,
+                user_text: buffer.user_text.clone(),
+                agent_text: buffer.agent_text.clone(),
+                status: buffer.status.clone(),
+            })
+            .await?;
+        self.turns.views.lock().await.insert(key.clone(), target);
+        Ok(())
+    }
+
+    async fn retry_final_delivery(&self, session_id: &SessionId, turn_id: &str) -> Option<usize> {
+        let key = (session_id.clone(), turn_id.to_owned());
+        let retry = {
+            let mut retries = self.turns.final_retries.lock().await;
+            if let Some(retry) = retries.get_mut(&key) {
+                if retry.next > tokio::time::Instant::now() {
+                    return Some(0);
+                }
+                retry.attempts += 1;
+                retry.next = tokio::time::Instant::now()
+                    + Duration::from_secs((2_u64 << retry.attempts.min(5)).min(60));
+                Some((retry.conversation.clone(), retry.epoch, retry.attempts))
+            } else {
+                None
+            }
+        };
+        if let Some((conversation, epoch, attempts)) = retry {
+            if attempts > 6
+                || self.sessions.epoch(&conversation).await != epoch
+                || self.sessions.current(&conversation).await.as_ref() != Some(session_id)
+            {
+                if attempts > 6 {
+                    tracing::warn!(session = %session_id, turn = %turn_id, "final card delivery retry budget exhausted");
+                }
+                self.turns.final_retries.lock().await.remove(&key);
+                if let Err(error) = self.archive_turn(session_id, turn_id).await {
+                    tracing::warn!(%error, "failed to archive undelivered final card");
+                }
+                return Some(0);
+            }
+            return Some(
+                match self
+                    .render_turn_view(&conversation, session_id, turn_id, DeliveryClass::Live)
+                    .await
+                {
+                    Ok(()) => 1,
+                    Err(error) => {
+                        tracing::warn!(%error, attempts, session = %session_id, turn = %turn_id, "final card delivery retry failed");
+                        0
+                    }
+                },
+            );
+        }
+        None
+    }
+
     pub(super) async fn refresh_working_turn(
         &self,
         session_id: &SessionId,
         turn_id: &str,
     ) -> usize {
+        let key = (session_id.clone(), turn_id.to_owned());
+        if let Some(result) = self.retry_final_delivery(session_id, turn_id).await {
+            return result;
+        }
         if self.turns.active_turn(session_id).await.as_deref() != Some(turn_id) {
             return 0;
         }
-        let key = (session_id.clone(), turn_id.to_owned());
         let Some((conversation, delivery)) = self
             .sessions
             .route(session_id, EventImportance::Stream)
@@ -1095,7 +1225,10 @@ impl Engine {
         if !self.turns.should_render(&key, false, interval).await {
             return 0;
         }
-        let revision = self.card_writes.reserve(&message);
+        self.sessions
+            .refresh_session_title(self.agent.clone(), session_id)
+            .await;
+        let revision = self.card_writes.reserve_turn(&message);
         let session_label = self.session_label(session_id).await;
         let mut view = live_turn_view(
             self.agent.session_display_name(session_id),
@@ -1114,6 +1247,15 @@ impl Engine {
             .await;
         match result {
             Ok(true) => {
+                if let Some(target) = revision.applied_target().await
+                    && target != message
+                    && let Err(error) = self
+                        .persist_turn_receipt(&conversation, &key, &buffer, target)
+                        .await
+                {
+                    tracing::warn!(%error, "failed to persist replacement receipt");
+                    return 0;
+                }
                 self.turns
                     .mark_elapsed_rendered(&key, Some(elapsed_seconds))
                     .await;
