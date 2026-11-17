@@ -60,3 +60,58 @@ test("every_test_job_depends_on_release_classification", async () => {
         }
     }
 });
+
+test("every_ci_job_depends_on_release_classification", async () => {
+    const workflow = (await readFile(join(root, ".github/workflows/ci.yml"), "utf8")).replace(/\r\n/g, "\n");
+    const jobs = workflow.split("\njobs:\n")[1].split(/(?=^  [\w-]+:\n)/m).filter(text => text.trim());
+    assert.equal(jobs.length, 4);
+    const classifier = jobs.find(text => text.startsWith("  classify:\n"));
+    assert.ok(classifier, "CI must verify the full release diff before skipping jobs");
+    assert.match(classifier, /fetch-depth: 0/);
+    assert.match(classifier, /run: node scripts\/release-pr\.mjs/);
+    assert.match(classifier, /run-tests: \$\{\{ steps\.changes\.outputs\.run-tests \}\}/);
+    for (const job of jobs.filter(text => text !== classifier)) {
+        assert.match(job, /needs: classify/);
+        assert.match(job, /if: needs\.classify\.outputs\.run-tests == 'true'/);
+    }
+});
+
+async function developmentFixture(t, version = "1.2.3+dev") {
+    const f = await fixture(t);
+    f.base = f.head;
+    execFileSync(process.execPath, [join(f.dir, "scripts/plugin-version.mjs"), "prepare", version], { cwd: f.dir });
+    f.git("add", "."); f.git("commit", "-sm", "chore: start development");
+    return { ...f, head: f.git("rev-parse", "HEAD"), branch: "development/1.2.3" };
+}
+
+test("only_matching_stable_to_development_changes_skip_checks", async t => {
+    const { isReleaseOnly } = await import("../../../scripts/release-pr.mjs");
+    const f = await developmentFixture(t);
+    assert.equal(await isReleaseOnly(f), true);
+    for (const change of [{ branch: "development/1.2.4" }, { branch: "development/01.2.3" }, { event: "push" }, { event: "workflow_dispatch" }, { sameRepository: false }, { head: f.base }]) {
+        assert.equal(await isReleaseOnly({ ...f, ...change }), false, JSON.stringify(change));
+    }
+    assert.equal(f.git("status", "--porcelain"), "");
+});
+
+test("development_pr_with_wrong_version_or_base_runs_checks", async t => {
+    const { isReleaseOnly } = await import("../../../scripts/release-pr.mjs");
+    const wrongVersion = await developmentFixture(t, "1.2.4+dev");
+    assert.equal(await isReleaseOnly(wrongVersion), false);
+    // Even a correctly generated target must start from the matching stable version.
+    assert.equal(await isReleaseOnly({ ...wrongVersion, branch: "development/1.2.4" }), false);
+});
+
+test("development_pr_with_code_or_dependency_changes_runs_checks", async t => {
+    const { isReleaseOnly } = await import("../../../scripts/release-pr.mjs");
+    for (const path of ["source.rs", "package.json", "Cargo.lock"]) {
+        const f = await developmentFixture(t);
+        if (path === "package.json") {
+            const value = JSON.parse(await readFile(join(f.dir, path), "utf8"));
+            value.scripts = { postinstall: "unexpected code" };
+            await writeFile(join(f.dir, path), JSON.stringify(value));
+        } else await writeFile(join(f.dir, path), "unrelated change\n", { flag: "a" });
+        f.git("add", "."); f.git("commit", "-sm", "test: unrelated change");
+        assert.equal(await isReleaseOnly({ ...f, head: f.git("rev-parse", "HEAD") }), false, path);
+    }
+});

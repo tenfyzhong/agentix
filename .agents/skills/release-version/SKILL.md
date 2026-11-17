@@ -61,9 +61,9 @@ Use the repository's Taskix tracking workflow when enabled.
    (`gh pr checks PR --watch` and inspect workflow runs for that SHA). Missing
    checks, queued runs, cancelled runs or failures are not success. Wait for CI
    discovery rather than treating an empty check list as approval.
-2. The Tests workflow must have a successful `Classify release PR` job proving
-   the entire diff is exactly a prepared version change. Its test jobs may then
-   be skipped. All other applicable checks, including formatting/Clippy, must
+2. Both Tests and CI workflows must have a successful `Classify release PR` job proving
+   the entire diff is exactly a prepared version change. Their test, formatting/Clippy,
+   monitoring, and tmux jobs may then be skipped. All other applicable checks must
    succeed. Never bypass branch protection, required reviews or failed checks.
 3. Re-read PR head and base before merging. If either changed since validation,
    update the release branch as needed and wait for the new head's checks again.

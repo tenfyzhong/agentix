@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Prove the entire PR tree is exactly the result of preparing its release version.
+// Prove the entire PR tree is exactly a prepared release or development version.
 // A branch name or a file allowlist alone cannot exclude changes inside manifests.
 export async function isReleaseOnly({ dir = process.cwd(), base, head, branch, event, sameRepository }) {
-    const version = /^release\/((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(branch ?? "")?.[1];
-    if (event !== "pull_request" || !sameRepository || !version) return false;
+    const match = /^(release|development)\/((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(branch ?? "");
+    if (event !== "pull_request" || !sameRepository || !match) return false;
+    const development = match[1] === "development";
+    const version = match[2] + (development ? "+dev" : "");
     if (![base, head].every(sha => /^[0-9a-f]{40}$/.test(sha ?? ""))) return false;
     const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     const temporary = await mkdtemp(join(tmpdir(), "release-only-"));
@@ -16,11 +18,12 @@ export async function isReleaseOnly({ dir = process.cwd(), base, head, branch, e
     let added = false;
     try {
         const ancestor = git("merge-base", base, head);
-        if (git("show", `${ancestor}:VERSION`) === version) return false;
+        const baseVersion = git("show", `${ancestor}:VERSION`);
+        if (baseVersion === version || (development && baseVersion !== match[2])) return false;
         git("worktree", "add", "--detach", worktree, ancestor);
         added = true;
         const script = join(worktree, "scripts/plugin-version.mjs");
-        for (const args of [["check"], ["prepare", version], ["check", version]]) {
+        for (const args of [["check"], ["prepare", version], development ? ["check"] : ["check", version]]) {
             execFileSync(process.execPath, [script, ...args], { cwd: worktree, stdio: "pipe" });
         }
         git("-C", worktree, "add", "--update");
