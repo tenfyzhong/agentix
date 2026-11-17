@@ -22,6 +22,30 @@ or minor version for the user. Use the supplied value as `VERSION` below.
 Read repository `AGENTS.md` and the Releases section of `CONTRIBUTING.md`.
 Use the repository's Taskix tracking workflow when enabled.
 
+## Repository scope and resume
+
+Resolve `REPO` as the verified release repository's `OWNER/REPO` from its Git
+remote before changing directories. Pass `-R "$REPO"` to every repository-scoped
+`gh pr`, `gh run` or `gh release` command. For repository inspection, use
+`gh repo view "$REPO"`. For `gh api`, use
+explicit `repos/$REPO/...` endpoints; that command does not accept `-R`.
+Do not rely on the current directory to select the repository.
+
+On resume, inspect the existing release PR, annotated tag, Release runs and
+development PR before making changes. Verify their repository, version and
+commit identities, then continue from the first unfinished stage:
+
+- Reuse a verified merged release PR and its squash SHA; do not recreate it.
+- Reuse its matching annotated tag and successful Release run. Do not push the
+  tag again or dispatch/rerun an already successful publication.
+- For an in-progress run, keep watching it. Approve only runs currently requiring
+  approval; do not repeat approval for queued, running or successful runs.
+- If the development PR is already merged, verify its merge commit is on main
+  and contains `$VERSION+dev`, then report completion without merging again.
+  Check the version at that merge commit; a later main version must not be
+  reset. The new-release version-order check and open-PR base-version check
+  below apply only to their unfinished stages.
+
 ## Prepare the release PR
 
 1. Locate the repository and the worktree holding `main`. Check its status and
@@ -54,13 +78,13 @@ Use the repository's Taskix tracking workflow when enabled.
    resulting commit and diff before pushing the explicit release branch.
 6. Create a PR to `main` with title `chore: release X.Y.Z`, explaining the version
    change and successful version checks. Write multiline text to a temporary
-   file and use `gh pr create --body-file`; reuse the matching open PR on retries.
+   file and use `gh pr create -R "$REPO" --body-file`; reuse the matching open PR on retries.
    Report its URL. Do not label arbitrary changes as a release to bypass tests.
 
 ## Wait and squash merge
 
 1. Record the PR's exact `headRefOid`. Wait for its workflows/checks to finish
-   (`gh pr checks PR --watch` and inspect workflow runs for that SHA). Missing
+   (`gh pr checks PR -R "$REPO" --watch` and inspect workflow runs for that SHA). Missing
    checks, queued runs, cancelled runs or failures are not success. Wait for CI
    discovery rather than treating an empty check list as approval.
 2. Both Tests and CI workflows must have a successful `Classify release PR` job proving
@@ -73,7 +97,7 @@ Use the repository's Taskix tracking workflow when enabled.
 4. Squash merge the checked head with:
 
    ```sh
-   gh pr merge PR --squash --match-head-commit "$HEAD_SHA" --subject "chore: release $VERSION" --body-file "$MERGE_BODY_FILE"
+   gh pr merge PR -R "$REPO" --squash --match-head-commit "$HEAD_SHA" --subject "chore: release $VERSION" --body-file "$MERGE_BODY_FILE"
    ```
 
    Prepare the English merge body with the release summary and a real
@@ -117,12 +141,19 @@ Use the repository's Taskix tracking workflow when enabled.
    head, branch, `event: "pull_request"` and verified same-repository identity.
    Do not approve workflows or merge based only on the branch name.
 3. Discover the CI and Tests runs for this exact PR/head. A PR created with
-   `GITHUB_TOKEN` can require workflow approval. Using the authenticated
-   maintainer's `gh` session, approve only the verified PR's waiting runs:
+   `GITHUB_TOKEN` can require workflow approval. Such a run can have
+   `status: completed` with `conclusion: action_required`; this is waiting for
+   approval, not a successful check. Using the authenticated maintainer's `gh`
+   session, approve only the verified PR/head's runs with that conclusion:
 
    ```sh
    gh api --method POST "repos/$REPO/actions/runs/$RUN_ID/approve"
    ```
+
+   After approval, re-query the runs and follow their current status and
+   conclusion through to success. An approval response alone does not prove
+   execution or success. Do not repeatedly approve while waiting for the state
+   to update; re-read before considering any retry.
 
    This approves execution, not the PR review. If GitHub rejects approval,
    inspect the reason and report the blocker; do not weaken repository policies.
@@ -136,7 +167,7 @@ Use the repository's Taskix tracking workflow when enabled.
 5. Re-read head and base immediately before merging. If either changed, repeat
    the version proof and check validation. If a newer release superseded this PR,
    stop instead of reverting its version. Squash merge using
-   `gh pr merge PR --squash --match-head-commit "$HEAD_SHA"`, an English subject
+   `gh pr merge PR -R "$REPO" --squash --match-head-commit "$HEAD_SHA"`, an English subject
    `chore: start X.Y.Z+dev development`, and a body file with the release context
    and a real Git-identity Signed-off-by line. Honor required reviews and branch
    protection; never use `--admin`.
