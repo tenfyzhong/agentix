@@ -7,7 +7,9 @@ description: Release an explicitly supplied Agentix version through a release PR
 
 Use this repository's committed-version release process. Invoking this skill to
 release a version authorizes creating/pushing the release branch and PR, waiting
-for CI, squash-merging that PR, and creating/pushing its annotated tag. Creating
+for CI, squash-merging that PR, creating/pushing its annotated tag, approving the
+generated development PR workflow runs, and squash-merging that PR after
+successful checks. Creating
 or editing this skill is not itself a request to release anything.
 
 ## Required input
@@ -95,9 +97,49 @@ Use the repository's Taskix tracking workflow when enabled.
    peeled commit using `git ls-remote --tags`. Never use `--tags` or force-push.
    On retry, reuse an existing tag only if it is annotated and points to this
    verified merge commit; a tag conflict requires user resolution.
-5. Confirm the Release workflow was triggered for that tag/commit. Report the
-   PR URL, squash SHA, tag, and workflow URL/status. A queued or running release
-   is not a successful publication. If asked to wait for publication, verify all
-   jobs and assets; otherwise report the observed status without claiming success.
-   The post-release workflow creates the `X.Y.Z+dev` PR; do not merge it as part
-   of this skill unless the user also requests that action.
+5. Wait for the Release workflow for that tag/commit to complete successfully,
+   including publication and `prepare-development`. Verify the published assets.
+   A queued, running or failed release is not complete. Diagnose failures and
+   rerun only affected jobs after resolving their cause; never retry indefinitely
+   or move the tag. Continue with the development PR below.
+
+## Complete the development PR
+
+1. Find the same-repository `development/$VERSION` PR targeting `main`, created
+   by the successful Release run. Record its number, head SHA and base SHA.
+   If preparation skipped because main already advanced, verify and report that
+   state; do not create or merge a stale development PR. Reuse an already merged
+   PR only after verifying its resulting version and merge commit.
+2. Fetch its head and current main. Require main's VERSION to equal `$VERSION`,
+   the release tag to be an ancestor of main, and the PR to change it to
+   `$VERSION+dev`. Prove the complete tree is a generated version-only change
+   using `isReleaseOnly` from `scripts/release-pr.mjs` with the recorded base,
+   head, branch, `event: "pull_request"` and verified same-repository identity.
+   Do not approve workflows or merge based only on the branch name.
+3. Discover the CI and Tests runs for this exact PR/head. A PR created with
+   `GITHUB_TOKEN` can require workflow approval. Using the authenticated
+   maintainer's `gh` session, approve only the verified PR's waiting runs:
+
+   ```sh
+   gh api --method POST "repos/$REPO/actions/runs/$RUN_ID/approve"
+   ```
+
+   This approves execution, not the PR review. If GitHub rejects approval,
+   inspect the reason and report the blocker; do not weaken repository policies.
+   The optional `RELEASE_PR_TOKEN` (GitHub App installation token or PAT with
+   Contents and Pull requests write access) avoids this approval gate when
+   creating the PR. Do not copy a local login token into repository secrets.
+4. Wait for both CI and Tests on the exact head. Both `Classify release PR` jobs
+   must succeed; their gated execution jobs may skip. All other applicable
+   checks must succeed. Empty checks, pending approval, cancellations and failures
+   are not success. Inspect failed jobs before deciding whether to fix or retry.
+5. Re-read head and base immediately before merging. If either changed, repeat
+   the version proof and check validation. If a newer release superseded this PR,
+   stop instead of reverting its version. Squash merge using
+   `gh pr merge PR --squash --match-head-commit "$HEAD_SHA"`, an English subject
+   `chore: start X.Y.Z+dev development`, and a body file with the release context
+   and a real Git-identity Signed-off-by line. Honor required reviews and branch
+   protection; never use `--admin`.
+6. Wait until GitHub reports `MERGED`, fetch main, and verify the recorded merge
+   commit is on main and contains the expected development version. Report the
+   release PR/tag, successful Release run, development PR/checks and squash SHA.
