@@ -9,11 +9,7 @@ import { fileURLToPath } from "node:url";
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
 const formulas = ["agentix", "taskix"];
 const preflight = formulas.map(name => `list --versions tenfyzhong/tap/${name}`);
-const unlink = 'ruby -e require "keg"; require "unlink"; ARGV.each { |name| ref = HOMEBREW_LINKED_KEGS/name.split("/").last; Homebrew::Unlink.unlink(Keg.new(ref.realpath)) if ref.symlink? }';
-const links = version => [
-    `${unlink} tenfyzhong/tap/agentix tenfyzhong/tap/taskix`,
-    `link ${version === "head" ? "--HEAD " : ""}tenfyzhong/tap/agentix tenfyzhong/tap/taskix`,
-];
+const links = version => [`ruby ${version} tenfyzhong/tap/agentix tenfyzhong/tap/taskix`];
 
 async function fixture(t, options = {}) {
     const directory = await mkdtemp(join(tmpdir(), "agentix-brew-"));
@@ -24,13 +20,14 @@ async function fixture(t, options = {}) {
     await writeFile(state, options.linked ?? "");
     await writeFile(log, "");
     await writeFile(executable, `#!/bin/sh
+if [ "$1" = ruby ]; then shift 3; set -- ruby "$@"; fi
 echo "$*" >> "$BREW_TEST_LOG"
 [ "$*" != "$BREW_TEST_FAIL" ] || exit 9
 if [ "$1" = unlink ] && [ "$BREW_TEST_OPT" = "$(cat "$BREW_TEST_STATE")" ]; then
     : > "$BREW_TEST_STATE"
 fi
 if [ "$1" = ruby ]; then
-    : > "$BREW_TEST_STATE"
+    echo "$2" > "$BREW_TEST_STATE"
 fi
 if [ "$1" = link ]; then
     selected=stable
@@ -95,11 +92,11 @@ test("switch_supports_a_single_formula", { skip: process.platform === "win32" },
     const f = await fixture(t);
     assert.equal(f.run("switch", "FORMULAE=agentix").status, 0);
     assert.deepEqual(await f.calls(), [
-        preflight[0], `${unlink} tenfyzhong/tap/agentix`, "link tenfyzhong/tap/agentix",
+        preflight[0], "ruby stable tenfyzhong/tap/agentix",
     ]);
 });
 
-for (const failure of ["update", `${unlink} tenfyzhong/tap/agentix tenfyzhong/tap/taskix`, "link tenfyzhong/tap/agentix tenfyzhong/tap/taskix"]) {
+for (const failure of ["update", "ruby stable tenfyzhong/tap/agentix tenfyzhong/tap/taskix"]) {
     test(`brew_failure_is_propagated_at_${failure.split(" ")[0]}`, { skip: process.platform === "win32" }, async t => {
         const f = await fixture(t, { fail: failure });
         assert.notEqual(f.run("install").status, 0);
@@ -129,6 +126,15 @@ for (const target of ["install", "update", "switch"]) {
     test(`${target}_stable_rejects_local_kegs_before_unlink`, { skip: process.platform === "win32" }, async t => {
         const f = await fixture(t, {versions: "0.0.0-local.abc.release HEAD-def", linked: "local"});
         assert.notEqual(f.run(target, "VERSION=stable").status, 0);
+        assert.equal(await f.linked(), "local");
+        assert.deepEqual((await f.calls()).slice(-1), preflight.slice(0, 1));
+    });
+}
+
+for (const version of ["0.8.2+dev.21839dcd319f", "0.8.2+dev.21839dcd319f.dirty_1"]) {
+    test(`stable_rejects_binary_version_local_keg_${version}`, {skip: process.platform === "win32"}, async t => {
+        const f = await fixture(t, {versions: `${version} HEAD-def`, linked: "local"});
+        assert.notEqual(f.run("switch", "VERSION=stable").status, 0);
         assert.equal(await f.linked(), "local");
         assert.deepEqual((await f.calls()).slice(-1), preflight.slice(0, 1));
     });

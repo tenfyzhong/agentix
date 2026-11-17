@@ -103,12 +103,14 @@ link step without the Makefile, see the tap README
 [local installation guide](https://github.com/tenfyzhong/homebrew-tap#installing-local-agentix-binaries).
 
 Source and Formula files are never rewritten. Keep binary/resource inputs
-unchanged while the snapshot is created. Artifact/profile content determines
-the `0.0.0-local.<digest>.<profile>` Cellar version; uncompiled source changes
-are excluded. Installed metadata remains readable after removing the checkout.
+unchanged while the snapshot is created. The Cellar version matches each
+binary's `-V` output, for example
+`0.8.2+dev.21839dcd319f` (with `.dirty` when reported by the binary).
+Archive filenames retain the full content digest and profile. Installed metadata
+remains readable after removing the checkout.
 
-`install --skip-link` stages new artifacts without automatically linking them
-or replacing installed stable/HEAD kegs. Once every selected install succeeds,
+The local installer stages new artifacts without automatically linking them
+or replacing kegs with different version numbers. Once every selected install succeeds,
 the target runs `switch VERSION=local` with the same profile and selection.
 Switch validates all local kegs before unlinking the actual linked kegs, then
 links the exact selected versions. Update passes the same artifact inputs into
@@ -117,8 +119,11 @@ another local version was installed more recently. A standalone switch without
 local source inputs still selects the most recently installed matching profile.
 This works even when `opt` points to a
 different version from the command links. Identical artifacts are reused;
-changed binary/resource content creates another local version. Failed installs
-do not run switch and preserve existing command links. Homebrew can still
+changed binary/resource content or profile replaces the same-version keg through
+Homebrew's reinstall mechanism. Only one profile can exist per CLI version;
+rebuild with `make update VERSION=local PROFILE=debug|release` to replace it.
+A failed reinstall restores that keg and its previous links; it does not run
+switch. Updates across multiple CLIs are not an atomic transaction. Homebrew can still
 update `opt` paths during staging. This target does not restart services.
 Restart only the selected service after installation:
 

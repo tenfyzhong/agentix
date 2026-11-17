@@ -80,7 +80,7 @@ ifeq ($(VERSION),local)
 	@HOMEBREW_AGENTIX_LOCAL_TARGET_DIR="$(DEBUG_TARGET_DIR)" \
 	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
 	HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 \
-	$(BREW) install --build-from-source --skip-link $(BREW_FORMULAE)
+	$(BREW) ruby -e 'require "formulary"; ARGV.map { |name| Formulary.factory(name, :stable) }.each { |formula| AgentixLocalBuild.stage(formula) }' $(BREW_FORMULAE)
 	@HOMEBREW_AGENTIX_LOCAL_TARGET_DIR="$(DEBUG_TARGET_DIR)" \
 	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
 	$(MAKE) switch VERSION=local PROFILE="$(PROFILE)" FORMULAE="$(FORMULAE)"
@@ -98,7 +98,7 @@ endif
 switch:
 ifeq ($(VERSION),local)
 	$(check-local-options)
-	@$(BREW) ruby -e 'require "keg"; require "unlink"; profile = ARGV.shift; \
+	@$(BREW) ruby -e 'require "keg"; require "unlink"; require "json"; profile = ARGV.shift; \
 	exact = !ENV.fetch("HOMEBREW_AGENTIX_LOCAL_SOURCE", "").empty?; \
 	ENV["HOMEBREW_AGENTIX_LOCAL_PROFILE"] = profile if exact; require "formulary" if exact; \
 	kegs = ARGV.map do |name|; \
@@ -108,7 +108,11 @@ ifeq ($(VERSION),local)
 		else; \
 			rack = HOMEBREW_CELLAR/name.split("/").last; \
 			candidates = rack.directory? ? rack.subdirs.map { |path| Keg.new(path) } : []; \
-			matching = candidates.select { |keg| keg.tab.tap&.name == "tenfyzhong/tap" && keg.version.to_s.match?(/\A0\.0\.0-local\..+\.#{profile}(?:_\d+)?\z/) }; \
+			matching = candidates.select do |keg|; \
+				next false unless keg.tab.tap&.name == "tenfyzhong/tap"; \
+				manifest = Pathname(keg.to_path)/"share"/name.split("/").last/"agentix-local.json"; \
+				manifest.file? ? JSON.parse(manifest.read).fetch("profile") == profile : keg.version.to_s.match?(/\A0\.0\.0-local\..+\.#{profile}(?:_\d+)?\z/); \
+			end; \
 			selected = matching.max_by { |keg| [keg.tab.time || 0, Pathname(keg.to_path).mtime.to_f] }; \
 		end; \
 		abort "#{name}: local #{profile} is not installed; run make update VERSION=local PROFILE=#{profile}" unless selected; \
@@ -122,13 +126,24 @@ else
 	test -n "$(strip $(FORMULAE))"; \
 	for formula in $(BREW_FORMULAE); do \
 		versions=$$($(BREW) list --versions "$$formula"); \
-		if ! printf '%s\n' "$$versions" | awk -v version="$(VERSION)" '{ for (i = 2; i <= NF; i++) if ((version == "head" && $$i ~ /^HEAD-/) || (version == "stable" && $$i !~ /^(HEAD-|0[.]0[.]0-local[.])/)) found = 1 } END { exit !found }'; then \
+		if ! printf '%s\n' "$$versions" | awk -v version="$(VERSION)" '{ for (i = 2; i <= NF; i++) if ((version == "head" && $$i ~ /^HEAD-/) || (version == "stable" && $$i !~ /^(HEAD-|0[.]0[.]0-local[.])/ && $$i !~ /[+]dev([.]|$$)/)) found = 1 } END { exit !found }'; then \
 			echo "$$formula: $(VERSION) is not installed; run make install VERSION=$(VERSION)" >&2; \
 			exit 1; \
 		fi; \
 	done; \
-	$(BREW) ruby -e 'require "keg"; require "unlink"; ARGV.each { |name| ref = HOMEBREW_LINKED_KEGS/name.split("/").last; Homebrew::Unlink.unlink(Keg.new(ref.realpath)) if ref.symlink? }' $(BREW_FORMULAE); \
-	$(BREW) link $(if $(filter head,$(VERSION)),--HEAD) $(BREW_FORMULAE)
+	$(BREW) ruby -e 'require "keg"; require "unlink"; mode = ARGV.shift; \
+	kegs = ARGV.map do |name|; \
+		rack = HOMEBREW_CELLAR/name.split("/").last; \
+		candidates = rack.subdirs.map { |path| Keg.new(path) }.select do |keg|; \
+			next keg.version.head? if mode == "head"; \
+			!keg.version.head? && !keg.version.to_s.start_with?("0.0.0-local.") && \
+			!keg.version.to_s.include?("+dev") && !(Pathname(keg.to_path)/"share"/name.split("/").last/"agentix-local.json").file?; \
+		end; \
+		selected = candidates.max_by { |keg| mode == "head" ? [keg.tab.source_modified_time, keg.version.revision] : keg.scheme_and_version }; \
+		abort "#{name}: #{mode} is not installed" unless selected; selected; \
+	end; \
+	kegs.each { |keg| ref = HOMEBREW_LINKED_KEGS/keg.name; Homebrew::Unlink.unlink(Keg.new(ref.realpath)) if ref.symlink? }; \
+	kegs.each { |keg| keg.lock { keg.link } }' "$(VERSION)" $(BREW_FORMULAE)
 endif
 
 # Validate the complete selection before removing anything.
