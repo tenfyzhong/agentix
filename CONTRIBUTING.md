@@ -435,7 +435,10 @@ After successful Release and Homebrew publication, the `prepare-development` job
 opens a PR changing the released version to `X.Y.Z+dev`. It uses a deterministic
 branch, signed-off commits, and reuses existing PRs. It skips newer or already
 development versions on main and requires the release tag to be its ancestor.
-It never pushes main, force-pushes a branch or automatically merges a PR.
+The workflow never pushes main, force-pushes a branch or automatically merges a PR.
+The `release-version` skill continues through this PR: it verifies the complete
+version-only diff, approves waiting workflow runs using the authenticated
+maintainer session, waits for CI and Tests, then squash-merges the checked head.
 If main moves during preparation, rerun the release workflow; if a newer release
 supersedes an open development PR, close that PR instead of merging it.
 
