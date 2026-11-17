@@ -186,6 +186,12 @@ impl AgentAdapter for DeferredAgent {
     ) -> Result<SessionPage, AgentError> {
         self.agent()?.list_sessions(cursor, limit).await
     }
+    async fn session_metadata(
+        &self,
+        session: &SessionId,
+    ) -> Result<Vec<crate::SessionSummary>, AgentError> {
+        self.agent()?.session_metadata(session).await
+    }
     async fn read_history(
         &self,
         session: &SessionId,

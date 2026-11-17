@@ -20,6 +20,58 @@ use tokio_util::sync::CancellationToken;
 
 use support::MockTelegramApi;
 
+#[tokio::test]
+async fn unchanged_message_edit_is_successful() {
+    let server = MockTelegramApi::start().await;
+    server.fail_next("editMessageText", "Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message").await;
+    let bot = Bot::new("test").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "42");
+    let message = MessageRef::new(conversation.clone(), "1");
+    adapter
+        .update(
+            &conversation,
+            &message,
+            &OutboundView::text("Title", "Same content"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(server.requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn deleting_a_retired_message_is_idempotent_and_preserves_rejections() {
+    let server = MockTelegramApi::start().await;
+    let bot = Bot::new("test").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let message = MessageRef::new(ConversationRef::new(ChannelKind::Telegram, "42"), "17");
+    adapter.delete_message(&message).await.unwrap();
+    server
+        .fail_next("deleteMessage", "Bad Request: message to delete not found")
+        .await;
+    adapter.delete_message(&message).await.unwrap();
+    server
+        .fail_next("deleteMessage", "Bad Request: message can't be deleted")
+        .await;
+    assert!(matches!(
+        adapter.delete_message(&message).await,
+        Err(agentix_domain::ChannelError::Rejected(_))
+    ));
+    let requests = server.requests().await;
+    assert_eq!(requests.len(), 3);
+    for request in requests {
+        assert!(
+            request
+                .target
+                .to_ascii_lowercase()
+                .ends_with("/deletemessage")
+        );
+        let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+        assert_eq!(body["chat_id"], 42);
+        assert_eq!(body["message_id"], 17);
+    }
+}
+
 #[derive(Default)]
 struct RecordingOwnerClaimer {
     claims: Mutex<Vec<(String, u64)>>,

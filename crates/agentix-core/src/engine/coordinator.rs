@@ -14,7 +14,15 @@ pub(super) struct BackgroundNotification {
     pub(super) recipients: HashSet<ConversationRef>,
 }
 
+pub(super) struct FinalDeliveryRetry {
+    pub(super) conversation: ConversationRef,
+    pub(super) epoch: u64,
+    pub(super) attempts: u32,
+    pub(super) next: tokio::time::Instant,
+}
+
 pub(super) struct TurnCoordinator {
+    pub(super) final_retries: Mutex<HashMap<(SessionId, String), FinalDeliveryRetry>>,
     pub(super) pending_prompts: super::pending_prompts::PendingPrompts,
     pub(super) input_recovery: super::input_recovery::InputRecovery,
     pub(super) cold: super::cold_turns::ColdTurns,
@@ -29,6 +37,7 @@ pub(super) struct TurnCoordinator {
 impl Default for TurnCoordinator {
     fn default() -> Self {
         Self {
+            final_retries: Mutex::new(HashMap::new()),
             cold: super::cold_turns::ColdTurns::default(),
             pending_prompts: super::pending_prompts::PendingPrompts::default(),
             input_recovery: super::input_recovery::InputRecovery::default(),

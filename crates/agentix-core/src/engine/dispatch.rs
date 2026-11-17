@@ -356,12 +356,17 @@ impl Engine {
     }
 
     pub async fn working_turns(&self) -> Vec<(SessionId, String)> {
-        self.turns
+        let mut turns: Vec<_> = self
+            .turns
             .active
             .lock()
             .await
             .iter()
             .map(|(session, turn)| (session.clone(), turn.clone()))
-            .collect()
+            .collect();
+        turns.extend(self.turns.final_retries.lock().await.keys().cloned());
+        turns.sort_by(|a, b| (a.0.as_str(), &a.1).cmp(&(b.0.as_str(), &b.1)));
+        turns.dedup();
+        turns
     }
 }

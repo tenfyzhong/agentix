@@ -24,6 +24,12 @@ impl AgentAdapter for UnusedAgent {
     async fn list_sessions(&self, _: Option<String>, _: u32) -> Result<SessionPage, AgentError> {
         unreachable!()
     }
+    async fn session_metadata(
+        &self,
+        _: &SessionId,
+    ) -> Result<Vec<crate::SessionSummary>, AgentError> {
+        Ok(Vec::new())
+    }
     async fn read_history(
         &self,
         _: &SessionId,
@@ -2112,6 +2118,10 @@ async fn unattached_completion_finishes_cached_turn_without_removing_newer_activ
 
 #[derive(Default)]
 struct ReorderingChannel {
+    delete_error: std::sync::Mutex<Option<ChannelError>>,
+    lose_delete_response: std::sync::atomic::AtomicBool,
+    delete_entered: tokio_util::sync::CancellationToken,
+    delete_calls: std::sync::atomic::AtomicUsize,
     reject_sends: std::sync::atomic::AtomicBool,
     reject_updates: std::sync::atomic::AtomicBool,
     stall_sends: std::sync::atomic::AtomicBool,
@@ -2157,9 +2167,29 @@ impl ChannelAdapter for ReorderingChannel {
         }
         self.views.lock().await.push(view.clone());
         let mut messages = self.messages.lock().await;
-        let id = format!("new-{}", messages.len());
+        let id = format!(
+            "new-{}",
+            self.send_calls.load(std::sync::atomic::Ordering::Relaxed)
+        );
         messages.insert(id.clone(), view.body.clone());
         Ok(MessageRef::new(conversation.clone(), id))
+    }
+    async fn delete_message(&self, message: &MessageRef) -> Result<(), ChannelError> {
+        agentix_domain::DeliveryAttempt::dispatched().await;
+        self.delete_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if let Some(error) = self.delete_error.lock().unwrap().take() {
+            return Err(error);
+        }
+        self.messages.lock().await.remove(&message.message_id);
+        self.delete_entered.cancel();
+        if self
+            .lose_delete_response
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            std::future::pending::<()>().await;
+        }
+        Ok(())
     }
     async fn update(
         &self,
@@ -2183,7 +2213,9 @@ impl ChannelAdapter for ReorderingChannel {
             // Model a server that commits even after the client drops its request.
             let remote = tokio::spawn(async move {
                 release.cancelled().await;
-                messages.lock().await.insert(id, "A".into());
+                if let Some(content) = messages.lock().await.get_mut(&id) {
+                    *content = "A".into();
+                }
                 applied.cancel();
             });
             self.entered.cancel();
@@ -2207,6 +2239,10 @@ async fn card_write_fixture() -> (Engine, Arc<ReorderingChannel>, ConversationRe
     );
     let conversation = ConversationRef::new(ChannelKind::Telegram, "ordering");
     let message = MessageRef::new(conversation.clone(), "original");
+    raw.messages
+        .lock()
+        .await
+        .insert("original".into(), "Initial".into());
     (engine, raw, conversation, message)
 }
 
@@ -3588,4 +3624,403 @@ async fn review_queued_recipients_skip_loading_after_shared_history_finishes() {
         10
     );
     assert_eq!(raw.send_calls.load(Ordering::Relaxed), 10);
+}
+
+#[tokio::test]
+async fn telegram_turn_isolates_late_edits_after_cancelled_or_timed_out_edit() {
+    for timeout in [false, true] {
+        let (engine, raw, conversation, message) = card_write_fixture().await;
+        tokio::time::pause();
+        let revision = engine.card_writes.reserve_turn(&message);
+        let view = OutboundView::text("Card", "A");
+        let mut first = Box::pin(engine.update_card_revision(&conversation, &revision, &view));
+        assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+        raw.entered.cancelled().await;
+        if timeout {
+            tokio::time::advance(Duration::from_secs(6)).await;
+            assert!(matches!(
+                first.await,
+                Err(super::EngineError::Channel(ChannelError::Transport(_)))
+            ));
+        } else {
+            drop(first);
+        }
+        // The old server write completes AFTER the final snapshot, with no
+        // subsequent stream event available to repair it.
+        let latest = engine.card_writes.reserve_turn(&message);
+        engine
+            .update_card_revision(&conversation, &latest, &OutboundView::text("Card", "B"))
+            .await
+            .unwrap();
+        raw.release.cancel();
+        raw.applied.cancelled().await;
+        let messages = raw.messages.lock().await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages.values().next().unwrap(), "B");
+        tokio::time::resume();
+    }
+}
+
+#[tokio::test]
+async fn telegram_turn_blocks_replacement_until_retired_deletion_is_confirmed() {
+    use std::sync::atomic::Ordering;
+    for rejected in [false, true] {
+        let (engine, raw, conversation, message) = card_write_fixture().await;
+        let revision = engine.card_writes.reserve_turn(&message);
+        let view = OutboundView::text("Card", "A");
+        let mut first = Box::pin(engine.update_card_revision(&conversation, &revision, &view));
+        assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+        raw.entered.cancelled().await;
+        drop(first);
+        *raw.delete_error.lock().unwrap() = Some(if rejected {
+            ChannelError::Rejected("cannot delete".into())
+        } else {
+            ChannelError::Transport("lost delete response".into())
+        });
+        let latest = engine.card_writes.reserve_turn(&message);
+        let final_view = OutboundView::text("Card", "B");
+        assert!(
+            engine
+                .update_card_revision(&conversation, &latest, &final_view)
+                .await
+                .is_err()
+        );
+        assert_eq!(raw.send_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(raw.writes.lock().await.as_slice(), ["A"]);
+        engine
+            .update_card_revision(&conversation, &latest, &final_view)
+            .await
+            .unwrap();
+        raw.release.cancel();
+        raw.applied.cancelled().await;
+        assert_eq!(raw.delete_calls.load(Ordering::Relaxed), 2);
+        assert_eq!(raw.send_calls.load(Ordering::Relaxed), 1);
+        let messages = raw.messages.lock().await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages.values().next().unwrap(), "B");
+    }
+}
+
+#[tokio::test]
+async fn telegram_turn_retries_cancelled_or_timed_out_delete_without_reusing_old_target() {
+    use std::sync::atomic::Ordering;
+    for timeout in [false, true] {
+        let (engine, raw, conversation, message) = card_write_fixture().await;
+        tokio::time::pause();
+        let revision = engine.card_writes.reserve_turn(&message);
+        let view = OutboundView::text("Card", "A");
+        let mut first = Box::pin(engine.update_card_revision(&conversation, &revision, &view));
+        assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+        raw.entered.cancelled().await;
+        drop(first);
+        raw.lose_delete_response.store(true, Ordering::Relaxed);
+        let latest = engine.card_writes.reserve_turn(&message);
+        let final_view = OutboundView::text("Card", "B");
+        let mut deletion =
+            Box::pin(engine.update_card_revision(&conversation, &latest, &final_view));
+        assert!(poll_fn(|cx| Poll::Ready(deletion.as_mut().poll(cx).is_pending())).await);
+        raw.delete_entered.cancelled().await;
+        if timeout {
+            tokio::time::advance(Duration::from_secs(6)).await;
+            assert!(deletion.await.is_err());
+        } else {
+            drop(deletion);
+        }
+        assert_eq!(raw.send_calls.load(Ordering::Relaxed), 0);
+        engine
+            .update_card_revision(&conversation, &latest, &final_view)
+            .await
+            .unwrap();
+        raw.release.cancel();
+        raw.applied.cancelled().await;
+        assert_eq!(raw.delete_calls.load(Ordering::Relaxed), 2);
+        let messages = raw.messages.lock().await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages.values().next().unwrap(), "B");
+        tokio::time::resume();
+    }
+}
+
+#[tokio::test]
+async fn telegram_turn_keeps_isolation_when_replacement_send_is_rejected() {
+    use std::sync::atomic::Ordering;
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let revision = engine.card_writes.reserve_turn(&message);
+    let view = OutboundView::text("Card", "A");
+    let mut first = Box::pin(engine.update_card_revision(&conversation, &revision, &view));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    raw.entered.cancelled().await;
+    drop(first);
+    raw.reject_sends.store(true, Ordering::Relaxed);
+    let latest = engine.card_writes.reserve_turn(&message);
+    let final_view = OutboundView::text("Card", "B");
+    assert!(
+        engine
+            .update_card_revision(&conversation, &latest, &final_view)
+            .await
+            .is_err()
+    );
+    raw.release.cancel();
+    raw.applied.cancelled().await;
+    assert!(raw.messages.lock().await.is_empty());
+    raw.reject_sends.store(false, Ordering::Relaxed);
+    engine
+        .update_card_revision(&conversation, &latest, &final_view)
+        .await
+        .unwrap();
+    assert_eq!(raw.delete_calls.load(Ordering::Relaxed), 1);
+    let messages = raw.messages.lock().await;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages.values().next().unwrap(), "B");
+}
+
+async fn retired_turn_fixture() -> (
+    Engine,
+    Arc<ReorderingChannel>,
+    ConversationRef,
+    (SessionId, String),
+) {
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let key = (SessionId::new("recovery"), "turn".to_owned());
+    engine
+        .sessions
+        .attach_at_epoch(conversation.clone(), key.0.clone(), false, 1)
+        .await;
+    engine.turns.set_active(key.0.clone(), key.1.clone()).await;
+    let mut buffer = super::TurnBuffer {
+        user_text: "Question".into(),
+        agent_text: "Latest answer".into(),
+        ..Default::default()
+    };
+    buffer.ensure_started();
+    engine
+        .turns
+        .buffers
+        .lock()
+        .await
+        .insert(key.clone(), buffer);
+    engine
+        .turns
+        .views
+        .lock()
+        .await
+        .insert(key.clone(), message.clone());
+    let revision = engine.card_writes.reserve_turn(&message);
+    let view = OutboundView::text("Card", "A");
+    let mut edit = Box::pin(engine.update_card_revision(&conversation, &revision, &view));
+    assert!(poll_fn(|cx| Poll::Ready(edit.as_mut().poll(cx).is_pending())).await);
+    drop(edit);
+    (engine, raw, conversation, key)
+}
+
+#[tokio::test]
+async fn replacement_turn_receipt_survives_fresh_engine() {
+    let (engine, raw, conversation, key) = retired_turn_fixture().await;
+    engine
+        .render_turn(&conversation, &key.0, &key.1, DeliveryClass::Live, true)
+        .await
+        .unwrap();
+    let stored = engine.state.list_turn_views().await.unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_ne!(stored[0].message.message_id, "original");
+    assert_eq!(
+        engine.turns.views.lock().await.get(&key),
+        Some(&stored[0].message)
+    );
+    let restored = Engine::new(
+        Arc::new(UnusedAgent),
+        engine.state.clone(),
+        vec![raw.clone()],
+    );
+    // Use only the durable receipt, with no inherited card registry.
+    let receipt = &stored[0].message;
+    let revision = restored.card_writes.reserve_turn(receipt);
+    restored
+        .update_card_revision(
+            &conversation,
+            &revision,
+            &OutboundView::text("Card", "After restart"),
+        )
+        .await
+        .unwrap();
+    raw.release.cancel();
+    raw.applied.cancelled().await;
+    let messages = raw.messages.lock().await;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages.get(&receipt.message_id).unwrap(), "After restart");
+}
+
+#[tokio::test]
+async fn final_replacement_recovers_on_timer_without_agent_events() {
+    let (engine, raw, conversation, key) = retired_turn_fixture().await;
+    raw.reject_sends
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        engine
+            .handle_turn_completed(
+                &conversation,
+                &key.0,
+                key.1.clone(),
+                crate::TurnStatus::Completed,
+                None,
+                DeliveryClass::Live
+            )
+            .await
+            .is_err()
+    );
+    assert!(engine.turns.active_turn(&key.0).await.is_none());
+    assert!(raw.messages.lock().await.is_empty());
+    assert!(
+        engine.working_turns().await.contains(&key),
+        "failed final delivery must remain scheduled"
+    );
+    raw.reject_sends
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(61)).await;
+    engine.refresh_working_turns().await;
+    raw.release.cancel();
+    raw.applied.cancelled().await;
+    assert_eq!(raw.messages.lock().await.len(), 1);
+    assert!(
+        raw.messages
+            .lock()
+            .await
+            .values()
+            .next()
+            .unwrap()
+            .contains("Latest answer")
+    );
+    assert!(!engine.working_turns().await.contains(&key));
+}
+
+#[derive(Default)]
+struct TitleProbe(std::sync::Mutex<Vec<SessionId>>);
+#[async_trait]
+impl AgentAdapter for TitleProbe {
+    fn display_name(&self) -> &'static str {
+        "Test"
+    }
+    async fn list_sessions(&self, _: Option<String>, _: u32) -> Result<SessionPage, AgentError> {
+        unreachable!()
+    }
+    async fn session_metadata(
+        &self,
+        session: &SessionId,
+    ) -> Result<Vec<crate::SessionSummary>, AgentError> {
+        self.0.lock().unwrap().push(session.clone());
+        if session.as_str() == "slow" {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Ok(Vec::new())
+    }
+    async fn read_history(
+        &self,
+        _: &SessionId,
+        _: Option<String>,
+        _: u32,
+    ) -> Result<HistoryPage, AgentError> {
+        unreachable!()
+    }
+    async fn attach(&self, _: &SessionId) -> Result<(), AgentError> {
+        unreachable!()
+    }
+    async fn unsubscribe(&self, _: &SessionId) -> Result<(), AgentError> {
+        unreachable!()
+    }
+    async fn start_turn(&self, _: &SessionId, _: &str) -> Result<String, AgentError> {
+        unreachable!()
+    }
+    async fn steer(&self, _: &SessionId, _: &str, _: &str) -> Result<String, AgentError> {
+        unreachable!()
+    }
+    async fn interrupt(&self, _: &SessionId, _: &str) -> Result<(), AgentError> {
+        unreachable!()
+    }
+    async fn resolve_interaction(&self, _: InteractionDecision) -> Result<(), AgentError> {
+        unreachable!()
+    }
+    fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
+        unreachable!()
+    }
+    fn generation(&self) -> u64 {
+        0
+    }
+}
+
+#[tokio::test]
+async fn missing_titles_are_read_fairly_across_sessions() {
+    let service =
+        super::session_service::SessionService::new(SqliteState::in_memory().await.unwrap());
+    let agent = Arc::new(TitleProbe::default());
+    service
+        .refresh_session_title(agent.clone(), &SessionId::new("slow"))
+        .await;
+    service
+        .refresh_session_title(agent.clone(), &SessionId::new("other"))
+        .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        *agent.0.lock().unwrap(),
+        vec![SessionId::new("slow"), SessionId::new("other")]
+    );
+    service
+        .refresh_session_title(agent.clone(), &SessionId::new("slow"))
+        .await;
+    assert_eq!(
+        agent.0.lock().unwrap().len(),
+        2,
+        "each session keeps its own cooldown"
+    );
+}
+
+#[tokio::test]
+async fn duration_refresh_persists_replacement_receipt() {
+    let (engine, raw, _conversation, key) = retired_turn_fixture().await;
+    assert_eq!(engine.refresh_working_turn(&key.0, &key.1).await, 1);
+    let stored = engine.state.list_turn_views().await.unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_ne!(stored[0].message.message_id, "original");
+    assert_eq!(
+        engine.turns.views.lock().await.get(&key),
+        Some(&stored[0].message)
+    );
+    raw.release.cancel();
+    raw.applied.cancelled().await;
+}
+
+#[tokio::test]
+async fn final_delivery_retry_is_bounded_and_binding_scoped() {
+    for detach in [false, true] {
+        let (engine, raw, conversation, key) = retired_turn_fixture().await;
+        raw.reject_sends
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = engine
+            .handle_turn_completed(
+                &conversation,
+                &key.0,
+                key.1.clone(),
+                crate::TurnStatus::Completed,
+                None,
+                DeliveryClass::Live,
+            )
+            .await;
+        if detach {
+            engine.sessions.detach(&conversation, false).await;
+        }
+        tokio::time::pause();
+        for _ in 0..10 {
+            tokio::time::advance(Duration::from_secs(61)).await;
+            engine.refresh_working_turns().await;
+        }
+        assert!(!engine.working_turns().await.contains(&key));
+        assert_eq!(
+            raw.send_calls.load(std::sync::atomic::Ordering::Relaxed),
+            if detach { 1 } else { 7 }
+        );
+        assert!(engine.state.list_turn_views().await.unwrap().is_empty());
+        raw.release.cancel();
+        raw.applied.cancelled().await;
+        tokio::time::resume();
+    }
 }

@@ -709,6 +709,15 @@ pub trait AgentAdapter: Send + Sync {
         limit: u32,
     ) -> Result<SessionPage, AgentError>;
 
+    /// Read metadata for a known session without requiring global discovery.
+    /// Backends may return sibling summaries to populate a shared metadata cache.
+    async fn session_metadata(
+        &self,
+        _session_id: &SessionId,
+    ) -> Result<Vec<SessionSummary>, AgentError> {
+        Ok(self.list_sessions(None, 100).await?.sessions)
+    }
+
     async fn read_history(
         &self,
         session_id: &SessionId,

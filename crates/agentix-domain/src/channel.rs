@@ -298,6 +298,14 @@ pub trait ChannelAdapter: Send + Sync {
         view: &OutboundView,
     ) -> Result<(), ChannelError>;
 
+    /// Delete a bot-owned message. Success must mean it no longer exists;
+    /// deleting an already absent message is successful too.
+    async fn delete_message(&self, _message: &MessageRef) -> Result<(), ChannelError> {
+        Err(ChannelError::Rejected(
+            "message deletion is unsupported".into(),
+        ))
+    }
+
     async fn disable_actions(&self, _message: &MessageRef) -> Result<(), ChannelError> {
         Ok(())
     }
