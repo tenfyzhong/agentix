@@ -898,14 +898,16 @@ class TaskixSyncPlugin extends Plugin {
 
     async mergeProject(project, source) {
         const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
-        const response = await runCli(settings, ["project", "merge", project.id, "--source", source.id,
-            "--source-revision", String(source.revision), "--expect-revision", String(project.revision),
+        const response = await runCli(settings, ["project", "merge", project.id, source.id,
+            "--second-revision", String(source.revision), "--expect-revision", String(project.revision),
             "--idempotency-key", randomUUID()], this.children);
         if (this.stopped) return response;
         await this.engine?.reconcile();
+        const result = response.result;
+        const summary = `Projects merged.\nRetained: ${result.retained_id}\nRemoved: ${result.removed_id}\nRoot: ${result.root}\nObsidian directory: ${result.document_directory}`;
         new Notice(response.projection_pending
-            ? `Project merged; document synchronization is pending: ${response.projection_pending}. Run taskix sync after resolving the conflict.`
-            : "Projects merged.", 10000);
+            ? `${summary}\nDocument synchronization is pending: ${response.projection_pending}. Run taskix sync after resolving the conflict.`
+            : summary, 10000);
         return response;
     }
 

@@ -1024,8 +1024,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_s
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from merge" -l source -r
-complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from merge" -l source-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from merge" -l second-revision -d 'Expected revision of the second Project (--expect-revision guards the first)' -r
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from merge" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from merge" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from merge" -l actor -r

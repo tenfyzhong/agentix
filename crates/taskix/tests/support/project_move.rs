@@ -198,7 +198,6 @@ fn project_merge_cli_requires_same_remote() {
             "project",
             "merge",
             a["id"].as_str().unwrap(),
-            "--source",
             b["id"].as_str().unwrap(),
         ])
         .output()
@@ -262,17 +261,21 @@ fn project_merge_cli_preserves_jobs_and_moved_lookup_updates_root() {
         "project",
         "merge",
         b["id"].as_str().unwrap(),
-        "--source",
         a["id"].as_str().unwrap(),
         "--expect-revision",
         "2",
-        "--source-revision",
+        "--second-revision",
         "2",
         "--idempotency-key",
         "merge-cli-once",
     ];
+    assert_merge_revision_guards(&cli, b["id"].as_str().unwrap(), a["id"].as_str().unwrap());
     let merged = cli.ok(&args);
     assert_eq!(merged["id"], a["id"]);
+    assert_eq!(merged["retained_id"], a["id"]);
+    assert_eq!(merged["removed_id"], b["id"]);
+    assert_eq!(merged["document_directory"], "Projects/demo");
+    assert_human_merge_output(&cli, &args, &merged);
     assert_eq!(merged["key"], "demo");
     assert_eq!(merged["root"], json!(current.canonicalize().unwrap()));
     assert_eq!(cli.ok(&args), merged);
@@ -368,7 +371,6 @@ fn assert_project_memory_merge(recover: bool) {
             "project",
             "merge",
             projects[0]["id"].as_str().unwrap(),
-            "--source",
             projects[1]["id"].as_str().unwrap(),
         ])
     };
@@ -409,4 +411,34 @@ fn assert_project_memory_merge(recover: bool) {
             .unwrap();
         assert_eq!(store.project_merges().await.unwrap().len(), 1);
     });
+}
+
+#[test]
+fn project_merge_rejects_directional_source_flag() {
+    let cli = Cli::new();
+    let output = cli.run(&["project", "merge", "prj_a", "--source", "prj_b"]);
+    assert_eq!(output.status.code(), Some(2));
+}
+
+fn assert_human_merge_output(cli: &Cli, args: &[&str], merged: &Value) {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_taskix"))
+        .arg("--config")
+        .arg(cli.dir.path().join("config.toml"))
+        .args(args)
+        .env_remove("TASKIX_MEMORY_ENABLED")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    for field in ["retained_id", "removed_id", "root", "document_directory"] {
+        assert!(text.contains(merged[field].as_str().unwrap()), "{text}");
+    }
+}
+
+fn assert_merge_revision_guards(cli: &Cli, first: &str, second: &str) {
+    for flag in ["--expect-revision", "--second-revision"] {
+        let output = cli.run(&["project", "merge", first, second, flag, "1"]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("conflict"));
+    }
 }

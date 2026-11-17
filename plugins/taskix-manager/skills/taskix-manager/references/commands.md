@@ -314,11 +314,22 @@ replaced from SQLite on synchronization. Use the memory CLI to change content.
 
 ## Merge duplicate Projects
 
-Use `taskix project merge PROJECT_ID --source DUPLICATE_ID` to combine existing
+Use `taskix project merge PROJECT_A PROJECT_B` to combine existing
 records with the same nonblank Git origin URL. Both origins must match exactly,
 and at least one stored local root must still be a Git repository with that
 origin. The most recently recorded valid repository root wins. Project lookup
 and registration use origin before path, preventing new duplicates after moves.
+
+Argument order does not choose the retained Project: `merge A B` and `merge B A`
+produce the same result. Prefer the Project with the canonical name; otherwise,
+retain the oldest Project by creation time, breaking ties by ascending ID.
+Valid root selection is independent and prefers the latest recorded activity,
+then creation time and descending ID on ties.
+The result reports `retained_id`, `removed_id`, `root` and `document_directory`;
+the existing `id` field equals `retained_id`. Human output and Obsidian notices
+show all four values. The former `--source` syntax is no longer accepted; upgrade
+the CLI and Obsidian plugin together. `--expect-revision` guards the first argument
+and `--second-revision` guards the second, regardless of which Project is retained.
 
 The merge prefers the Project without an allocated numeric suffix and removes
 that suffix from the retained folder name. An unrelated Project occupying the
@@ -336,7 +347,7 @@ Memory migration and refresh the retained Project’s notes.
 In Obsidian, right-click a managed Project folder or its Board, choose **Merge
 project**, select a same-origin duplicate, then choose **Merge**. The dialog
 checks both Project revisions; copied Boards cannot initiate a merge. CLI callers
-can provide `--expect-revision`, `--source-revision` and `--idempotency-key`.
+can provide `--expect-revision`, `--second-revision` and `--idempotency-key`.
 If publication reports `projection_pending`, resolve its filesystem conflict and
 run `taskix sync`; the durable migration journal resumes before old folders are
 cleaned. Review custom links that explicitly reference old folder or renamed

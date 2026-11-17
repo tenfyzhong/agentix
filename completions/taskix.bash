@@ -10684,17 +10684,13 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__project__subcmd__merge)
-            opts="-h --source --source-revision --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --second-revision --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
-                --source)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --source-revision)
+                --second-revision)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
