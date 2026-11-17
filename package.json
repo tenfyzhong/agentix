@@ -1,6 +1,6 @@
 {
   "name": "agentix-plugins",
-  "version": "0.8.1+dev",
+  "version": "0.8.2",
   "private": true,
   "description": "Agentix extensions for Pi, OMP, and OpenCode.",
   "license": "MIT",
