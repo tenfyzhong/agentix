@@ -158,3 +158,19 @@ test("real_homebrew_switch_links_exact_local_keg_in_isolated_prefix", {skip: pro
         }
     }
 });
+
+for (const version of ["0.8.2+dev.21839dcd319f", "0.8.2+dev.21839dcd319f.dirty_1"]) {
+    test(`switch_local_selects_binary_version_format_${version}`, unix, async t => {
+        const f = await fixture(t);
+        const profile = version.includes("dirty") ? "debug" : "release";
+        for (const name of ["agentix", "taskix"]) {
+            const keg = join(f.prefix, "Cellar", name, version);
+            await mkdir(join(keg, "share", name), {recursive: true});
+            await writeFile(join(keg, "share", name, "agentix-local.json"), JSON.stringify({profile}));
+            await writeFile(join(keg, "receipt.json"), JSON.stringify({time: 600, tap: "tenfyzhong/tap"}));
+        }
+        const result = f.run(`PROFILE=${profile}`);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal((await f.linked("agentix")).split("/").at(-1), version);
+    });
+}

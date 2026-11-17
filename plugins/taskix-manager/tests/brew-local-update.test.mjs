@@ -26,7 +26,7 @@ test("real_homebrew_local_update_handles_head_links_with_stable_opt_and_preserve
         execFileSync("git", ["init", "--quiet", "--initial-branch=test/local-update", tapPath]);
         await writeFile(join(tapPath, "lib/agentix_local_build.rb"), await readFile(join(productionTap, "lib/agentix_local_build.rb")));
         for (const path of ["config", "completions", "src"]) await mkdir(join(source, path), {recursive: true});
-        await writeFile(join(source, "Cargo.toml"), `[package]\nname = "${name}"\nversion = "1.2.3"\nedition = "2021"\n`);
+        await writeFile(join(source, "Cargo.toml"), `[package]\nname = "${name}"\nversion = "0.1.0"\nedition = "2021"\n`);
         const main = join(source, "src/main.rs");
         await writeFile(main, `fn main() { println!("${name} bootstrap"); }\n`);
         await writeFile(join(source, "config", `${name}.example.toml`), "fixture = true\n");
@@ -39,7 +39,7 @@ test("real_homebrew_local_update_handles_head_links_with_stable_opt_and_preserve
         execFileSync("git", ["-C", source, "-c", "user.name=Homebrew Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-s", "--quiet", "-m", "test: bootstrap isolated HEAD fixture"]);
         const head = join(dir, "head.git");
         execFileSync("git", ["clone", "--bare", "--quiet", source, head]);
-        const archive = join(dir, "bootstrap-1.2.3.tar.gz");
+        const archive = join(dir, "bootstrap-0.1.0.tar.gz");
         execFileSync("tar", ["-czf", archive, "-C", source, `target/release/${name}`, "config", "completions"]);
         const checksum = createHash("sha256").update(await readFile(archive)).digest("hex");
         const klass = name.split("-").map(word => word[0].toUpperCase() + word.slice(1)).join("");
@@ -72,11 +72,11 @@ test("real_homebrew_local_update_handles_head_links_with_stable_opt_and_preserve
         let previous;
         const installedSnapshots = new Map();
         for (const [iteration, profile] of [[1, "release"], [1, "release"], [2, "release"], [1, "release"], [3, "debug"]]) {
-            await writeFile(main, `fn main() { println!("${name} local-${iteration}-${profile}"); }\n`);
+            await writeFile(main, `fn main() { println!("{}", if std::env::args().any(|arg| arg == "-V") { "${name} 0.8.2+dev.21839dcd319f" } else { "${name} local-${iteration}-${profile}" }); }\n`);
             const result = update(profile);
             assert.equal(result.status, 0, result.stdout + result.stderr);
             const keg = await realpath(opt);
-            assert.match(keg, new RegExp(`0\\.0\\.0-local\\..*\\.${profile}$`));
+            assert.equal(keg.split("/").at(-1), "0.8.2+dev.21839dcd319f");
             const identity = `${iteration}/${profile}`;
             if (installedSnapshots.has(identity)) assert.equal(keg, installedSnapshots.get(identity), "Install the requested artifact even when a newer local keg exists");
             installedSnapshots.set(identity, keg);
@@ -98,6 +98,9 @@ test("real_homebrew_local_update_handles_head_links_with_stable_opt_and_preserve
         assert.match(failed.stdout + failed.stderr, /fixture install failure/);
         assert.equal(await realpath(linked), previous);
         assert.equal(await realpath(command), join(previous, "bin", name));
+        const switched = spawnSync("make", ["switch", "VERSION=stable", `FORMULAE=${name}`], {cwd: source, env, encoding: "utf8", timeout: 90_000});
+        assert.equal(switched.status, 0, switched.stdout + switched.stderr);
+        assert.equal(await realpath(command), join(stable, "bin", name));
     } finally {
         try { brew("uninstall", "--force", `${tap}/${name}`); } catch { /* Setup may have failed. */ }
         try { brew("untrust", "--formula", `${tap}/${name}`); brew("untrust", tap); } catch { /* Setup may have failed. */ }

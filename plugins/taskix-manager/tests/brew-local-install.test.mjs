@@ -42,7 +42,7 @@ done
         const formulae = names.split(" ").map(name => `tenfyzhong/tap/${name}`).join(" ");
         assert.equal(calls.length, 3, "Build before installing all artifacts and switching links");
         assert.equal(calls.shift(), `cargo|${targetDirectory === "target" ? "" : targetDirectory}|build --workspace --all-features${profile === "release" ? " --release" : ""}`);
-        assert.equal(calls[0], `${checkout}|${profile}|${targetDirectory}|install --build-from-source --skip-link ${formulae}`);
+        assert.equal(calls[0], `${checkout}|${profile}|${targetDirectory}|ruby ${formulae}`);
         assert.ok(calls[1].startsWith(`${checkout}|${profile}|${targetDirectory}|ruby `), "Switch must resolve the same artifact inputs as installation");
         assert.ok(calls[1].endsWith(` ${profile} ${formulae}`), "Switch must use the selected profile and formulae");
     };
@@ -76,9 +76,9 @@ test("update_local_hides_recipes_and_preserves_homebrew_output", {skip: process.
     assert.equal(result.status, 0, result.stderr);
     await f.successfulCalls();
     assert.doesNotMatch(result.stdout, /HOMEBREW_AGENTIX_LOCAL_|ruby -e|switch VERSION=local/);
-    assert.match(result.stdout, /Homebrew output: install/);
     assert.match(result.stdout, /Homebrew output: ruby/);
-    assert.match(result.stderr, /Homebrew diagnostic: install/);
+    assert.match(result.stdout, /Homebrew output: ruby/);
+    assert.match(result.stderr, /Homebrew diagnostic: ruby/);
     assert.match(result.stderr, /Homebrew diagnostic: ruby/);
 });
 for (const arg of ["PROFILE=bad", "FORMULAE=unknown", "FORMULAE="]) {
