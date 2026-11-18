@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 /** Native OpenCode 2 server plugin. One Taskix extension owns each native session. */
 export async function setupOpenCode(input, options = {}) {
     const sessions = new Map(),
+        detached = new Map(),
+        runner = options.runner ?? runTaskix,
         controller = new AbortController();
     let disposed = false;
     const report =
@@ -35,7 +37,7 @@ export async function setupOpenCode(input, options = {}) {
                         sendMessage: (message) => notices.push(message.content),
                     },
                     'opencode',
-                    options.runner ?? runTaskix,
+                    runner,
                     options.timers ?? globalThis,
                     undefined,
                     { ...options.routing, turnRegistry: new Map() },
@@ -54,6 +56,7 @@ export async function setupOpenCode(input, options = {}) {
                     chain: Promise.resolve(),
                 };
                 await handlers.get('session_start')({}, ctx);
+                detached.delete(id);
                 state.excluded = !handlers.get('tracking_enabled')({}, ctx);
                 if (state.excluded) return state;
                 const saved = await input.storage.get('active:' + id);
@@ -115,7 +118,8 @@ export async function setupOpenCode(input, options = {}) {
                 state.work
             )
                 continue;
-            await state.handlers.get('session_shutdown')({}, state.ctx);
+            if (state.seen.size) detached.set(id, state.ctx.cwd);
+            state.handlers.get('session_detach')({}, state.ctx);
             sessions.delete(id);
             idle--;
         }
@@ -279,7 +283,17 @@ export async function setupOpenCode(input, options = {}) {
     async function event(frame) {
         frame = structuredClone(frame);
         const data = frame.data;
-        if (!data?.sessionID || !sessions.has(data.sessionID)) return;
+        if (!data?.sessionID) return;
+        if (!sessions.has(data.sessionID)) {
+            const cwd = detached.get(data.sessionID);
+            if (cwd && frame.type === 'session.compaction.started') {
+                await runner(['hook', 'pre-compact'], { cwd, session: data.sessionID });
+            } else if (cwd && frame.type === 'session.deleted') {
+                await runner(['hook', 'session-end'], { cwd, session: data.sessionID });
+                detached.delete(data.sessionID);
+            }
+            return;
+        }
         const state = await session(data.sessionID);
         if (state.excluded) {
             if (frame.type === 'session.execution.interrupted' && data.reason !== 'shutdown')
@@ -332,6 +346,8 @@ export async function setupOpenCode(input, options = {}) {
                 data.reason !== 'shutdown'
             )
                 await settle(state, true);
+            else if (frame.type === 'session.compaction.started')
+                await state.handlers.get('session_before_compact')({}, state.ctx);
             else if (frame.type === 'session.deleted') {
                 try {
                     await settle(state, true);
@@ -502,6 +518,14 @@ export async function setupOpenCode(input, options = {}) {
             }),
         );
         sessions.clear();
+        for (const [session, cwd] of detached) {
+            try {
+                await runner(['hook', 'session-end'], { cwd, session });
+            } catch (error) {
+                results.push({ status: 'rejected', reason: error });
+            }
+        }
+        detached.clear();
         const failure = results.find((result) => result.status === 'rejected');
         if (failure) throw failure.reason;
     };

@@ -38,7 +38,7 @@ Project references are nullable when unavailable. Provider, protocol, model and 
 are captured per request. `called` and `accepted` are integer booleans; accepted
 means the host accepted the provider decision after applicable guards, not that a human
 confirmed it was correct. `kind` is routing, discussion (turn ownership), recovery,
-outcome, review_policy, completion, or memory_triage (extraction screening). Kinds are open-ended stable identifiers matching `[a-z][a-z0-9_]{0,63}`; invalid identifiers are rejected before storage is opened. New kinds need no whitelist or report registration.
+outcome, review_policy, completion, or historical memory_triage (extraction screening). Kinds are open-ended stable identifiers matching `[a-z][a-z0-9_]{0,63}`; invalid identifiers are rejected before storage is opened. New kinds need no whitelist or report registration.
 One event covers one assessment, including preparation/network/revision fallbacks;
 nested helper calls do not create duplicate events. Deterministic discussion
 selection without a provider evaluation is omitted. Disabled collection performs no I/O.
@@ -96,19 +96,8 @@ its 25 ms per-operation busy timeout. Termination or contention may drop a sampl
 a committed request must always have its complete answer set. These limits do
 not redefine `duration_ms`: the CLI displays it as `PREP_MS`, not end-to-end time.
 
-The memory service writes `memory_triage` using the same v3 schema and environment
-variables. `action` is `skip`, `extract`, or `agent` (fallback). The question is
-`memory_triage`; its `subject_id` identifies source receipt and work item. Confident
-skip and extract results have `accepted=1`; uncertain, low-score, malformed and
-service-failure results produce `agent` (fallback). Answers preserve the provider's
-original choice, scores and validation issue. A temporary positive-gate experiment
-used the same kind but was rolled back; compare historical metrics within their
-policy/time window. These are screening policy
-outcomes, not completed work or model-call savings. Retries/chunks are separate
-evaluations. Disabled decision evaluation does not emit requests. The compact report adds one
-skip/extract/fallback summary when such records exist. The Rust writer performs
-the same transactional v1/v2 migration; a failed append rolls back migration too.
-
+Historical `memory_triage` rows retain their `skip`, `extract` and `agent` actions.
+The compact and JSON reports still summarize these records when they exist.
 
 ## Runtime coverage
 
@@ -120,14 +109,13 @@ the same transactional v1/v2 migration; a failed append rolls back migration too
 | `outcome` | Continue, wait, block, fail or ready assessment | `assessLifecycle` |
 | `review_policy` | Scope-based review requirement | `assessLifecycle` |
 | `completion` | Whole-Job completion destination | `assessLifecycle` |
-| `memory_triage` | Skip or retain a chunk for memory extraction | Memory service `DecisionTriage` |
 
 All four agent hosts use the shared plugin collectors. Issue matching is an
 `issue` question within a routing request, not a separate provider call.
 The report groups recorded kinds dynamically; a missing row means no retained
 sample of that kind, not that the kind is unsupported. Enable both
 `TASKIX_DECISION_ENABLED` and `TASKIX_DECISION_METRICS_ENABLED` in each calling process,
-and use the same `TASKIX_DECISION_METRICS_DB` to combine host and memory-service data.
+and use the same `TASKIX_DECISION_METRICS_DB` to combine data across hosts.
 Disabled or invalid decision configuration produces no evaluation record.
 Deterministic discussion selection without a provider call is also omitted.
 
@@ -137,10 +125,8 @@ consolidation use their configured model provider, not the decision service, and
 report. Runtime provider failures and preflight fallbacks are recorded when
 collection is enabled, subject to the bounded best-effort writer.
 
-The combined CLI regression covers all seven kinds and their compact/JSON views.
-A mocked HTTP triage regression verifies one persisted event per actual decision,
-including skip, extract, uncertainty, malformed answers, service errors and
-oversized input, with no source text or credentials in the metrics database.
+The combined CLI regression covers current kinds, historical Memory screening
+records and their compact and JSON views.
 
 
 <a id="adding-a-jev-decision"></a>

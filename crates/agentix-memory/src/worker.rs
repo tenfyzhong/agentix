@@ -7,22 +7,12 @@ use serde_json::{Value, json};
 
 use crate::{
     AgentConfig, AgentLoop, ConsolidationDecision, MemoryInput, MemoryStore, Model, ProjectTools,
-    Source, ToolSet, WorkKind, WorkLease, agent_loop::ProposalValidator, tools::definition,
+    ToolSet, WorkKind, WorkLease, agent_loop::ProposalValidator, tools::definition,
 };
 
 #[async_trait]
 pub trait ProjectRepository: Send + Sync {
     async fn root(&self, project: &str) -> Result<Option<PathBuf>>;
-}
-
-/// A fail-open preflight for extraction only; it never mutates memory.
-#[async_trait]
-pub trait ExtractionGate: Send + Sync {
-    async fn evaluate(&self, source: &Source, lease: &WorkLease) -> Result<TriageDecision>;
-}
-pub struct TriageDecision {
-    pub skip: bool,
-    pub audit: Value,
 }
 
 /// One immutable configuration snapshot. Replace this object for future claims on reload.
@@ -32,7 +22,6 @@ pub struct MemoryWorker {
     model: Arc<dyn Model>,
     config: AgentConfig,
     repositories: Arc<dyn ProjectRepository>,
-    gate: Option<Arc<dyn ExtractionGate>>,
 }
 
 impl MemoryWorker {
@@ -47,14 +36,7 @@ impl MemoryWorker {
             model,
             config,
             repositories,
-            gate: None,
         }
-    }
-
-    #[must_use]
-    pub fn with_extraction_gate(mut self, gate: Arc<dyn ExtractionGate>) -> Self {
-        self.gate = Some(gate);
-        self
     }
 
     pub async fn run_once(&self, owner: &str) -> Result<bool> {
@@ -139,13 +121,12 @@ impl MemoryWorker {
         tools: &ProjectTools,
         head: Option<&str>,
         result: &crate::LoopResult,
-        triage: &Value,
     ) -> Result<()> {
         ensure!(
             head == tools.repository_head().await?.as_deref(),
             "repository HEAD changed during memory task"
         );
-        self.store.record_work_audit(lease, &json!({"triage":triage,"repository_head":head,"inspections":tools.inspection_audit(),"config":self.config,"usage":result.usage,"steps":result.steps,"tool_calls":result.tool_calls}),now()).await
+        self.store.record_work_audit(lease, &json!({"repository_head":head,"inspections":tools.inspection_audit(),"config":self.config,"usage":result.usage,"steps":result.steps,"tool_calls":result.tool_calls}),now()).await
     }
 
     async fn review(
@@ -186,37 +167,13 @@ impl MemoryWorker {
             tools.repository_checked(),
             "repository inspection required before review"
         );
-        self.record_audit(lease, tools, head, &result, &Value::Null)
-            .await?;
+        self.record_audit(lease, tools, head, &result).await?;
         self.store.complete_review(lease, &decision, now()).await
     }
 
     async fn execute(&self, lease: &WorkLease) -> Result<()> {
         if self.store.skip_obsolete_compaction(lease, now()).await? {
             return Ok(());
-        }
-        let mut triage = Value::Null;
-        if lease.kind == WorkKind::Extract
-            && let Some(gate) = &self.gate
-        {
-            let source = self
-                .store
-                .source(&lease.project_id, &lease.receipt_id)
-                .await?;
-            let decision = gate
-                .evaluate(&source, lease)
-                .await
-                .unwrap_or_else(|_| TriageDecision {
-                    skip: false,
-                    audit: json!({"action":"agent","reason":"service_unavailable"}),
-                });
-            triage = decision.audit;
-            self.store
-                .record_work_audit(lease, &json!({"triage":triage}), now())
-                .await?;
-            if decision.skip {
-                return self.store.complete_extraction(lease, vec![], now()).await;
-            }
         }
         let root = self
             .repositories
@@ -246,7 +203,7 @@ impl MemoryWorker {
                         validate_extraction(value, lease)
                     })
                     .await?;
-                self.record_audit(lease, &tools, head.as_deref(), &result, &triage)
+                self.record_audit(lease, &tools, head.as_deref(), &result)
                     .await?;
                 let result: Extraction = serde_json::from_value(result.value)?;
                 ensure!(
@@ -258,7 +215,7 @@ impl MemoryWorker {
                     .await?;
             }
             WorkKind::Consolidate => {
-                self.consolidate(lease, &tools, head.as_deref(), &agent, &triage)
+                self.consolidate(lease, &tools, head.as_deref(), &agent)
                     .await?;
             }
         }
@@ -270,7 +227,6 @@ impl MemoryWorker {
         tools: &ProjectTools,
         head: Option<&str>,
         agent: &AgentLoop,
-        triage: &Value,
     ) -> Result<()> {
         let seed: Option<crate::Memory> = lease
             .payload
@@ -310,7 +266,7 @@ impl MemoryWorker {
         let input = json!({"project_id":lease.project_id,"candidates":candidates,"related_memories":related,"compact":seed});
         if seed.as_ref().is_some_and(|m| m.content.fact.is_none()) {
             return self
-                .compact_legacy(lease, tools, head, triage, &input, &related[0])
+                .compact_legacy(lease, tools, head, &input, &related[0])
                 .await;
         }
         let finish = definition(
@@ -341,8 +297,7 @@ impl MemoryWorker {
                         },
                     )
                     .await?;
-        self.record_audit(lease, tools, head, &result, triage)
-            .await?;
+        self.record_audit(lease, tools, head, &result).await?;
         let result: Consolidation = serde_json::from_value(result.value)?;
         ensure!(
             tools.memory_checked(),
@@ -362,7 +317,6 @@ impl MemoryWorker {
         lease: &WorkLease,
         tools: &ProjectTools,
         head: Option<&str>,
-        triage: &Value,
         input: &Value,
         related: &[crate::Memory],
     ) -> Result<()> {
@@ -454,8 +408,7 @@ impl MemoryWorker {
             .take()
             .context("missing validated fact split")?;
         result.value = serde_json::to_value(&proposal)?;
-        self.record_audit(lease, tools, head, &result, triage)
-            .await?;
+        self.record_audit(lease, tools, head, &result).await?;
         self.store
             .complete_fact_compaction(lease, proposal, now())
             .await?;

@@ -597,7 +597,7 @@ with only partition 1 saving it to avoid redundant uploads. CI disables dev/test
 debug symbols; local Cargo profiles and `make check` remain unchanged.
 The `ci` nextest profile gives the slow native plugin integration higher priority
 so it starts immediately and overlaps the ordinary tests on its partition.
-The short memory IPC suite and the memory triage metrics integration reserve all
+The short memory IPC suite and the direct Memory extraction integration reserve all
 test threads while they run. This protects real request deadlines and the 250 ms
 best-effort metrics write from competing tests without relaxing assertions.
 
@@ -680,16 +680,12 @@ Feishu, Telegram and Slack adapter HTTP tests validate local rendered controls. 
 
 ## Jev metrics collection
 
-The seven runtime decision kinds are routing, discussion, recovery, outcome,
-review policy, completion and memory triage. Issue association is recorded as a
-question within routing. `plugins/taskix-manager/tests/jev-metrics.test.mjs`
-covers shared host collection, nested-helper deduplication, lifecycle/discussion
-fallbacks, schema compatibility and native CLI interoperability.
-`crates/taskix/tests/metrics.rs` verifies all seven kinds together in compact and
-JSON reports. `actual_triage_calls_record_success_and_fallback_metrics_once`
-uses local HTTP responses and a temporary database to verify memory-service
-collection for successful, uncertain, invalid, failed and oversized-input
-decisions, including the absence of source text and credentials.
+The six runtime decision kinds are routing, discussion, recovery, outcome,
+review policy and completion. Issue association is a question within routing.
+`plugins/taskix-manager/tests/jev-metrics.test.mjs` covers shared host collection,
+nested-helper deduplication, lifecycle/discussion fallbacks, schema compatibility
+and native CLI interoperability. `crates/taskix/tests/metrics.rs` verifies current
+kinds and historical `memory_triage` rows in compact and JSON reports.
 Generic collector regressions additionally verify new decision kinds with multiple
 answers, automatic CLI aggregation, nested-measurement deduplication, invalid kind
 rejection before I/O, unchanged callback errors and atomic answer rollback.
@@ -822,8 +818,8 @@ of all performance regressions.
 `decision-provider.test.mjs` covers Typesafe and OpenAI Decisions using the same
 third-party provider identity, including routing, Issues, discussion, lifecycle,
 refusals, malformed distributions, transport failures and payload bounds.
-The shared `decision-config.json` fixture verifies JS/Rust configuration parity.
-Rust triage tests exercise local HTTP requests and conservative extraction fallback.
+The `decision-config.json` fixture verifies host provider configuration.
+The Memory daemon regression verifies direct extraction with Decision configured.
 Metrics tests cover v1/v2/v3, transactional migration/rollback, provider/protocol
 reports and real Node-to-CLI interoperability. Telemetry tests verify grouped
 histograms, bounded custom identities and Typesafe-only legacy series; monitoring

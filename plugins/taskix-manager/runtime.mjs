@@ -111,6 +111,17 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
     if (!event.session_id) throw new Error("Hook requires session_id");
     if (event.hook_event_name === "PostToolUseFailure" && event.is_interrupt !== true)
         return {};
+    const options = { cwd: event.cwd, session: event.session_id };
+    if (event.hook_event_name === "PreCompact") {
+        if (await trackingEnabled(options, runner)) {
+            try {
+                await stageTranscript(event, runner, options, routing.cacheDir);
+            } finally {
+                await runner(["hook", "pre-compact"], options);
+            }
+        }
+        return {};
+    }
     const operation =
         event.hook_event_name === "SessionStart"
             ? "session-start"
@@ -119,7 +130,6 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
               : ["Interrupt", "PostToolUseFailure"].includes(event.hook_event_name)
                 ? "interrupt"
                 : "heartbeat";
-    const options = { cwd: event.cwd, session: event.session_id };
     if (!await trackingEnabled(options, runner)) {
         // Preserve lifecycle maintenance for pre-existing leases, without intake.
         await runner(["hook", operation], options);
@@ -139,9 +149,18 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
     }
     if (["SessionStart", "SessionEnd", "Interrupt", "PostToolUseFailure", "Stop", "UserPromptSubmit"].includes(event.hook_event_name))
         await routingReceipt(event, "clear", routing.cacheDir);
+    if (operation === "session-end") {
+        // Collect the final visible reply before publishing the session's staged turns.
+        try {
+            await stageTranscript(event, runner, options, routing.cacheDir);
+        } finally {
+            await runner(["hook", operation], options);
+        }
+        return {};
+    }
     const heartbeat = await runner(["hook", operation], options);
     let discussion;
-    if (["PreToolUse", "Stop", "Interrupt", "PostToolUseFailure", "SessionEnd"].includes(event.hook_event_name)) {
+    if (["PreToolUse", "Stop", "Interrupt", "PostToolUseFailure"].includes(event.hook_event_name)) {
         discussion = await stageTranscript(event, runner, options, routing.cacheDir);
     }
     if (operation === "session-start") {
@@ -280,6 +299,23 @@ export function registerExtension(
         active = state;
         await runner(["hook", "session-start"], state.options);
         if (active === state && (host !== "opencode" || !state.tracking)) renew(state, ctx);
+    });
+    api.on("session_before_compact", async (_event, ctx) => {
+        const state = stateFor(ctx);
+        if (state?.tracking && !state.ended) {
+            try {
+                await runner(["hook", "pre-compact"], state.options);
+            } catch (error) {
+                ctx.ui?.notify?.(`Taskix Memory submission failed: ${error.message}`, "warning");
+            }
+        }
+    });
+    if (host === "opencode") api.on("session_detach", (_event, ctx) => {
+        const state = stateFor(ctx);
+        if (!state) return;
+        pause(state);
+        if (active === state) active = undefined;
+        turnRegistry.delete(state.options.session);
     });
     api.on("session_shutdown", async (_event, ctx) => {
         const state = stateFor(ctx);

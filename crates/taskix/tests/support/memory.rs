@@ -84,6 +84,7 @@ fn memory_daemon_cli_and_offline_fallback_do_not_require_a_vault_or_model_creden
         "--file",
         capture.to_str().unwrap(),
     ]);
+    cli.ok(&["hook", "session-end", "--session", "discussion"]);
     std::fs::remove_dir_all(cli.dir.path().join("vault")).unwrap();
     let log = std::fs::File::create(cli.dir.path().join("daemon.log")).unwrap();
     let mut daemon = Daemon(
@@ -408,7 +409,7 @@ fn start_memory(cli: &Cli, expected_sources: i64) -> Daemon {
     }
 }
 
-fn recovery_capture(cli: &Cli, turn: &str) {
+fn stage_recovery_turn(cli: &Cli, turn: &str) {
     let path = cli.dir.path().join("capture.json");
     std::fs::write(&path, json!({"turn_id":turn,"messages":[{"id":turn,"role":"user","text":"Offline recovery is required"}]}).to_string()).unwrap();
     cli.ok(&[
@@ -419,6 +420,11 @@ fn recovery_capture(cli: &Cli, turn: &str) {
         "--file",
         path.to_str().unwrap(),
     ]);
+}
+
+fn recovery_capture(cli: &Cli, turn: &str) {
+    stage_recovery_turn(cli, turn);
+    cli.ok(&["hook", "pre-compact", "--session", "restore-session"]);
 }
 
 #[test]
@@ -799,63 +805,77 @@ async fn memory_visible_turn_to_mock_model_to_real_host_hook_end_to_end() {
     );
 }
 
-#[allow(clippy::too_many_lines)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn memory_jev_triage_uses_existing_environment_and_reports_skip_extract_and_fallback() {
-    for (enabled, choice, confidence, status, expected_calls, action) in [
-        ("true", "skip", 0.99, 200, 0, "skip"),
-        ("false", "skip", 0.99, 200, 1, "disabled"),
-        ("1", "extract", 0.99, 200, 1, "extract"),
-        ("true", "skip", 0.5, 200, 1, "agent"),
-        ("true", "uncertain", 0.99, 200, 1, "agent"),
-        ("true", "extract", 0.5, 200, 1, "agent"),
-        ("true", "invalid", 0.99, 200, 1, "agent"),
-        ("true", "skip", 0.99, 500, 1, "agent"),
-    ] {
-        let cli = Cli::with_memory();
-        cli.ok(&[
-            "project",
-            "register",
-            "--root",
-            cli.dir.path().to_str().unwrap(),
-        ]);
-        recovery_capture(&cli, "first");
-        let tasks = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
-            .await
-            .unwrap();
-        let source = tasks.memory_sources(0, 1).await.unwrap().remove(0);
-        let mut probabilities = json!({"skip":0.005,"extract":0.005,"uncertain":0.005});
-        probabilities[choice] = json!(0.99);
-        let jev = provider_http::MockHttp::start(vec![(status, json!({"answers":{"memory_triage":{"type":"choice","choice":choice,"confidence":confidence,"probabilities":probabilities}}}))]).await;
-        let model = provider_http::MockHttp::start(vec![(200, json!({"status":"completed","output":[{"type":"function_call","call_id":"finish","name":"submit_candidates","arguments":"{\"candidates\":[]}"}]}))]).await;
-        let path = cli.dir.path().join("config.toml");
-        let config = std::fs::read_to_string(&path).unwrap();
-        std::fs::write(&path, format!("{config}\n[memory]\n[memory.providers.mock]\napi='responses'\nbase_url='{}'\n[memory.agent]\nprovider='mock'\n[memory.service]\npoll_interval_ms=20\n",model.url)).unwrap();
-        let metrics_path = cli.dir.path().join("jev-metrics.db");
-        let _daemon = Daemon(
-            cli.command(&["serve"])
-                .env("TASKIX_JEV_ENABLED", enabled)
-                .env("TASKIX_JEV_URL", format!("{}/evaluate", jev.url))
-                .env("TASKIX_JEV_API_KEY", "mock-key")
-                .env("TASKIX_JEV_MODEL", "jev-fixture")
-                .env("TASKIX_JEV_MIN_CONFIDENCE", "NaN")
-                .env("TASKIX_MEMORY_JEV_MIN_CONFIDENCE", "0.8")
-                .env("TASKIX_JEV_METRICS_ENABLED", "true")
-                .env("TASKIX_JEV_METRICS_DB", &metrics_path)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap(),
-        );
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            let status = cli.ok(&["status"]);
-            if status["online"] == true && status["sources"] == 1 {
-                break;
-            }
-            assert!(Instant::now() < deadline);
-            tokio::time::sleep(Duration::from_millis(20)).await;
+async fn memory_extracts_compact_and_exit_sources_without_calling_decisions() {
+    let cli = Cli::with_memory();
+    cli.ok(&[
+        "project",
+        "register",
+        "--root",
+        cli.dir.path().to_str().unwrap(),
+    ]);
+    let decision = provider_http::MockHttp::start(vec![(
+        200,
+        json!({
+            "answers": {"memory_triage": {"type": "choice", "choice": "skip", "confidence": 0.99,
+                "probabilities": {"skip": 0.99, "extract": 0.005, "uncertain": 0.005}}}
+        }),
+    )])
+    .await;
+    let extraction = (
+        200,
+        json!({
+            "status": "completed",
+            "output": [{"type": "function_call", "call_id": "finish", "name": "submit_candidates",
+                        "arguments": "{\"candidates\":[]}"}]
+        }),
+    );
+    let model = provider_http::MockHttp::start(vec![extraction.clone(), extraction]).await;
+    let path = cli.dir.path().join("config.toml");
+    let config = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{config}\n[memory]\n[memory.providers.mock]\napi='responses'\nbase_url='{}'\n[memory.agent]\nprovider='mock'\nrepository_review_interval_seconds=0\n[memory.service]\npoll_interval_ms=20\n", model.url)).unwrap();
+
+    stage_recovery_turn(&cli, "compacted");
+    let tasks = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
+        .await
+        .unwrap();
+    assert!(tasks.replay_memory_sources(0, 10).await.unwrap().is_empty());
+
+    let _daemon = Daemon(
+        cli.command(&["serve"])
+            .env("TASKIX_DECISION_ENABLED", "true")
+            .env("TASKIX_DECISION_PROVIDER", "typesafe")
+            .env("TASKIX_DECISION_PROTOCOL", "typesafe")
+            .env("TASKIX_DECISION_URL", format!("{}/evaluate", decision.url))
+            .env("TASKIX_DECISION_API_KEY", "mock-key")
+            .env("TASKIX_DECISION_MODEL", "jev-fixture")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while cli.ok(&["status"])["online"] != true {
+        assert!(Instant::now() < deadline, "Memory service did not start");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let mut cursor = 0;
+    for (boundary, turn) in [("pre-compact", "compacted"), ("session-end", "exited")] {
+        if turn == "exited" {
+            stage_recovery_turn(&cli, turn);
         }
+        assert!(
+            tasks
+                .replay_memory_sources(cursor, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        cli.ok(&["hook", boundary, "--session", "restore-session"]);
+        let sources = tasks.replay_memory_sources(cursor, 10).await.unwrap();
+        assert_eq!(sources.len(), 1);
+        let source = &sources[0];
+        assert_eq!(source.turn_id, turn);
         let receipt = cli.ok(&[
             "memory",
             "receipt",
@@ -863,40 +883,18 @@ async fn memory_jev_triage_uses_existing_environment_and_reports_skip_extract_an
             "--wait-seconds",
             "10",
         ]);
-        assert_eq!(receipt["complete"], true, "{action}: {receipt}");
-        assert_eq!(
-            model.requests.lock().unwrap().len(),
-            expected_calls,
-            "{action}"
-        );
-        if enabled == "false" {
-            assert!(jev.requests.lock().unwrap().is_empty());
-            assert!(!metrics_path.exists());
-        } else {
-            let requests = jev.requests.lock().unwrap();
-            assert_eq!(requests.len(), 1);
-            assert_eq!(requests[0].1["model"], "jev-fixture");
-            assert_eq!(
-                requests[0].1["state"]["messages"][0]["text"],
-                "Offline recovery is required"
-            );
-            drop(requests);
-            let output = cli
-                .command(&["routing", "metrics", "report"])
-                .env("TASKIX_JEV_METRICS_DB", &metrics_path)
-                .output()
-                .unwrap();
-            let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-            assert_eq!(report["result"]["by_kind"][0]["kind"], "memory_triage");
-            assert_eq!(report["result"]["memory_triage"]["requests"], 1);
-            let field = match action {
-                "skip" => "skipped",
-                "extract" => "extract",
-                _ => "fallback",
-            };
-            assert_eq!(report["result"]["memory_triage"][field], 1);
-        }
+        assert_eq!(receipt["complete"], true, "{boundary}: {receipt}");
+        cursor = source.sequence;
     }
+    assert_eq!(
+        model.requests.lock().unwrap().len(),
+        2,
+        "both sources reach the extractor"
+    );
+    assert!(
+        decision.requests.lock().unwrap().is_empty(),
+        "Memory must not call Decisions"
+    );
 }
 
 #[test]

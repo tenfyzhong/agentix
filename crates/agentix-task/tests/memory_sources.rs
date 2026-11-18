@@ -26,6 +26,16 @@ fn capture(project: &Value, text: &str) -> Value {
         "turn_id":"decision","messages":[{"id":"user","role":"user","text":text}]})
 }
 
+async fn compact(store: &Store) {
+    store
+        .execute(
+            json!({"command":"session.pre-compact","session":"memory-session"}),
+            options(),
+        )
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn sources_are_immutable_versioned_and_acknowledged_individually() {
     let dir = tempfile::tempdir().unwrap();
@@ -40,6 +50,8 @@ async fn sources_are_immutable_versioned_and_acknowledged_individually() {
         .execute(capture(&p, "Use local storage for offline use"), options())
         .await
         .unwrap();
+    assert!(store.memory_sources(0, 10).await.unwrap().is_empty());
+    compact(&store).await;
     store
         .execute(
             capture(&p, "Use remote storage after deployment changes"),
@@ -47,6 +59,7 @@ async fn sources_are_immutable_versioned_and_acknowledged_individually() {
         )
         .await
         .unwrap();
+    compact(&store).await;
     let page = store.memory_sources(0, 10).await.unwrap();
     assert_eq!(page.len(), 2);
     assert_eq!(page[0].revision, 1);
@@ -100,6 +113,7 @@ async fn invalid_project_and_conflicting_reassignment_roll_back_capture() {
             .await
             .is_err()
     );
+    compact(&store).await;
     let pending = store.memory_sources(0, 10).await.unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].messages[0]["text"], "Decision");
@@ -123,6 +137,7 @@ async fn unknown_ownership_never_uses_the_latest_job() {
         .execute(capture(&Value::Null, "Unassigned discussion"), options())
         .await
         .unwrap();
+    compact(&store).await;
     assert!(store.memory_sources(0, 10).await.unwrap().is_empty());
 }
 
@@ -149,6 +164,8 @@ async fn attachment_assigns_sources_atomically_and_rejects_foreign_project() {
         .await
         .unwrap()
         .result;
+    assert!(store.memory_sources(0, 10).await.unwrap().is_empty());
+    compact(&store).await;
     let pending = store.memory_sources(0, 10).await.unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].job_id.as_deref(), job["id"].as_str());
@@ -156,6 +173,7 @@ async fn attachment_assigns_sources_atomically_and_rejects_foreign_project() {
         .execute(capture(&Value::Null, "Late correction"), options())
         .await
         .unwrap();
+    compact(&store).await;
     assert_eq!(store.memory_sources(0, 10).await.unwrap().len(), 2);
 
     let other = project(&store, &dir.path().join("other")).await;
@@ -176,6 +194,42 @@ async fn attachment_assigns_sources_atomically_and_rejects_foreign_project() {
 }
 
 #[tokio::test]
+async fn late_attachment_links_published_evidence_before_the_next_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("tasks.sqlite3"))
+        .await
+        .unwrap();
+    let project = project(&store, dir.path()).await;
+    store
+        .execute(capture(&project, "Keep offline recovery"), options())
+        .await
+        .unwrap();
+    compact(&store).await;
+    let sources = store.memory_sources(0, 10).await.unwrap();
+    assert!(sources[0].job_id.is_none());
+
+    let job = store.execute(
+        json!({"command":"job.create","project":project,"title":"Recovery","conversation_turns":["decision"]}),
+        options(),
+    ).await.unwrap().result;
+    let job = job["id"].as_str().unwrap();
+    assert_eq!(store.memory_sources(0, 10).await.unwrap(), sources);
+    assert_eq!(
+        store
+            .memory_turn_jobs(&sources[0].instance_id, "memory-session", "decision")
+            .await
+            .unwrap(),
+        [job]
+    );
+    let bound = store.memory_job_sources(job, 0).await.unwrap();
+    assert_eq!(bound.len(), 1);
+    assert_eq!(bound[0].receipt_id, sources[0].receipt_id);
+    assert_eq!(bound[0].job_id.as_deref(), Some(job));
+    compact(&store).await;
+    assert_eq!(store.memory_sources(0, 10).await.unwrap(), sources);
+}
+
+#[tokio::test]
 async fn source_evidence_survives_discussion_expiry_and_migration_is_idempotent() {
     use std::sync::{
         Arc,
@@ -193,6 +247,7 @@ async fn source_evidence_survives_discussion_expiry_and_migration_is_idempotent(
         .execute(capture(&p, "Keep evidence"), options())
         .await
         .unwrap();
+    compact(&store).await;
     let first = store.memory_sources(0, 10).await.unwrap();
     now.fetch_add(31 * 24 * 60 * 60, Ordering::SeqCst);
     store
@@ -250,6 +305,7 @@ async fn restored_source_cannot_acknowledge_a_different_event_at_reused_sequence
         .execute(capture(&p, "Original branch of history"), options())
         .await
         .unwrap();
+    compact(&store).await;
     let old = store.memory_sources(0, 10).await.unwrap().remove(0);
     let restored = Store::open(&restored_path).await.unwrap();
     restored
@@ -259,6 +315,7 @@ async fn restored_source_cannot_acknowledge_a_different_event_at_reused_sequence
         )
         .await
         .unwrap();
+    compact(&restored).await;
     let new = restored.memory_sources(0, 10).await.unwrap().remove(0);
     assert_eq!(old.instance_id, new.instance_id);
     assert_eq!(old.sequence, new.sequence);
@@ -363,6 +420,7 @@ async fn schema_fourteen_upgrade_preserves_history_without_automatic_backfill() 
         .execute(capture(&p, "New decision"), options())
         .await
         .unwrap();
+    compact(&upgraded).await;
     assert_eq!(upgraded.memory_sources(0, 10).await.unwrap().len(), 1);
 }
 
@@ -382,8 +440,10 @@ async fn directory_hints_cannot_reassign_late_messages_to_another_project() {
     request["project_hint"] = second;
     request["messages"][0]["text"] = json!("Late clarified decision");
     store.execute(request, options()).await.unwrap();
+    compact(&store).await;
     let sources = store.memory_sources(0, 100).await.unwrap();
-    assert_eq!(sources.len(), 2);
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].messages[0]["text"], "Late clarified decision");
     assert!(
         sources
             .iter()
@@ -402,6 +462,7 @@ async fn recovery_replays_acknowledged_receipts_and_validates_the_source_instanc
         .execute(capture(&p, "Offline recovery"), options())
         .await
         .unwrap();
+    compact(&store).await;
     let source = store.memory_sources(0, 1).await.unwrap().remove(0);
     store
         .acknowledge_memory_source(&source.instance_id, &source.receipt_id)
@@ -463,11 +524,11 @@ async fn recovery_verifies_an_unordered_page_and_rejects_duplicate_sequences() {
         .unwrap();
     let p = project(&store, dir.path()).await;
     for i in 0..100 {
-        store
-            .execute(capture(&p, &format!("Decision revision {i}")), options())
-            .await
-            .unwrap();
+        let mut request = capture(&p, &format!("Decision {i}"));
+        request["turn_id"] = json!(format!("turn-{i}"));
+        store.execute(request, options()).await.unwrap();
     }
+    compact(&store).await;
     let mut sources = store.replay_memory_sources(0, 100).await.unwrap();
     assert_eq!(sources.len(), 100);
     sources.reverse();

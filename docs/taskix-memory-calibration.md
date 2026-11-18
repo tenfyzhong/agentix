@@ -1,8 +1,11 @@
 # Memory screening calibration (2026-09-29)
 
-## Adopted policy and default
+The Memory service now submits queued chunks directly to its extraction model.
+This page records the earlier screening policy and its calibration results.
 
-Taskix uses **negative screening** with
+## Historical policy and default
+
+The calibrated release used **negative screening** with
 **`TASKIX_MEMORY_JEV_MIN_CONFIDENCE=0.75`** by default. Only a valid `skip` whose
 confidence and selected probability both meet the threshold, with a margin of
 at least `0.2`, suppresses extraction. All other outcomes continue to the model:
@@ -20,7 +23,7 @@ used cached responses; no additional provider calls were needed.
 
 ## Context sent to Jev
 
-Jev receives the full source message snapshot and the current extraction chunk.
+The calibrated request included the full source message snapshot and the current extraction chunk.
 The question identifies the current chunk as the decision target; other messages
 only resolve references. It distinguishes disposable CI/test progress, delivery
 receipts, routine operations, investigation plans, raw tool output, injected

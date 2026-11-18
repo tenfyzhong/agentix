@@ -886,6 +886,7 @@ impl Engine {
             return Ok(());
         };
         let session_label = self.session_label(&session).await;
+        let compact = matches!(command, SessionCommand::Compact);
         let result = match self.operations.command(&session, command).await {
             Ok(result) => result,
             Err(error) => {
@@ -911,6 +912,12 @@ impl Engine {
                 return Ok(());
             }
         };
+        if compact {
+            self.tasks
+                .view(self)
+                .task_session_event("session.pre-compact", session.as_str())
+                .await;
+        }
         let target_session = if let Some(replacement) = result.replacement_session {
             let replacement_id = replacement.id.clone();
             let old_active = self.turns.active.lock().await.contains_key(&session);

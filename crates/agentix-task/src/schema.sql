@@ -112,6 +112,22 @@ CREATE TABLE IF NOT EXISTS discussion_turns (
 CREATE INDEX IF NOT EXISTS discussion_pending ON discussion_turns(session_id, job_id, position);
 CREATE INDEX IF NOT EXISTS discussion_job ON discussion_turns(job_id) WHERE job_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS discussion_activity ON discussion_sessions(activity);
+CREATE TABLE IF NOT EXISTS memory_pending_turns (
+    session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    PRIMARY KEY(session_id, turn_id),
+    FOREIGN KEY(session_id, turn_id) REFERENCES discussion_turns(session_id, turn_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS memory_pending_by_project ON memory_pending_turns(project_id);
+-- Preserve ownership of receipts published before their turn was attached to a Job.
+CREATE TABLE IF NOT EXISTS memory_source_job_bindings (
+    session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    PRIMARY KEY(session_id, turn_id)
+);
+CREATE INDEX IF NOT EXISTS memory_source_bindings_by_job ON memory_source_job_bindings(job_id);
 CREATE TABLE IF NOT EXISTS project_lookup (
     project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
     canonical_root TEXT NOT NULL,
@@ -290,7 +306,7 @@ BEGIN
     SELECT RAISE(ABORT, 'invalid Issue type; upgrade Agentix and Taskix together');
 END;
 
-PRAGMA user_version = 27;
+PRAGMA user_version = 28;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 

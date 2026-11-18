@@ -557,10 +557,15 @@ test('opencode2 speculative queued sessions remain bounded without renewal timer
             delivery: 'queue',
         });
     assert.equal(f.timers.size, 0);
-    assert.equal(
-        f.calls.filter((c) => c.args.join(' ') === 'hook session-end').length,
-        3,
-    );
+    assert.ok(!f.calls.some((c) => c.args.join(' ') === 'hook session-end'));
+    await f.hooks.get('prompt')({
+        sessionID: 's0',
+        messageID: 'msg_0',
+        prompt: { text: 'Queued' },
+        delivery: 'queue',
+    });
+    assert.equal(f.calls.filter((c) =>
+        c.args.join(' ') === 'hook session-start' && c.options.session === 's0').length, 2);
     await cleanup();
 });
 
@@ -1037,13 +1042,14 @@ test('opencode2 externally released idle lease no longer pins an otherwise evict
         prompt: { text: 'Queued' },
         delivery: 'queue',
     });
-    assert.ok(
-        f.calls.some(
-            (call) =>
-                call.args.join(' ') === 'hook session-end' &&
-                call.options.session === 'owned',
-        ),
-    );
+    const ended = () => f.calls.some((call) =>
+        call.args.join(' ') === 'hook session-end' && call.options.session === 'owned');
+    assert.equal(ended(), false, 'wrapper eviction is not session exit');
+    await f.event('session.compaction.started', { sessionID: 'owned' });
+    assert.ok(f.calls.some((call) =>
+        call.args.join(' ') === 'hook pre-compact' && call.options.session === 'owned'));
+    await f.event('session.deleted', { sessionID: 'owned' });
+    assert.equal(ended(), true);
     await cleanup();
 });
 

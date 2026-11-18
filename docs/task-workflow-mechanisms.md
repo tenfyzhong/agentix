@@ -160,9 +160,10 @@ Codex explicitly loads [hooks/hooks.json](../plugins/taskix-manager/hooks/hooks.
 | Stop | `taskix hook heartbeat` | Renew leases without taking additional work or requesting continuation; the legacy `hook stop` command is a compatibility no-op |
 | Codex Interrupt | `taskix hook interrupt` | Mark active Tasks as system BLOCKED with reason `session interrupted`; release leases and preserve Plans |
 | Claude PostToolUseFailure | `taskix hook interrupt` only when `is_interrupt` is boolean `true` | Release interrupted work; ordinary failures neither renew nor release ownership |
-| SessionEnd | `taskix hook session-end` | Mark the session's in-progress Tasks as system BLOCKED and release their leases |
+| PreCompact | `taskix hook pre-compact` | Stage the latest visible text and submit the session's staged Memory sources |
+| SessionEnd | `taskix hook session-end` | Submit staged Memory sources, mark in-progress Tasks as system BLOCKED, and release their leases |
 
-Command hooks do not stay running or start a heartbeat daemon. There is no periodic heartbeat without tool events; a single long tool call or an idle gap exceeding 15 minutes can still expire the lease. A PostToolUse heartbeat after expiry or interruption cannot revive the old lease; session resumption or a new claim is required. Stop means normal turn completion, not user interruption. Interrupt/SessionEnd cleanup requests a three-second hook timeout; other command hooks allow 30 seconds. The host may impose a shorter total shutdown budget. See the [lifecycle guide](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#lifecycle-behavior) for event availability, host requirements, and explicit cleanup when no event arrives.
+Command hooks do not stay running or start a heartbeat daemon. There is no periodic heartbeat without tool events; a single long tool call or an idle gap exceeding 15 minutes can still expire the lease. A PostToolUse heartbeat after expiry or interruption cannot revive the old lease; session resumption or a new claim is required. Stop means normal turn completion, not user interruption. Interrupt, PreCompact, and SessionEnd request a three-second hook timeout; other command hooks allow 30 seconds. The host may impose a shorter total shutdown budget. See the [lifecycle guide](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#lifecycle-behavior) for event availability, host requirements, and explicit cleanup when no event arrives.
 
 PreToolUse renews leases and supplies cancellation facts. It does not check whether the next tool will bypass taskix to write a Plan, and it is not a general file-write interceptor. The entrypoint returns an error when a hook fails; how the host displays or handles that error depends on its runtime behavior. A failed hook must not be treated as a successful renewal.
 
@@ -179,7 +180,8 @@ Both [pi.ts](../plugins/taskix-manager/extensions/pi.ts) and [omp.ts](../plugins
 | agent_start | Reset the previous aborted-result marker |
 | Pi agent_end + agent_settled | Release interrupted work at idle settle; successful final responses leave Issues unchanged for explicit user input |
 | OMP agent_end | Release aborted work when `willContinue` is false; successful final responses leave Issues unchanged for explicit user input |
-| session_shutdown | Stop the timer, cancel in-flight renewal, and run session-end |
+| session_before_compact | Run pre-compact to submit staged Memory sources |
+| session_shutdown | Stop lease renewal and run session-end to submit staged Memory sources and release leases |
 | taskix tool | Accept an array of argument strings, invoke the actual taskix process, and return JSON results or errors |
 
 For example, the agent supplies:

@@ -7,7 +7,8 @@ try {
     for await (const chunk of process.stdin) input += chunk;
     event = JSON.parse(input);
     const result = await runHook(event);
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    // Claude Code treats PreCompact stdout as instructions for its summary.
+    if (event.hook_event_name !== "PreCompact") process.stdout.write(`${JSON.stringify(result)}\n`);
 } catch (error) {
     process.exitCode = 1;
     await reportHookError(error, event);

@@ -68,16 +68,19 @@ environment, independently of the main Agent's subscription or login.
 
 ## Source delivery and recovery
 
-Save a changed turn and an immutable source snapshot in the same task database
-transaction. Identify the source database instance, canonical Project, session,
-turn and content revision. Resolve ownership explicitly; never select the most
-recent Job. Worktrees share canonical Taskix Project identity.
+During normal turns, store visible conversation and its Project association in
+the task database. A session compaction or shutdown transfers the latest version
+of each staged turn to the immutable source outbox in one transaction. Repeated
+boundaries and identical snapshots are idempotent. Source keys preserve the
+database instance, canonical Project, session, turn and content revision.
+Ownership is explicit, and worktrees share the canonical Taskix Project.
+Schema 28 adds the staging table. Existing outbox receipts remain replayable.
 
 The memory database transaction saves the receipt, evidence snapshot and work
 item before acknowledging the task outbox. Retries deduplicate by source identity.
 Acknowledgement is per receipt, not a maximum completed sequence: parallel workers
-can finish out of order. Pending snapshots survive discussion retention, and
-ingested evidence remains available after the original discussion expires.
+can finish out of order. Published snapshots and ingested evidence survive
+discussion expiry. Unsubmitted turns follow the discussion retention policy.
 
 Ordered replay has a separate durable checkpoint; the maximum stored sequence
 does not prove that earlier inputs arrived. Advance only after a successful
@@ -340,8 +343,12 @@ Semantic writes use the service. Ordinary reads can fall back to shared read-onl
 FTS when the service is unavailable. Protect local IPC with per-user isolation,
 single-instance ownership and bounded versioned requests.
 
-Codex, Claude, Pi, OMP and Agentix capture visible conversation through existing
-paths and consume a small relevant context plus on-demand search. Enforce byte
+Codex, Claude Code, Pi, OMP and OpenCode publish on their compaction and
+session shutdown hooks. Agentix also publishes when the attached session accepts
+an IM compact command or emits a session exit event. Antigravity uses its session
+switch and MCP shutdown signals. A session that ends without delivering a hook
+keeps its staged turns for the next available boundary, subject to retention.
+Hosts consume a small relevant context plus on-demand search. Enforce byte
 or conservative token budgets and deduplicate memory ID plus revision within a
 session at the receiving host. Packet generation is not delivery: service-side
 same-turn caching must not suppress a later turn after a timeout or disconnect.
@@ -379,19 +386,12 @@ delivery, audit every requirement above against current code and passing tests,
 publish configuration/operation/recovery documentation, and regenerate CLI
 completions. Partial green tests do not establish full implementation.
 
-## Decision preflight
+## Extracting published sources
 
-Extraction reuses the host [decision provider/protocol configuration](decision-providers.md).
-Its independent `TASKIX_MEMORY_DECISION_MIN_CONFIDENCE` threshold defaults to
-`0.75` and never inherits `TASKIX_DECISION_MIN_CONFIDENCE`. Legacy Typesafe
-variables remain supported.
-A disabled or invalid configuration uses
-the model directly. Screening runs inside the service, never in the main agent;
-only confident `skip` bypasses extraction. Uncertain, low-score, malformed and
-service-failure results use the model. The
-source stays durable and completion remains fenced. The shared v3 decision metrics
-file records `memory_triage`, including scores and fallback reasons, without
-storing conversation content. No separate triage config section is introduced.
+The Memory worker sends each queued chunk directly to its configured extraction
+model. The model can return zero or more evidenced candidates for consolidation.
+Session compaction and shutdown control when the host publishes staged turns.
+Existing `memory_triage` metrics remain available as historical data.
 
 ## Incremental projection maintenance
 
@@ -430,11 +430,8 @@ is bounded and reports incomplete coverage. Secret filename filtering and model
 instructions reduce accidental capture but are not a content-classification
 security boundary; only enable providers approved for the source material.
 
-For a real Job-data comparison against frozen Codex reference labels, see the
-[memory screening calibration](taskix-memory-calibration.md). Its empirical
-recommendation is independent of routing confidence. The revised screening
-context uses a `0.75` default; explicit service environment settings still override it.
-The positive-gate experiment was rolled back because it missed reference memories.
+The [historical memory screening calibration](taskix-memory-calibration.md)
+describes the earlier Decision preflight experiments.
 
 ## Derived-data retention and performance checks
 

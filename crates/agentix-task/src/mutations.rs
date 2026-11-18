@@ -80,6 +80,7 @@ pub(crate) fn apply(
         "job.update" | "job.cancel" | "job.archive" | "job.unarchive" | "job.submit"
         | "job.approve" | "job.reject" | "job.followup" => update_job(state, request, options, now),
         "task.add" => add_task(state, request, options, now),
+        "session.pre-compact" => Ok(json!({"session_ref":required(request, "session")?})),
         "session.start" | "session.end" | "session.interrupt" | "session.heartbeat" => {
             session(state, request, now)
         }

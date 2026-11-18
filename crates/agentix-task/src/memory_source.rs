@@ -26,28 +26,31 @@ pub struct MemoryBackfillPage {
     pub complete: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn capture(
+/// Persist only the Project association. The discussion table holds the latest text.
+pub(crate) async fn stage(
     conn: &mut SqliteConnection,
     session: &str,
     turn: &str,
     explicit_project: Option<&str>,
     project_hint: Option<&str>,
     job: Option<&str>,
-    messages: &[Value],
-    now: i64,
 ) -> Result<()> {
-    let head = sqlx::query("SELECT project_id,revision,content_hash FROM memory_source_heads WHERE session_id=? AND turn_id=?")
-        .bind(session).bind(turn).fetch_optional(&mut *conn).await?;
+    let prior_project: Option<String> = sqlx::query_scalar(
+        "SELECT project_id FROM memory_pending_turns WHERE session_id=?1 AND turn_id=?2
+         UNION ALL SELECT project_id FROM memory_source_heads WHERE session_id=?1 AND turn_id=?2 LIMIT 1",
+    )
+    .bind(session)
+    .bind(turn)
+    .fetch_optional(&mut *conn)
+    .await?;
     let bound_project: Option<String> = if let Some(job) = job {
-        sqlx::query_scalar("SELECT json_extract(data,'$.project_id') FROM jobs WHERE id=?")
+        sqlx::query_scalar("SELECT project_id FROM jobs WHERE id=?")
             .bind(job)
             .fetch_optional(&mut *conn)
             .await?
     } else {
         None
     };
-    let prior_project = head.as_ref().map(|r| r.get::<String, _>("project_id"));
     let Some(project) = explicit_project
         .or(bound_project.as_deref())
         .or(prior_project.as_deref())
@@ -60,21 +63,107 @@ pub(crate) async fn capture(
             && prior_project.as_deref().is_none_or(|p| p == project),
         "conflict: memory source belongs to another Project"
     );
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)")
-        .bind(project)
-        .fetch_one(&mut *conn)
+    sqlx::query(
+        "INSERT OR IGNORE INTO memory_pending_turns(session_id,turn_id,project_id) VALUES (?,?,?)",
+    )
+    .bind(session)
+    .bind(turn)
+    .bind(project)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn bind_published_turn(
+    conn: &mut SqliteConnection,
+    session: &str,
+    turn: &str,
+    job: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO memory_source_job_bindings(session_id,turn_id,job_id)
+         SELECT session_id,turn_id,?3 FROM memory_source_heads WHERE session_id=?1 AND turn_id=?2",
+    )
+    .bind(session)
+    .bind(turn)
+    .bind(job)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Publish the latest staged version of each turn in the same transaction as the boundary.
+pub(crate) async fn flush(conn: &mut SqliteConnection, session: &str, now: i64) -> Result<()> {
+    loop {
+        let turns = sqlx::query(
+            "SELECT d.turn_id,d.job_id,d.messages,p.project_id FROM memory_pending_turns p
+             JOIN discussion_turns d USING(session_id,turn_id)
+             WHERE p.session_id=? ORDER BY d.position LIMIT 100",
+        )
+        .bind(session)
+        .fetch_all(&mut *conn)
         .await?;
-    ensure!(exists, "not_found: memory source Project");
+        if turns.is_empty() {
+            return Ok(());
+        }
+        for row in turns {
+            let turn: String = row.get("turn_id");
+            let project: String = row.get("project_id");
+            let job: Option<String> = row.get("job_id");
+            let messages: Vec<Value> = serde_json::from_str(&row.get::<String, _>("messages"))?;
+            capture(
+                conn,
+                session,
+                &turn,
+                &project,
+                job.as_deref(),
+                &messages,
+                now,
+            )
+            .await?;
+            sqlx::query("DELETE FROM memory_pending_turns WHERE session_id=? AND turn_id=?")
+                .bind(session)
+                .bind(turn)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+}
+
+async fn capture(
+    conn: &mut SqliteConnection,
+    session: &str,
+    turn: &str,
+    project: &str,
+    job: Option<&str>,
+    messages: &[Value],
+    now: i64,
+) -> Result<()> {
     if messages.is_empty() {
         return Ok(());
     }
+    let head = sqlx::query("SELECT project_id,revision,content_hash FROM memory_source_heads WHERE session_id=? AND turn_id=?")
+        .bind(session).bind(turn).fetch_optional(&mut *conn).await?;
+    ensure!(
+        head.as_ref()
+            .is_none_or(|row| row.get::<String, _>("project_id") == project),
+        "conflict: memory source belongs to another Project"
+    );
     let content = json!({"job_id":job,"messages":messages});
     let hash = crate::store::hash_bytes(content.to_string().as_bytes());
-    if head
-        .as_ref()
-        .is_some_and(|r| r.get::<String, _>("content_hash") == hash)
-    {
-        return Ok(());
+    if let Some(head) = &head {
+        let prior_hash: String = head.get("content_hash");
+        if prior_hash == hash {
+            return Ok(());
+        }
+        // A late Job attachment is represented separately. Avoid extracting the
+        // same message content again just because its ownership changed.
+        if job.is_some() {
+            let unbound = json!({"job_id":null,"messages":messages});
+            if prior_hash == crate::store::hash_bytes(unbound.to_string().as_bytes()) {
+                return Ok(());
+            }
+        }
     }
     let revision = head.as_ref().map_or(1, |r| r.get::<i64, _>("revision") + 1);
     let snapshot = json!({"job_id":job,"messages":messages,"recorded_at":now});
@@ -83,34 +172,6 @@ pub(crate) async fn capture(
     sqlx::query("INSERT INTO memory_source_outbox(receipt_id,project_id,session_id,turn_id,revision,snapshot) VALUES (?,?,?,?,?,?)")
         .bind(crate::new_id("receipt")).bind(project).bind(session).bind(turn).bind(revision).bind(snapshot.to_string()).execute(conn).await?;
     Ok(())
-}
-
-pub(crate) async fn capture_attached_turn(
-    conn: &mut SqliteConnection,
-    session: &str,
-    turn: &str,
-    project: &str,
-    job: &str,
-    now: i64,
-) -> Result<()> {
-    let body: String = sqlx::query_scalar(
-        "SELECT messages FROM discussion_turns WHERE session_id=? AND turn_id=?",
-    )
-    .bind(session)
-    .bind(turn)
-    .fetch_one(&mut *conn)
-    .await?;
-    capture(
-        conn,
-        session,
-        turn,
-        Some(project),
-        None,
-        Some(job),
-        &serde_json::from_str::<Vec<Value>>(&body)?,
-        now,
-    )
-    .await
 }
 
 impl Store {
@@ -147,8 +208,7 @@ impl Store {
                 &mut tx,
                 session,
                 &turn,
-                Some(project),
-                None,
+                project,
                 Some(job),
                 std::slice::from_ref(&message),
                 message["recorded_at"].as_i64().unwrap_or(self.now()),
@@ -332,9 +392,26 @@ impl Store {
 
 impl Store {
     pub async fn memory_job_sources(&self, job: &str, after: i64) -> Result<Vec<MemorySource>> {
-        let rows = sqlx::query("SELECT o.*,i.instance_id FROM memory_source_outbox o CROSS JOIN memory_source_identity i WHERE json_extract(o.snapshot,'$.job_id')=? AND o.sequence>? ORDER BY o.sequence LIMIT 100")
-            .bind(job).bind(after).fetch_all(&self.pool).await?;
-        rows.iter().map(source_from_row).collect()
+        // A Job can attach a previously submitted turn before the next boundary.
+        // Include its immutable receipts in cancellation without queuing a new revision.
+        let rows = sqlx::query(
+            "WITH receipts AS (
+                SELECT sequence FROM memory_source_outbox WHERE json_extract(snapshot,'$.job_id')=?1 AND sequence>?2
+                UNION
+                SELECT o.sequence FROM memory_source_job_bindings d JOIN memory_source_outbox o USING(session_id,turn_id)
+                    WHERE d.job_id=?1 AND o.sequence>?2
+             ORDER BY sequence LIMIT 100)
+             SELECT o.*,i.instance_id FROM receipts r JOIN memory_source_outbox o USING(sequence)
+                CROSS JOIN memory_source_identity i ORDER BY o.sequence",
+        )
+        .bind(job).bind(after).fetch_all(&self.pool).await?;
+        rows.iter()
+            .map(|row| {
+                let mut source = source_from_row(row)?;
+                source.job_id = Some(job.to_owned());
+                Ok(source)
+            })
+            .collect()
     }
 
     pub async fn memory_turn_jobs(
@@ -343,7 +420,13 @@ impl Store {
         session: &str,
         turn: &str,
     ) -> Result<Vec<String>> {
-        Ok(sqlx::query_scalar("SELECT DISTINCT json_extract(snapshot,'$.job_id') FROM memory_source_outbox WHERE session_id=? AND turn_id=? AND json_extract(snapshot,'$.job_id') IS NOT NULL AND EXISTS(SELECT 1 FROM memory_source_identity WHERE instance_id=?)")
-            .bind(session).bind(turn).bind(instance).fetch_all(&self.pool).await?)
+        Ok(sqlx::query_scalar(
+            "SELECT job_id FROM (
+                SELECT json_extract(snapshot,'$.job_id') AS job_id FROM memory_source_outbox WHERE session_id=?1 AND turn_id=?2
+                UNION
+                SELECT job_id FROM memory_source_job_bindings WHERE session_id=?1 AND turn_id=?2
+             ) WHERE job_id IS NOT NULL AND EXISTS(SELECT 1 FROM memory_source_identity WHERE instance_id=?3)",
+        )
+        .bind(session).bind(turn).bind(instance).fetch_all(&self.pool).await?)
     }
 }

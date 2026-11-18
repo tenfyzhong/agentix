@@ -31,10 +31,11 @@ class CalibrationTests(unittest.TestCase):
         for answer in [None, [], "skip", {"probabilities": []}]:
             self.assertFalse(self.module.skip(answer, .5))
 
-    def test_uses_production_question(self):
+    def test_uses_frozen_calibration_question(self):
         question = self.module.questions()["memory_triage"]
         self.assertEqual(set(question["criteria"]), {"skip", "extract", "uncertain"})
-        self.assertIn("untrusted data", question["instructions"])
+        self.assertEqual(self.module.digest(self.module.questions()),
+                         "464d69636ff733885dfcc761733089ab8cfe78dc7322c0ccf104ce606051d00e")
 
     def test_recommend_max_safe_coverage_then_highest_threshold(self):
         rows = [{'threshold': .95, 'false_skip': 0, 'true_skip': 1},

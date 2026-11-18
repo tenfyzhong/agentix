@@ -4,10 +4,10 @@ import { runHook, registerExtension } from '../runtime.mjs';
 
 const excluded = async args => {
     if (args[0] === 'project' && args[1] === 'check') return {result:{tracking:{enabled:false}}};
-    if (args[0] === 'hook' && args[1] !== 'record') return {result:{}};
+    if (args[0] === 'hook' && !['record','pre-compact'].includes(args[1])) return {result:{}};
     throw new Error(`Excluded workspace must not call ${args.join(' ')}`);
 };
-for (const name of ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SessionEnd']) {
+for (const name of ['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','PreCompact','SessionEnd']) {
     test(`excluded_hook_${name}_skips_intake`, async () => {
         assert.deepEqual(await runHook({hook_event_name:name,session_id:'s',cwd:'/private/demo',prompt:'test',transcript_path:'/missing/transcript'},excluded),{});
     });
@@ -22,6 +22,7 @@ for (const host of ['pi','omp','opencode','antigravity']) {
         assert.equal(timers,1, "lifecycle renewal remains available for existing leases");
         assert.equal(await handlers.get('before_agent_start')({prompt:'test'},ctx),undefined);
         await handlers.get('agent_end')({messages:[{role:'assistant',content:'test'}]},ctx);
+        await handlers.get('session_before_compact')({},ctx);
         await handlers.get('session_shutdown')({},ctx);
     });
 }

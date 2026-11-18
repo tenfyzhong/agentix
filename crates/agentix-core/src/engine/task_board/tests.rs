@@ -278,6 +278,21 @@ async fn task_service_exports_unbound_discussion_for_the_session_project() {
             .is_some()
     );
     assert!(backend.store().snapshot().await.unwrap().jobs.is_empty());
+    assert!(
+        backend
+            .store()
+            .memory_sources(0, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    backend
+        .execute(
+            json!({"command":"session.end","session":"discussion"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
     let sources = backend.store().memory_sources(0, 100).await.unwrap();
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].project_id, project.as_str().unwrap());
