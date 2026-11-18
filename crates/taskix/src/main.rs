@@ -561,7 +561,9 @@ enum HookCommand {
     Stop,
     /// Recover the session's Tasks blocked by interruption or lease expiry into planning.
     SessionStart,
-    /// Record session shutdown and release its active Task leases.
+    /// Submit staged Memory sources before compacting the current session.
+    PreCompact,
+    /// Submit staged Memory sources and release active Task leases.
     SessionEnd,
     /// Release an interrupted session's Task leases while preserving its Plans.
     Interrupt,
@@ -1615,6 +1617,7 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
             ));
         }
         HookCommand::SessionStart => "session.start",
+        HookCommand::PreCompact => "session.pre-compact",
         HookCommand::SessionEnd => "session.end",
         HookCommand::Interrupt => "session.interrupt",
         HookCommand::Heartbeat => "session.heartbeat",

@@ -323,7 +323,7 @@ async fn session_scope(
 ) -> Result<()> {
     let session = required(request, "session")?;
     let command = required(request, "command")?;
-    if command == "session.stage"
+    if matches!(command, "session.stage" | "session.pre-compact")
         || (command == "session.record"
             && request.get("turn_id").is_some()
             && request["job"].is_null())

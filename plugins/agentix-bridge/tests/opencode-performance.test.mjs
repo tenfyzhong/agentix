@@ -63,7 +63,7 @@ function bridgeHost(directory, sessionID, list = async () => ({ data: [], cursor
 
 async function taskixHost(setup, directory, options) {
     const sessionHooks = new Map(), tools = new Map(), pending = [], errors = [], storage = new Map(), histories = new Map();
-    let waiter, sequence = 0, toolInvocations = 0;
+    let waiter, sequence = 0, toolInvocations = 0, sessionLookups = 0;
     const cleanup = await setup({
         location: { directory },
         storage: {
@@ -72,7 +72,10 @@ async function taskixHost(setup, directory, options) {
             remove: async key => { storage.delete(key); },
         },
         session: {
-            get: async ({ sessionID }) => ({ id: sessionID, location: { directory } }),
+            get: async ({ sessionID }) => {
+                sessionLookups++;
+                return { id: sessionID, location: { directory } };
+            },
             context: async ({ sessionID }) => structuredClone(histories.get(sessionID) ?? []),
             hook: async (name, callback) => { sessionHooks.set(name, callback); },
         },
@@ -99,6 +102,7 @@ async function taskixHost(setup, directory, options) {
     }
     return {
         get toolInvocations() { return toolInvocations; },
+        get sessionLookups() { return sessionLookups; },
         async prompt(sessionID, messageID, text) {
             await sessionHooks.get('prompt')({ sessionID, messageID, prompt: { text } });
             histories.set(sessionID, [...(histories.get(sessionID) ?? []), { id: messageID, type: 'user', text, time: { created: Date.now() } }]);
@@ -210,13 +214,14 @@ async function workload() {
             return { hot_receipts: restored.queue.state().receipts.length, journal_bytes: statSync(file).size, total_queue_storage_bytes: storedBytes(queueDirectory) };
         }));
         results.push(await measure('taskix_100_sessions_2000_direct_context_tools', async () => {
-            let heartbeats = 0, shutdowns = 0, contexts = 0, requestedTools = 0;
+            let heartbeats = 0, contexts = 0, requestedTools = 0;
+            const shutdowns = [];
             const timers = new Map();
             const hooks = await taskixHost(setupOpenCode, root, {
                 runner: async (args, options) => {
                     if (options.signal) requestedTools++;
                     if (args[0] === 'hook' && args[1] === 'heartbeat') heartbeats++;
-                    if (args[0] === 'hook' && args[1] === 'session-end') shutdowns++;
+                    if (args[0] === 'hook' && args[1] === 'session-end') shutdowns.push(options.session);
                     if (args[0] === 'context') contexts++;
                     return { result: {} };
                 },
@@ -231,9 +236,23 @@ async function workload() {
                     await hooks.event('session.execution.succeeded', { sessionID });
                     await hooks.event('session.execution.succeeded', { sessionID });
                 }
-                const idleTimers = timers.size, idleShutdowns = shutdowns;
+                const counts = {
+                    heartbeat_cli_calls: heartbeats,
+                    native_tool_invocations: hooks.toolInvocations,
+                    tool_scope_cli_calls: requestedTools,
+                    lifecycle_context_cli_calls: contexts - requestedTools,
+                    context_cli_calls: contexts,
+                    idle_timers: timers.size,
+                    idle_sessions_shutdown: shutdowns.length,
+                };
+                // Access each idle wrapper without prompting, which would trigger eviction again.
+                const lookupsBeforeProbe = hooks.sessionLookups;
+                for (let index = 0; index < 100; index++) await hooks.tool('ses_' + index);
+                const evictedSessions = hooks.sessionLookups - lookupsBeforeProbe;
                 await hooks.dispose();
-                return { heartbeat_cli_calls: heartbeats, native_tool_invocations: hooks.toolInvocations, tool_scope_cli_calls: requestedTools, lifecycle_context_cli_calls: contexts - requestedTools, context_cli_calls: contexts, idle_timers: idleTimers, idle_sessions_shutdown: idleShutdowns, disposed_timers: timers.size };
+                return { ...counts, idle_wrappers_evicted: evictedSessions,
+                    final_sessions_shutdown: shutdowns.length,
+                    distinct_sessions_shutdown: new Set(shutdowns).size, disposed_timers: timers.size };
             } finally { await hooks.dispose(); }
         }));
         results.push(await measure('taskix_owned_lease_survives_idle_and_session_churn', async () => {
@@ -358,7 +377,10 @@ if (process.env.OPENCODE_PERF_CHILD === '1') {
         assert.equal(hooks.tool_scope_cli_calls, 4000, 'all requested tools must execute the registered native tool');
         assert.ok(hooks.lifecycle_context_cli_calls <= 200, 'duplicate native idle events must share one ownership check per turn');
         assert.equal(hooks.idle_timers, 0, 'idle native sessions must not retain renewal timers');
-        assert.ok(hooks.idle_sessions_shutdown >= 36, 'inactive session retention must be bounded across 100 sessions');
+        assert.ok(hooks.idle_wrappers_evicted >= 36, 'inactive session retention must be bounded across 100 sessions');
+        assert.equal(hooks.idle_sessions_shutdown, 0, 'wrapper eviction must defer memory submission');
+        assert.equal(hooks.final_sessions_shutdown, 100, 'shutdown must submit memory once per session');
+        assert.equal(hooks.distinct_sessions_shutdown, 100);
         assert.equal(hooks.disposed_timers, 0);
         assert.ok(owned.owned_heartbeat_calls >= 20, 'an owned executing Task must continue renewal during native idle');
         assert.equal(owned.owned_shutdowns_before_dispose, 0, 'session trimming must preserve ownership of active Tasks');

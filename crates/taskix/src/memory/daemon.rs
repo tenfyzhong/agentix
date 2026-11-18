@@ -116,14 +116,12 @@ impl Runtime {
                     repositories.clone(),
                     config.service.max_deep_queries,
                 ));
-                let worker =
-                    MemoryWorker::new(store.clone(), model, config.agent.clone(), repositories);
-                let worker = if let Some(gate) = super::triage::DecisionTriage::from_env() {
-                    worker.with_extraction_gate(gate)
-                } else {
-                    worker
-                };
-                Some(Arc::new(worker))
+                Some(Arc::new(MemoryWorker::new(
+                    store.clone(),
+                    model,
+                    config.agent.clone(),
+                    repositories,
+                )))
             }
             Err(error) => {
                 errors.push(format!("Agent unavailable: {error}"));

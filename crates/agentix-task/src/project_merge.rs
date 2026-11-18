@@ -316,6 +316,7 @@ pub(crate) async fn prepare(
                 .execute(&mut *conn)
                 .await?;
             for table in [
+                "memory_pending_turns",
                 "memory_source_heads",
                 "memory_source_outbox",
                 "memory_job_cancellations",

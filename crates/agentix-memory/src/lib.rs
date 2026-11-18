@@ -41,7 +41,7 @@ mod compaction;
 pub use compaction::CompactionPage;
 
 mod worker;
-pub use worker::{ExtractionGate, MemoryWorker, ProjectRepository, TriageDecision};
+pub use worker::{MemoryWorker, ProjectRepository};
 
 mod embedding_index;
 pub use embedding_index::{EmbeddingIndex, EmbeddingProfile, SearchResult, SemanticRetrieval};

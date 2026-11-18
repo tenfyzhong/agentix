@@ -1693,24 +1693,25 @@ complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_s
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "candidates" -d 'Read bounded ACTIVE and `PENDING_REVIEW` Jobs and their Tasks by exact Project ID'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "revision" -d 'Read only identity and lifecycle fields by exact Job ID'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "record" -d 'Record visible user/assistant messages from a JSON array in the session Job'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "stop" -d 'Acknowledge turn completion without starting new work'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -f -a "record" -d 'Record visible user/assistant messages from a JSON array in the session Job'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -f -a "stop" -d 'Acknowledge turn completion without starting new work'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -f -a "pre-compact" -d 'Submit staged Memory sources before compacting the current session'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -f -a "session-end" -d 'Submit staged Memory sources and release active Task leases'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start pre-compact session-end interrupt heartbeat help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from record" -l file -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from record" -l job -r
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from record" -l config -r -F
@@ -1746,6 +1747,17 @@ complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from session-start" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from session-start" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from session-start" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from pre-compact" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from session-end" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from session-end" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from session-end" -l actor -r
@@ -1782,7 +1794,8 @@ complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "record" -d 'Record visible user/assistant messages from a JSON array in the session Job'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "stop" -d 'Acknowledge turn completion without starting new work'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "pre-compact" -d 'Submit staged Memory sources before compacting the current session'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-end" -d 'Submit staged Memory sources and release active Task leases'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
@@ -1969,7 +1982,8 @@ complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "record" -d 'Record visible user/assistant messages from a JSON array in the session Job'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "stop" -d 'Acknowledge turn completion without starting new work'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "pre-compact" -d 'Submit staged Memory sources before compacting the current session'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-end" -d 'Submit staged Memory sources and release active Task leases'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from event" -f -a "policy" -d 'Inspect or configure automatic Taskix-owned event retention'

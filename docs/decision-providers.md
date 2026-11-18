@@ -1,16 +1,13 @@
 # Decision providers and protocols
 
 Taskix uses an optional decision service for prompt routing, Issue association,
-discussion ownership, lifecycle assessment and memory extraction screening.
-The shared host runtime and the Rust memory service support the same configuration.
+discussion ownership and lifecycle assessment. The host plugin performs these calls.
 Provider identity, protocol and model are independent: Typesafe is a provider,
 `typesafe` is its protocol, and Jev is its model family.
 
 ## Configuration
 
-Set variables in the environment of each host and the Taskix service. Restart
-running processes after changing their environment; `taskix reload` reloads the
-configuration file, not the process environment.
+Set Decision variables in the environment of each host. Restart the host after changing its environment.
 
 | Variable | Behavior |
 | --- | --- |
@@ -21,7 +18,6 @@ configuration file, not the process environment.
 | `TASKIX_DECISION_API_KEY` | Bearer credential. Only the matching OpenAI built-in may fall back to `OPENAI_API_KEY`. |
 | `TASKIX_DECISION_MODEL` | Defaults to `jev-latest` for Typesafe with its protocol, or `gpt-6-luna` for OpenAI with its protocol. |
 | `TASKIX_DECISION_MIN_CONFIDENCE` | Routing/lifecycle/discussion threshold, default `0.65`, range `0.5..1`. |
-| `TASKIX_MEMORY_DECISION_MIN_CONFIDENCE` | Independent memory screening threshold, default `0.75`, range `0.5..1`; never inherits the routing threshold. |
 | `TASKIX_DECISION_METRICS_ENABLED` | Opt-in persistence of decision observations; default off. Does not enable decisions or the HTTP metrics endpoint. |
 | `TASKIX_DECISION_METRICS_DB` | Independent metrics SQLite path shared by writers and reports. |
 
@@ -62,8 +58,7 @@ set -Ux TASKIX_DECISION_MODEL acme-decision-model
 
 For `typesafe` with the `typesafe` protocol, corresponding `TASKIX_JEV_*`
 variables remain fallbacks for enablement, URL, key, model and routing threshold.
-`TASKIX_MEMORY_JEV_MIN_CONFIDENCE` remains the legacy memory threshold. New
-nonblank connection values take priority. An explicitly set new enable switch,
+Nonblank connection values under the new names take priority. An explicitly set new enable switch,
 including `false` or blank, overrides the old switch. Legacy credentials are
 never inherited by another provider or protocol.
 
@@ -91,12 +86,11 @@ cross-provider calibration. Historical Jev benchmarks apply only to the tested
 Typesafe model and configuration.
 
 The existing eight-second deadline, 1 MiB response cap and actual serialized
-request caps (30,000 UTF-8 bytes for routing/triage, 24,000 for discussion) remain.
+request caps (30,000 UTF-8 bytes for routing, 24,000 for discussion) remain.
 OpenAI permits up to 400 questions and 255 choices per question; unsupported
 requests defer rather than dropping candidates. Errors or uncertainty hand task
-decisions back to the main Agent. Memory screening only suppresses extraction on
-a confident `skip`; other outcomes retain extraction. All lifecycle mutations
-still require Taskix revision, lease and state guards.
+decisions back to the main Agent. All lifecycle mutations require Taskix
+revision, lease and state guards.
 
 This integration uses `choice`, not general object generation, images, predicates
 or scoring. See the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions)

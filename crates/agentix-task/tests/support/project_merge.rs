@@ -51,8 +51,14 @@ async fn project_merge_preserves_work_and_removes_duplicate_folder() {
     let milestone=f.service.execute(json!({"command":"milestone.create","project":duplicate["id"],"title":"Milestone","goal":"Keep milestone goal"}),WriteOptions::default()).await.unwrap().result;
     let issue=f.service.execute(json!({"command":"issue.create","project":duplicate["id"],"title":"Issue","requirement":"Keep authored requirement","milestone":milestone["id"]}),WriteOptions::default()).await.unwrap().result;
     f.service.execute(json!({"command":"session.record","project":duplicate["id"],"session":"merge-memory","turn_id":"decision","messages":[{"id":"user","role":"user","text":"Preserve evidence"}]}), WriteOptions { session_ref: Some("merge-memory".into()), ..WriteOptions::default() }).await.unwrap();
+    let flush = json!({"command":"session.pre-compact","session":"merge-memory"});
+    f.service
+        .execute(flush.clone(), WriteOptions::default())
+        .await
+        .unwrap();
     let sources_before = f.service.store().memory_sources(0, 100).await.unwrap();
     assert_eq!(sources_before.len(), 1);
+    f.service.execute(json!({"command":"session.record","project":duplicate["id"],"session":"merge-memory","turn_id":"next","messages":[{"id":"next-user","role":"user","text":"Preserve staged evidence"}]}), WriteOptions { session_ref: Some("merge-memory".into()), ..WriteOptions::default() }).await.unwrap();
     let folder = f.service.config().output_dir().join("Projects/demo-2");
     std::fs::write(folder.join("custom.md"), "Keep this custom note").unwrap();
     std::fs::create_dir(folder.join("custom")).unwrap();
@@ -92,15 +98,15 @@ async fn project_merge_preserves_work_and_removes_duplicate_folder() {
         .await
         .unwrap();
     f.service.execute(json!({"command":"session.record","project":f.project,"session":"merge-memory","turn_id":"decision","messages":[{"id":"user","role":"user","text":"Preserve evidence"}]}), WriteOptions { session_ref: Some("merge-memory".into()), ..WriteOptions::default() }).await.unwrap();
-    assert_eq!(
-        f.service
-            .store()
-            .memory_sources(0, 100)
-            .await
-            .unwrap()
-            .len(),
-        sources_after.len()
-    );
+    f.service
+        .execute(flush, WriteOptions::default())
+        .await
+        .unwrap();
+    let sources = f.service.store().memory_sources(0, 100).await.unwrap();
+    assert_eq!(sources.len(), 2);
+    assert_eq!(sources[0], sources_after[0]);
+    assert_eq!(sources[1].project_id, f.project);
+    assert_eq!(sources[1].turn_id, "next");
     assert_eq!(state.projects[0].key, "demo");
     assert_eq!(
         state.projects[0].root,

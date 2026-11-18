@@ -30,7 +30,7 @@ struct Cli {
 }
 
 #[test]
-fn hook_record_assigns_registered_directory_to_unbound_memory_source() {
+fn hook_records_memory_only_at_session_boundaries() {
     let cli = Cli::new();
     let project = cli.ok(&[
         "project",
@@ -55,15 +55,85 @@ fn hook_record_assigns_registered_directory_to_unbound_memory_source() {
         "--file",
         file.to_str().unwrap(),
     ]);
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let store = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
-            .await
-            .unwrap();
-        let page = store.memory_sources(0, 10).await.unwrap();
-        assert_eq!(page.len(), 1);
-        assert_eq!(page[0].project_id, project["id"].as_str().unwrap());
-        assert!(page[0].job_id.is_none());
-    });
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let sources = || {
+        runtime.block_on(async {
+            let store = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
+                .await
+                .unwrap();
+            store.memory_sources(0, 10).await.unwrap()
+        })
+    };
+    assert!(sources().is_empty(), "record must only stage conversation");
+    cli.ok(&["hook", "interrupt", "--session", "memory-session"]);
+    assert!(
+        sources().is_empty(),
+        "interrupt must not submit conversation"
+    );
+
+    std::fs::write(
+        &file,
+        json!({"turn_id":"memory-turn","messages":[
+            {"id":"reply","role":"assistant","text":"The client persists requests locally"}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    cli.ok(&[
+        "hook",
+        "record",
+        "--session",
+        "memory-session",
+        "--file",
+        file.to_str().unwrap(),
+    ]);
+    cli.ok(&["hook", "pre-compact", "--session", "other-session"]);
+    assert!(sources().is_empty());
+
+    cli.ok(&["hook", "pre-compact", "--session", "memory-session"]);
+    let compacted = sources();
+    assert_eq!(compacted.len(), 1);
+    assert_eq!(compacted[0].project_id, project["id"].as_str().unwrap());
+    assert!(compacted[0].job_id.is_none());
+    assert_eq!(compacted[0].messages.len(), 2);
+
+    cli.ok(&[
+        "hook",
+        "record",
+        "--session",
+        "memory-session",
+        "--file",
+        file.to_str().unwrap(),
+    ]);
+    cli.ok(&["hook", "session-end", "--session", "memory-session"]);
+    assert_eq!(
+        sources(),
+        compacted,
+        "repeated capture must not submit old facts"
+    );
+
+    std::fs::write(
+        &file,
+        json!({"turn_id":"next-turn","messages":[
+            {"id":"next","role":"user","text":"Keep offline queues bounded"}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    cli.ok(&[
+        "hook",
+        "record",
+        "--session",
+        "memory-session",
+        "--file",
+        file.to_str().unwrap(),
+    ]);
+    assert_eq!(sources(), compacted);
+    cli.ok(&["hook", "session-end", "--session", "memory-session"]);
+    let ended = sources();
+    assert_eq!(ended.len(), 2);
+    assert_eq!(ended[0], compacted[0]);
+    assert_eq!(ended[1].messages[0]["id"], "next");
 }
 impl Cli {
     fn new() -> Self {

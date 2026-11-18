@@ -325,7 +325,9 @@ The opt-in reusable measurement exercises the production OpenCode bridge state
 and Taskix server adapter with deterministic SDK responses and isolated temporary
 state. It records CPU/time, post-GC RSS, peak parent RSS, retained cache counts,
 SDK calls, filesystem writes and Taskix subprocess counts. It makes no provider
-requests or live IM calls. Reproduce the current limits with:
+requests or live IM calls. The idle-session workload counts evicted wrappers
+through native session reloads and checks that memory submissions wait until
+session shutdown. Reproduce the current limits with:
 
 ```sh
 AGENTIX_OPENCODE_PERFORMANCE=1 node --test plugins/agentix-bridge/tests/opencode-performance.test.mjs

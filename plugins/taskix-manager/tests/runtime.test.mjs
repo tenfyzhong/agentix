@@ -105,6 +105,12 @@ test("hooks distinguish session end from turn completion and provide session con
     assert.equal(calls[0].args[1], "heartbeat");
     calls.length = 0;
     await runHook(
+        { hook_event_name: "PreCompact", session_id: "thr_123", cwd: "/work" },
+        runner,
+    );
+    assert.deepEqual(calls.map(call => call.args), [["hook", "pre-compact"]]);
+    calls.length = 0;
+    await runHook(
         { hook_event_name: "SessionEnd", session_id: "thr_123", cwd: "/work" },
         runner,
     );

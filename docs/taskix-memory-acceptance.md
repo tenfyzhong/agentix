@@ -241,23 +241,13 @@ only derived indexes are disposable. Restoring an old memory snapshot loses
 human edits/forget operations made after that snapshot, even when newer task
 conversation receipts can be replayed.
 
-## Jev screening coverage
+## Direct extraction coverage
 
-Worker tests verify explicit skip makes no model request, while extract and gate
-failure call the model and preserve audit records. The real daemon/CLI mock-HTTP
-test exercises enabled/disabled environment settings, an independent memory
-confidence threshold even when the routing threshold is invalid, confidence fallback,
-uncertainty, service errors and the resulting `routing metrics report` category.
-Adapter tests cover configuration validation, input/output byte ceilings, timeout
-and fail-soft metrics storage. Metrics tests cover v1 migration, rollback on failed
-append, foreign database rejection and compact/JSON skip/extract/fallback reports.
-These are protocol and state tests, not a measurement of live Jev recall.
-
-Restored negative Jev gating covers low-confidence `extract`, low-confidence
-`skip`, valid `uncertain`, malformed answers and service failures. All continue
-to the model; only confident `skip` suppresses extraction. The calibration report
-records the negative-gate backtest and why the positive experiment was rolled back.
-
+`memory_extracts_compact_and_exit_sources_without_calling_decisions` runs the
+daemon and CLI against local mock providers. It verifies that staged turns are
+published at compact and shutdown, that both reach the extraction model, and
+that a configured Decision endpoint receives zero requests. The Memory store
+and worker tests cover candidate consolidation, evidence and lease fencing.
 
 ## Query admission, idle workers and retention
 

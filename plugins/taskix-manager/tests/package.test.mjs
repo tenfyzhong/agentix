@@ -174,6 +174,7 @@ test("hosts discover shared hooks once and load only their own interruption even
     const config = await readJson("hooks/hooks.json");
     assert.deepEqual(Object.keys(config.hooks).sort(), [
         "PostToolUse",
+        "PreCompact",
         "PreToolUse",
         "SessionEnd",
         "SessionStart",
@@ -186,7 +187,7 @@ test("hosts discover shared hooks once and load only their own interruption even
         assert.ok([undefined, "", "*"].includes(groups[0].matcher));
         const hook = groups[0].hooks[0];
         assert.equal(hook.type, "command");
-        assert.equal(hook.timeout, event === "SessionEnd" ? 3 : 30);
+        assert.equal(hook.timeout, ["PreCompact", "SessionEnd"].includes(event) ? 3 : 30);
     }
 });
 
@@ -213,6 +214,7 @@ test("package manifests select one host-specific extension and the shared skill"
             ...(host === "pi" ? ["agent_settled"] : []),
             "agent_start",
             "before_agent_start",
+            "session_before_compact",
             "session_shutdown",
             "session_start",
         ]);

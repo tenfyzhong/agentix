@@ -287,7 +287,7 @@ async fn schema_nineteen_migrates_workspace_paths_and_preserves_history_and_curs
         .fetch_one(&migrated.pool)
         .await
         .unwrap();
-    assert_eq!(version, 27);
+    assert_eq!(version, 28);
     assert!(
         migrated
             .events(None, 0, 100)
@@ -575,7 +575,7 @@ async fn schema_sixteen_and_seventeen_upgrade_to_relative_document_paths() {
             .fetch_one(&reopened.pool)
             .await
             .unwrap();
-        assert_eq!(version, 27);
+        assert_eq!(version, 28);
         assert_eq!(
             reopened.snapshot().await.unwrap().projects,
             snapshot.projects
@@ -591,6 +591,13 @@ async fn assert_schema_fifteen_upgrade(has_memory: bool) {
         json!({"command":"session.record","project":project,"session":"migration","turn_id":"decision","messages":[{"id":"user","role":"user","text":"Keep the external deployment decision"}]}),
         WriteOptions { session_ref: Some("migration".into()), ..WriteOptions::default() },
     ).await.unwrap();
+    store
+        .execute(
+            json!({"command":"session.end","session":"migration"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
     let sources = store.memory_sources(0, 20).await.unwrap();
     assert_eq!(sources.len(), 1);
     let instance = store.memory_source_instance().await.unwrap();
@@ -621,7 +628,7 @@ async fn assert_schema_fifteen_upgrade(has_memory: bool) {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(version, 27);
+    assert_eq!(version, 28);
     assert!(
         store.event_policy(None, None, None).await.unwrap()["enabled"]
             .as_bool()
@@ -850,7 +857,7 @@ async fn schema_twenty_six_upgrades_project_merge_storage_without_data_loss() {
                 .fetch_one(&reopened.pool)
                 .await
                 .unwrap();
-            assert_eq!(version, 27);
+            assert_eq!(version, 28);
             let reader = Store::open_read_only(&path).await.unwrap();
             assert_eq!(reader.snapshot().await.unwrap().projects, snapshot.projects);
             reader.pool.close().await;
