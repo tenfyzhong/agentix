@@ -876,14 +876,21 @@ async fn memory_extracts_compact_and_exit_sources_without_calling_decisions() {
         assert_eq!(sources.len(), 1);
         let source = &sources[0];
         assert_eq!(source.turn_id, turn);
-        let receipt = cli.ok(&[
-            "memory",
-            "receipt",
-            &source.receipt_id,
-            "--wait-seconds",
-            "10",
-        ]);
-        assert_eq!(receipt["complete"], true, "{boundary}: {receipt}");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            // A receipt can be read from SQLite if the service socket is temporarily unavailable.
+            let receipt = cli.ok(&["memory", "receipt", &source.receipt_id]);
+            if receipt["complete"] == true {
+                break;
+            }
+            assert!(
+                receipt["states"]["failed"].as_u64().unwrap_or_default() == 0
+                    && receipt["states"]["cancelled"].as_u64().unwrap_or_default() == 0
+                    && Instant::now() < deadline,
+                "{boundary}: {receipt}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
         cursor = source.sequence;
     }
     assert_eq!(

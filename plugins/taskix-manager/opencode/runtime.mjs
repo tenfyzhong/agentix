@@ -56,7 +56,7 @@ export async function setupOpenCode(input, options = {}) {
                     chain: Promise.resolve(),
                 };
                 await handlers.get('session_start')({}, ctx);
-                detached.delete(id);
+                state.hadDetachedTurns = detached.delete(id);
                 state.excluded = !handlers.get('tracking_enabled')({}, ctx);
                 if (state.excluded) return state;
                 const saved = await input.storage.get('active:' + id);
@@ -118,7 +118,8 @@ export async function setupOpenCode(input, options = {}) {
                 state.work
             )
                 continue;
-            if (state.seen.size) detached.set(id, state.ctx.cwd);
+            if (state.hadDetachedTurns || state.seen.size)
+                detached.set(id, state.ctx.cwd);
             state.handlers.get('session_detach')({}, state.ctx);
             sessions.delete(id);
             idle--;

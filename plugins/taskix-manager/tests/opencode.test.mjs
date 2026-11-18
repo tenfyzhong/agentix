@@ -1045,6 +1045,17 @@ test('opencode2 externally released idle lease no longer pins an otherwise evict
     const ended = () => f.calls.some((call) =>
         call.args.join(' ') === 'hook session-end' && call.options.session === 'owned');
     assert.equal(ended(), false, 'wrapper eviction is not session exit');
+    await f.tools.get('taskix').execute(
+        { args: ['context'] },
+        { sessionID: 'owned', id: 'tool_reopened' },
+    );
+    await f.hooks.get('prompt')({
+        sessionID: 'other',
+        messageID: 'msg_other_again',
+        prompt: { text: 'Queued again' },
+        delivery: 'queue',
+    });
+    assert.equal(ended(), false, 'evicting the reopened wrapper preserves pending memory');
     await f.event('session.compaction.started', { sessionID: 'owned' });
     assert.ok(f.calls.some((call) =>
         call.args.join(' ') === 'hook pre-compact' && call.options.session === 'owned'));
