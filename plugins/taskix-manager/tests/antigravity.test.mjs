@@ -104,6 +104,24 @@ test('failed_switch_initialization_never_leaves_the_tool_bound_to_the_old_identi
     await assert.rejects(createAntigravityTool()('request', { args: ['context'] }, current), /identity/i);
 });
 
+test('leaving_a_workspace_clears_the_previous_taskix_identity', async t => {
+    const events = [];
+    const f = await fixture(t, { hookRunner: async event => { events.push(event); return {}; } });
+    await f.event('SessionStart');
+    const outside = { conversationId: 'outside', workspacePaths: [], cwd: '' };
+    assert.deepEqual(await f.event('PreToolUse', outside), { decision: 'allow' });
+    assert.deepEqual(await f.event('Stop', outside), {});
+    assert.equal(await f.hooks.identity(), null);
+    assert.deepEqual(events.map(event => [event.hook_event_name, event.session_id]), [
+        ['SessionStart', 'native'], ['SessionEnd', 'native'],
+    ]);
+    assert.ok(f.calls.every(call => call.options.session === 'native'));
+
+    await f.event('SessionStart');
+    assert.equal((await f.hooks.identity()).session_id, 'native');
+    assert.equal((await f.hooks.identity()).ready, true);
+});
+
 test('native_tool_binds_executor_session_and_current_lease_without_shell_parsing', async () => {
     const calls = [];
     const tool = createAntigravityTool({ runner: async (args, options) => {

@@ -50,7 +50,7 @@ export function createAntigravityHooks(options = {}) {
     async function handle(value) {
         const receivedAt = Date.now();
         if (typeof value.conversationId !== 'string' || !value.conversationId ||
-            !Array.isArray(value.workspacePaths) || !value.workspacePaths.length ||
+            !Array.isArray(value.workspacePaths) ||
             value.workspacePaths.some(path => typeof path !== 'string' || !isAbsolute(path)) ||
             typeof value.transcriptPath !== 'string' || !isAbsolute(value.transcriptPath)) {
             throw new Error('Invalid Antigravity hook identity');
@@ -63,10 +63,11 @@ export function createAntigravityHooks(options = {}) {
         const previous = await identity();
         const same = previous?.session_id === event.session_id;
         const state = { ...(same ? previous : {}), ...event, ready: false };
-        if (previous && !same) state.previous_session = {
+        if (previous && (!same || !event.cwd)) state.previous_session = {
             session_id: previous.session_id, cwd: previous.cwd, transcript_path: previous.transcript_path,
         };
-        await save(state);
+        // App conversations outside a project have no workspace and must clear any prior MCP binding.
+        if (event.cwd || previous) await save(event.cwd ? state : null);
         if (state.previous_session) {
             await hookRunner({ ...state.previous_session, hook_event_name: 'SessionEnd' }, scopedRunner, options.routing);
             delete state.previous_session;
@@ -74,6 +75,7 @@ export function createAntigravityHooks(options = {}) {
         const contexts = [];
         // Allow delegates to native permission policy; it does not auto-approve tools.
         let decision = value.hookEventName === 'PreToolUse' ? { decision: 'allow' } : undefined;
+        if (!event.cwd) return decision ?? {};
         const collect = result => {
             const content = result?.hookSpecificOutput?.additionalContext;
             if (content) contexts.push(content);
