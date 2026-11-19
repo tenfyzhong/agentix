@@ -50,6 +50,80 @@ fn memory_cli_uses_the_environment_switch_without_a_memory_config_section() {
     assert!(!cli.dir.path().join("memory.sqlite3").exists());
 }
 
+#[tokio::test]
+async fn memory_offline_cli_reads_sourced_memories_without_upgrading_schema_27() {
+    let cli = Cli::with_memory();
+    let project = cli.ok(&[
+        "project",
+        "register",
+        "--root",
+        cli.dir.path().to_str().unwrap(),
+    ]);
+    let project = project["id"].as_str().unwrap();
+    recovery_capture(&cli, "legacy");
+    let path = cli.dir.path().join("state.sqlite3");
+    let tasks = agentix_task::Store::open_read_only(&path).await.unwrap();
+    let source = tasks.memory_sources(0, 1).await.unwrap().remove(0);
+    drop(tasks);
+    let memory = agentix_memory::MemoryStore::open(&cli.dir.path().join("memory.sqlite3"))
+        .await
+        .unwrap();
+    memory
+        .ingest(&serde_json::from_value(serde_json::to_value(&source).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let created = memory
+        .create(
+            project,
+            serde_json::from_value(json!({
+                "title":"Offline recovery","conclusion":"Offline recovery is required",
+                "rationale":"User constraint","scope":"project","tags":[],"kind":"user_decision",
+                "evidence":[{"receipt_id":source.receipt_id,"message_id":"legacy","quote":"Offline recovery is required"}]
+            }))
+            .unwrap(),
+            agentix_memory::Actor::Agent,
+        )
+        .await
+        .unwrap();
+    drop(memory);
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    sqlx::raw_sql(
+        "DROP TABLE memory_pending_turns;
+         DROP TABLE memory_source_job_bindings;
+         PRAGMA user_version=27;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let search = cli.ok(&["memory", "search", "recovery", "--project", project]);
+    assert_eq!(search["mode"], "offline_fts");
+    assert_eq!(search["memories"][0]["id"], created.id);
+    let context = cli.ok(&[
+        "memory",
+        "context",
+        "recovery",
+        "--project",
+        project,
+        "--session",
+        "host",
+        "--turn",
+        "t1",
+    ]);
+    assert_eq!(context["mode"], "offline_fts");
+    assert_eq!(context["items"].as_array().unwrap().len(), 1);
+    let list = cli.ok(&["memory", "list", "--project", project]);
+    assert_eq!(list[0]["id"], created.id);
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 27);
+}
+
 #[allow(clippy::too_many_lines)]
 #[test]
 fn memory_daemon_cli_and_offline_fallback_do_not_require_a_vault_or_model_credentials() {

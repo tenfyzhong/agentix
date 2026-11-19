@@ -391,10 +391,20 @@ impl Store {
 }
 
 impl Store {
+    async fn has_memory_source_job_bindings(&self) -> Result<bool> {
+        // Read-only stores can still be on schema 27, before late bindings were persisted.
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema
+                WHERE type='table' AND name='memory_source_job_bindings')",
+        )
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
     pub async fn memory_job_sources(&self, job: &str, after: i64) -> Result<Vec<MemorySource>> {
         // A Job can attach a previously submitted turn before the next boundary.
         // Include its immutable receipts in cancellation without queuing a new revision.
-        let rows = sqlx::query(
+        let query = if self.has_memory_source_job_bindings().await? {
             "WITH receipts AS (
                 SELECT sequence FROM memory_source_outbox WHERE json_extract(snapshot,'$.job_id')=?1 AND sequence>?2
                 UNION
@@ -402,9 +412,17 @@ impl Store {
                     WHERE d.job_id=?1 AND o.sequence>?2
              ORDER BY sequence LIMIT 100)
              SELECT o.*,i.instance_id FROM receipts r JOIN memory_source_outbox o USING(sequence)
-                CROSS JOIN memory_source_identity i ORDER BY o.sequence",
-        )
-        .bind(job).bind(after).fetch_all(&self.pool).await?;
+                CROSS JOIN memory_source_identity i ORDER BY o.sequence"
+        } else {
+            "SELECT o.*,i.instance_id FROM memory_source_outbox o CROSS JOIN memory_source_identity i
+             WHERE json_extract(o.snapshot,'$.job_id')=?1 AND o.sequence>?2
+             ORDER BY o.sequence LIMIT 100"
+        };
+        let rows = sqlx::query(query)
+            .bind(job)
+            .bind(after)
+            .fetch_all(&self.pool)
+            .await?;
         rows.iter()
             .map(|row| {
                 let mut source = source_from_row(row)?;
@@ -420,13 +438,22 @@ impl Store {
         session: &str,
         turn: &str,
     ) -> Result<Vec<String>> {
-        Ok(sqlx::query_scalar(
+        let query = if self.has_memory_source_job_bindings().await? {
             "SELECT job_id FROM (
                 SELECT json_extract(snapshot,'$.job_id') AS job_id FROM memory_source_outbox WHERE session_id=?1 AND turn_id=?2
                 UNION
                 SELECT job_id FROM memory_source_job_bindings WHERE session_id=?1 AND turn_id=?2
-             ) WHERE job_id IS NOT NULL AND EXISTS(SELECT 1 FROM memory_source_identity WHERE instance_id=?3)",
-        )
-        .bind(session).bind(turn).bind(instance).fetch_all(&self.pool).await?)
+             ) WHERE job_id IS NOT NULL AND EXISTS(SELECT 1 FROM memory_source_identity WHERE instance_id=?3)"
+        } else {
+            "SELECT DISTINCT json_extract(snapshot,'$.job_id') AS job_id FROM memory_source_outbox
+             WHERE session_id=?1 AND turn_id=?2 AND json_extract(snapshot,'$.job_id') IS NOT NULL
+                AND EXISTS(SELECT 1 FROM memory_source_identity WHERE instance_id=?3)"
+        };
+        Ok(sqlx::query_scalar(query)
+            .bind(session)
+            .bind(turn)
+            .bind(instance)
+            .fetch_all(&self.pool)
+            .await?)
     }
 }

@@ -230,6 +230,80 @@ async fn late_attachment_links_published_evidence_before_the_next_boundary() {
 }
 
 #[tokio::test]
+async fn read_only_memory_source_lookups_support_schema_27() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tasks.sqlite3");
+    let store = Store::open(&path).await.unwrap();
+    store.set_background_maintenance(false);
+    let p = project(&store, dir.path()).await;
+    store
+        .execute(capture(&p, "Keep offline recovery"), options())
+        .await
+        .unwrap();
+    let job = store
+        .execute(
+            json!({"command":"job.create","project":p,"title":"Recovery",
+                "conversation_turns":["decision"]}),
+            options(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let job = job["id"].as_str().unwrap();
+    compact(&store).await;
+    let source = store.memory_sources(0, 10).await.unwrap().remove(0);
+    assert_eq!(source.job_id.as_deref(), Some(job));
+    drop(store);
+
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    // Reverse the two schema additions from v28 in this fixture.
+    sqlx::raw_sql(
+        "DROP TABLE memory_pending_turns;
+         DROP TABLE memory_source_job_bindings;
+         PRAGMA user_version=27;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let _writer = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let reader = Store::open_read_only(&path).await.unwrap();
+    assert_eq!(
+        reader
+            .memory_turn_jobs(&source.instance_id, &source.session_id, &source.turn_id)
+            .await
+            .unwrap(),
+        [job]
+    );
+    assert!(
+        reader
+            .memory_turn_jobs("other-instance", &source.session_id, &source.turn_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let sequence = source.sequence;
+    assert_eq!(reader.memory_job_sources(job, 0).await.unwrap(), [source]);
+    assert!(
+        reader
+            .memory_job_sources(job, sequence)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let schema: (i64, bool) = sqlx::query_as(
+        "SELECT (SELECT user_version FROM pragma_user_version),
+                EXISTS(SELECT 1 FROM sqlite_schema WHERE name='memory_source_job_bindings')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(schema, (27, false));
+}
+
+#[tokio::test]
 async fn source_evidence_survives_discussion_expiry_and_migration_is_idempotent() {
     use std::sync::{
         Arc,
