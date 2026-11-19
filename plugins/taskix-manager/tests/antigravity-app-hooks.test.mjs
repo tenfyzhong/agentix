@@ -51,6 +51,19 @@ for (const host of ['app', 'cli']) {
     });
 }
 
+test('app_manifest_leaves_outside_project_tools_to_native_permissions', { skip: process.platform === 'win32', timeout: 20000 }, async t => {
+    const f = await fixture(t);
+    const payload = { ...f.payload, workspacePaths: [], cwd: '' };
+    for (const event of events) {
+        const group = manifest['taskix-manager'][event][0];
+        const command = (group.hooks?.[0] ?? group).command;
+        const result = await f.run(command, payload);
+        assert.equal(result.code, 0, `${event}: ${result.stderr}`);
+        assert.deepEqual(JSON.parse(result.stdout), event === 'PreToolUse' ? { decision: 'allow' } : {});
+    }
+    await assert.rejects(readFile(join(f.root, 'calls.jsonl')), { code: 'ENOENT' });
+});
+
 test('native_entrypoint_rejects_conflicting_event_sources', { skip: process.platform === 'win32' }, async t => {
     const f = await fixture(t);
     const result = await f.run('node antigravity/hook.mjs PreToolUse', { ...f.payload, hookEventName: 'Stop' });
@@ -60,7 +73,7 @@ test('native_entrypoint_rejects_conflicting_event_sources', { skip: process.plat
 
 test('native_entrypoint_logs_explicit_event_on_invalid_identity', { skip: process.platform === 'win32' }, async t => {
     const f = await fixture(t);
-    const result = await f.run('node antigravity/hook.mjs PreToolUse', { ...f.payload, workspacePaths: [] });
+    const result = await f.run('node antigravity/hook.mjs PreToolUse', { ...f.payload, workspacePaths: ['relative'] });
     assert.equal(result.code, 1);
     assert.match(result.stderr, /Invalid Antigravity hook identity/);
     const log = JSON.parse((await readFile(join(f.root, 'state/taskix/hooks.jsonl'), 'utf8')).trim());
