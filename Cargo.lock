@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "agentix"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-bridge",
  "agentix-codex",
@@ -71,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-bridge"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-domain",
  "agentix-metrics",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-codex"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-core",
  "agentix-domain",
@@ -121,7 +121,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-core"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-domain",
  "agentix-storage",
@@ -141,7 +141,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-domain"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "async-trait",
  "serde",
@@ -154,7 +154,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-feishu"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-domain",
  "agentix-metrics",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-memory"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-metrics",
  "agentix-secrets",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-metrics"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "allocation-counter",
  "anyhow",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-multiplexer"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-domain",
  "async-trait",
@@ -232,7 +232,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-rex"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-domain",
  "agentix-multiplexer",
@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-rmux"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-domain",
  "agentix-multiplexer",
@@ -264,7 +264,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-secrets"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "anyhow",
  "rustix",
@@ -273,7 +273,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-slack"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-domain",
  "agentix-metrics",
@@ -291,7 +291,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-storage"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-domain",
  "serde",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-task"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "anyhow",
  "dirs",
@@ -324,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-telegram"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-core",
  "agentix-domain",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "agentix-tmux"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-domain",
  "agentix-multiplexer",
@@ -4098,7 +4098,7 @@ checksum = "20f34339676cdcab560c9a82300c4c2581f68b9369aedf0fae86f2ff9565ff3e"
 
 [[package]]
 name = "taskix"
-version = "0.8.3"
+version = "0.8.3+dev"
 dependencies = [
  "agentix-memory",
  "agentix-metrics",
