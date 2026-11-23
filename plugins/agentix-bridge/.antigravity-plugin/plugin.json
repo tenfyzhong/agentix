@@ -2,7 +2,7 @@
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "agentix-bridge",
   "displayName": "Agentix Bridge",
-  "version": "0.8.4",
+  "version": "0.8.4+dev",
   "description": "Connect the original Antigravity terminal session to Agentix.",
   "author": {
     "name": "tenfyzhong"
