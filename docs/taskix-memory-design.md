@@ -37,6 +37,16 @@ Upgrade the service and CLI together, stop the old service before migration,
 and retain a SQLite online backup. Old writable binaries reject schema 2.
 Upgrade `scripts/taskix-backup.py` as well: backup and restore support schemas
 1, 2, 3 and 4, retain the archived schema version, and reject unknown versions.
+Pair verification compares completion timestamps recorded by Memory and accepts
+older receipts that omitted them. If Memory is unavailable or cannot be paired
+with the task database, the backup publishes a restorable task-only archive
+with `memory_status: unavailable` in the manifest and reports a nonzero exit.
+Remote backups try the new archive first and retry valid retained archives
+independently. Failed uploads and invalid retained archives stay on disk.
+`--archive-root` keeps separate archive queues for each source database path and
+remote in a directory independent of the live database. `--local-only` publishes
+and verifies a snapshot in that queue for upload on the next normal run.
+
 Offline reads support schemas 1, 2, 3 and 4 without migrating. Reset pagination cursors
 after migration and use the new IDs for CLI mutations. On the next projection
 sync, renamed notes publish under the new ID and preserve old file bytes in

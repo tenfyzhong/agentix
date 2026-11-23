@@ -640,9 +640,11 @@ make test-backup
 ```
 
 Tests use real SQLite WAL databases, compression and restore checks, and a fake
-rclone executable. They cover multiple snapshots per day, retries, locking, invalid sources,
-corrupt archives and target isolation. They do not establish live provider
-authentication, bucket policy, WebDAV compatibility, or scheduler installation.
+rclone executable. They cover paired message timestamps, task-only fallback,
+local snapshots outside the database directory, independent upload retries,
+locking, invalid sources, corrupt archives and target isolation. These tests do
+not verify live provider authentication, bucket policy, WebDAV compatibility,
+or scheduler installation.
 
 A live upload and download comparison has been verified against one configured
 S3-compatible destination. Other backend examples describe rclone capabilities;
