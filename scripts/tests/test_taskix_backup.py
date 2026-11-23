@@ -20,7 +20,7 @@ class BackupTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.database = self.root / "source.sqlite3"
         self.connection = sqlite3.connect(self.database)
         self.addCleanup(self.connection.close)
@@ -37,27 +37,29 @@ import os, pathlib, sys
 root = pathlib.Path(os.environ["MOCK_ROOT"])
 with (root / "calls").open("a") as output:
     output.write(__import__("json").dumps(sys.argv[1:]) + "\\n")
-if os.environ.get("MOCK_FAIL"):
+if os.environ.get("MOCK_FAIL") or pathlib.Path(sys.argv[2]).name == os.environ.get("MOCK_FAIL_ARCHIVE"):
     print(os.environ.get("MOCK_ERROR", "provider-secret"), file=sys.stderr)
     sys.exit(7)
 (root / "uploaded.tar.gz").write_bytes(pathlib.Path(sys.argv[2]).read_bytes())
 ''')
         self.rclone.chmod(0o700)
 
-    def run_backup(self, *args, fail=False, default_output=False, error="provider-secret", memory_enabled="false"):
+    def run_backup(self, *args, fail=False, fail_archive="", default_output=False,
+                   error="provider-secret", memory_enabled="false"):
         output_args = [] if default_output else ["--output-dir", str(self.output)]
         return subprocess.run(
             [sys.executable, str(SCRIPT), "--config", str(self.config),
              *output_args, "--remote", "r2:bucket/taskix/host",
              "--rclone", str(self.rclone), *args],
-            env={**os.environ, "TASKIX_MEMORY_ENABLED": memory_enabled, "MOCK_ROOT": str(self.root), "MOCK_FAIL": "1" if fail else "", "MOCK_ERROR": error},
+            env={**os.environ, "TASKIX_MEMORY_ENABLED": memory_enabled, "MOCK_ROOT": str(self.root),
+                 "MOCK_FAIL": "1" if fail else "", "MOCK_FAIL_ARCHIVE": fail_archive, "MOCK_ERROR": error},
             capture_output=True, text=True, timeout=15,
         )
 
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def memory_fixture(self, custom=False):
+    def memory_fixture(self, custom=False, task_completion=None, memory_completion=None):
         memory = self.root / ("custom-memory.sqlite3" if custom else "memory.sqlite3")
         source = {"instance_id": "instance", "receipt_id": "receipt", "sequence": 1,
                   "project_id": "project", "session_id": "session", "turn_id": "turn",
@@ -70,6 +72,11 @@ if os.environ.get("MOCK_FAIL"):
                 project_id TEXT, session_id TEXT, turn_id TEXT, revision INTEGER, snapshot TEXT);
         """)
         snapshot = {key: source[key] for key in ("job_id", "recorded_at", "messages")}
+        snapshot["messages"] = [message.copy() for message in source["messages"]]
+        if task_completion is not None:
+            snapshot["messages"][0]["completed_at_ms"] = task_completion
+        if memory_completion is not None:
+            source["messages"][0]["completed_at_ms"] = memory_completion
         self.connection.execute("INSERT INTO memory_source_outbox VALUES (1,'receipt','project','session','turn',1,?)",
                                 (json.dumps(snapshot),))
         self.connection.commit()
@@ -90,6 +97,21 @@ if os.environ.get("MOCK_FAIL"):
     def restore(self, archive, destination):
         return subprocess.run([sys.executable, str(SCRIPT), "--restore", str(archive),
                                "--restore-dir", str(destination)], capture_output=True, text=True, timeout=15)
+
+    def assert_task_only_fallback(self, result):
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Local snapshot saved:", result.stdout)
+        archive = sorted(self.output.glob("*.tar.gz"))[-1]
+        with tarfile.open(archive) as package:
+            self.assertEqual(set(package.getnames()), {"tasks.sqlite3", "manifest.json"})
+            manifest = json.load(package.extractfile("manifest.json"))
+            self.assertEqual(manifest["memory_status"], "unavailable")
+        destination = self.root / archive.name.removesuffix(".tar.gz")
+        self.assert_success(self.restore(archive, destination))
+        with sqlite3.connect(destination / "tasks.sqlite3") as database:
+            self.assertEqual(database.execute("SELECT value FROM evidence").fetchall(), [("committed",)])
+        calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
+        self.assertIn(archive, [Path(call[1]) for call in calls])
 
     def test_dual_database_backup_restores_validated_pair_without_overwrite(self):
         self.memory_fixture(custom=True)
@@ -112,6 +134,26 @@ if os.environ.get("MOCK_FAIL"):
         self.assert_success(self.run_backup())
         with tarfile.open(next(self.output.glob("*.tar.gz"))) as package:
             self.assertIn("memory.sqlite3", package.getnames())
+
+    def test_memory_message_completion_time_preserves_a_valid_pair(self):
+        self.memory_fixture(task_completion=1025, memory_completion=1025)
+        self.assert_success(self.run_backup())
+        archive = next(self.output.glob("*.tar.gz"))
+        self.assert_success(self.restore(archive, self.root / "recovered"))
+        with tarfile.open(archive) as package:
+            self.assertEqual(json.load(package.extractfile("manifest.json"))["coverage"]["memory_sources"], 1)
+
+    def test_legacy_memory_source_can_omit_completion_time_from_task_message(self):
+        self.memory_fixture(task_completion=1025)
+        self.assert_success(self.run_backup())
+        archive = next(self.output.glob("*.tar.gz"))
+        self.assert_success(self.restore(archive, self.root / "recovered"))
+
+    def test_different_memory_message_completion_time_rejects_pair(self):
+        self.memory_fixture(task_completion=1025, memory_completion=1026)
+        result = self.run_backup()
+        self.assertIn("histories differ", result.stderr)
+        self.assert_task_only_fallback(result)
 
     def test_timestamp_id_schema_backup_restores_without_changing_schema(self):
         memory = self.memory_fixture(custom=True)
@@ -167,7 +209,7 @@ if os.environ.get("MOCK_FAIL"):
                 self.assertEqual(db.execute("SELECT * FROM sources").fetchall(),
                                  original.execute("SELECT * FROM sources").fetchall())
 
-    def test_unsupported_memory_schema_or_identity_rejects_backup_before_publishing(self):
+    def test_unsupported_memory_schema_or_identity_keeps_task_snapshot(self):
         memory = self.memory_fixture()
         for version, identity in ((0, 0x41584d4d), (5, 0x41584d4d), (2, 0)):
             with self.subTest(version=version, identity=identity):
@@ -175,20 +217,16 @@ if os.environ.get("MOCK_FAIL"):
                     db.execute(f"PRAGMA user_version={version}")
                     db.execute(f"PRAGMA application_id={identity}")
                 result = self.run_backup()
-                self.assertNotEqual(result.returncode, 0)
                 self.assertIn("unsupported memory database identity or schema", result.stderr)
-                self.assertFalse(list(self.output.glob("*.tar.gz")))
-                self.assertFalse((self.root / "calls").exists())
+                self.assert_task_only_fallback(result)
 
-    def test_mismatched_source_history_rejects_pair_before_publishing(self):
+    def test_mismatched_source_history_keeps_task_snapshot(self):
         self.memory_fixture()
         self.connection.execute("UPDATE memory_source_outbox SET snapshot='{}'")
         self.connection.commit()
         result = self.run_backup()
-        self.assertNotEqual(result.returncode, 0)
         self.assertIn("histories differ", result.stderr)
-        self.assertFalse(list(self.output.glob("*.tar.gz")))
-        self.assertFalse((self.root / "calls").exists())
+        self.assert_task_only_fallback(result)
 
     def test_restore_legacy_archive_and_reject_checksum_corruption(self):
         self.assert_success(self.run_backup())
@@ -211,11 +249,17 @@ if os.environ.get("MOCK_FAIL"):
         self.assert_success(self.run_backup())
         self.assertEqual(len(list(self.output.glob("*.tar.gz"))), 2)
 
-    def test_missing_configured_memory_is_not_silently_omitted(self):
+    def test_missing_configured_memory_keeps_task_snapshot_and_reports_failure(self):
         for value in ("true", "1"):
             result = self.run_backup(memory_enabled=value)
-            self.assertNotEqual(result.returncode, 0)
             self.assertIn("memory database is missing", result.stderr)
+            self.assert_task_only_fallback(result)
+
+    def test_corrupt_memory_database_keeps_task_snapshot(self):
+        (self.root / "memory.sqlite3").write_bytes(b"invalid SQLite data")
+        result = self.run_backup()
+        self.assertIn("Memory snapshot failed", result.stderr)
+        self.assert_task_only_fallback(result)
 
     def test_restore_rejects_symlink_members_without_creating_destination(self):
         archive = self.root / "taskix-2026-09-29.tar.gz"
@@ -241,6 +285,23 @@ if os.environ.get("MOCK_FAIL"):
         self.assert_success(self.run_backup("--output-dir", str(custom)))
         self.assertEqual(len(list(custom.glob("*.tar.gz"))), 1)
         self.assertFalse((self.database.parent / "backups").exists())
+
+    def test_archive_root_retains_snapshots_across_database_path_changes(self):
+        stable = self.root / "snapshots"
+        self.assert_success(self.run_backup("--archive-root", str(stable), default_output=True))
+        previous = next(stable.glob("*/*.tar.gz"))
+        saved = previous.read_bytes()
+        replacement = self.root / "new-store" / "tasks.sqlite3"
+        replacement.parent.mkdir()
+        with sqlite3.connect(replacement) as database:
+            self.connection.backup(database)
+        self.config.write_text(f'schema_version = 1\n[storage]\npath = {json.dumps(str(replacement))}\n')
+        self.assert_success(self.run_backup("--archive-root", str(stable), default_output=True))
+        newest = next(path for path in stable.glob("*/*.tar.gz") if path != previous)
+        self.assertNotEqual(previous.parent, newest.parent)
+        self.assertEqual(previous.read_bytes(), saved)
+        self.assert_success(self.restore(previous, self.root / "old-store-recovered"))
+        self.assert_success(self.restore(newest, self.root / "new-store-recovered"))
 
     def test_wal_snapshot_can_be_restored_and_each_run_creates_a_new_archive(self):
         self.connection.execute("INSERT INTO evidence VALUES ('uncommitted')")
@@ -290,6 +351,30 @@ if os.environ.get("MOCK_FAIL"):
         self.assert_success(self.run_backup())
         self.assertEqual(original, archive.read_bytes())
 
+    def test_local_only_snapshot_is_uploaded_by_next_normal_run(self):
+        self.assert_success(self.run_backup("--local-only"))
+        previous = next(self.output.glob("*.tar.gz"))
+        self.assertFalse((self.root / "calls").exists())
+        self.assert_success(self.restore(previous, self.root / "local"))
+        self.assert_success(self.run_backup())
+        newest = sorted(self.output.glob("*.tar.gz"))[-1]
+        calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
+        self.assertEqual([Path(call[1]) for call in calls], [newest, previous])
+
+    def test_rejected_old_upload_cannot_block_new_snapshot_upload(self):
+        self.assert_success(self.run_backup())
+        previous = next(self.output.glob("*.tar.gz"))
+        original = previous.read_bytes()
+        (self.root / "calls").unlink()
+        result = self.run_backup(fail_archive=previous.name)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("rclone upload failed", result.stderr)
+        newest = sorted(self.output.glob("*.tar.gz"))[-1]
+        calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
+        self.assertEqual([Path(call[1]) for call in calls], [newest, previous])
+        self.assertEqual((self.root / "uploaded.tar.gz").read_bytes(), newest.read_bytes())
+        self.assertEqual(previous.read_bytes(), original)
+
     def test_access_denied_reports_actionable_reason_without_provider_secrets(self):
         result = self.run_backup(fail=True, error=(
             "operation error S3: ListObjectsV2, https response error StatusCode: 403, "
@@ -329,7 +414,9 @@ if os.environ.get("MOCK_FAIL"):
         archive.write_bytes(b"broken")
         self.assertNotEqual(self.run_backup().returncode, 0)
         self.assertEqual(archive.read_bytes(), b"broken")
-        self.assertFalse((self.root / "calls").exists())
+        newest = next(path for path in self.output.glob("*.tar.gz") if path != archive)
+        calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
+        self.assertEqual([Path(call[1]) for call in calls], [newest])
 
     def test_database_and_remote_identity_cannot_share_an_output_directory(self):
         self.assert_success(self.run_backup())
@@ -365,9 +452,10 @@ if os.environ.get("MOCK_FAIL"):
         self.assert_success(self.run_backup())
         calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
         self.assertEqual(len(calls), 3)
-        self.assertEqual([Path(call[1]).name for call in calls[:2]], [previous.name, today.name])
+        newest = max(path for path in self.output.glob("*.tar.gz") if path not in (previous, today))
+        self.assertEqual([Path(call[1]) for call in calls], [newest, previous, today])
 
-    def test_truncated_archive_reports_a_clean_error_without_uploading(self):
+    def test_truncated_archive_reports_a_clean_error_and_uploads_new_snapshot(self):
         self.assert_success(self.run_backup())
         archive = next(self.output.glob("*.tar.gz"))
         archive.write_bytes(archive.read_bytes()[:20])
@@ -375,7 +463,9 @@ if os.environ.get("MOCK_FAIL"):
         result = self.run_backup()
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("Traceback", result.stderr)
-        self.assertFalse((self.root / "calls").exists())
+        newest = sorted(self.output.glob("*.tar.gz"))[-1]
+        calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
+        self.assertEqual([Path(call[1]) for call in calls], [newest])
 
 
 if __name__ == "__main__":

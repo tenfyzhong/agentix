@@ -70,8 +70,7 @@ def pair_coverage(tasks, memory):
                 expected = dict(zip(("sequence", "project_id", "session_id", "turn_id", "revision"), row[:5]))
                 expected.update(instance_id=instance, receipt_id=receipt,
                                 **{key: snapshot_data.get(key) for key in ("job_id", "recorded_at", "messages")})
-                # Task message snapshots can contain transport metadata ignored by the memory domain.
-                expected["messages"] = [normalize_message(message) for message in (expected.get("messages") or [])]
+                expected["messages"] = source_messages(expected.get("messages") or [], source.get("messages"))
             if not row or source_instance != instance or source != expected:
                 raise BackupError("task and memory histories differ: missing or changed source receipt")
             count += 1
@@ -79,16 +78,35 @@ def pair_coverage(tasks, memory):
         return {"source_instance": instance, "memory_sources": count, "replay_after": cursor}
 
 
-def normalize_message(message):
-    return {key: message[key] for key in ("id", "role", "text", "session_id", "recorded_at")
-            if key in message and message[key] is not None}
+def source_messages(task_messages, memory_messages):
+    # Legacy Memory receipts could omit a completion time already present in
+    # the task snapshot. A time persisted by Memory still has to match.
+    fields = ("id", "role", "text", "session_id", "recorded_at", "completed_at_ms")
+    messages = [{key: message[key] for key in fields if message.get(key) is not None}
+                for message in task_messages]
+    if isinstance(memory_messages, list) and len(memory_messages) == len(messages):
+        for message, stored in zip(messages, memory_messages):
+            if isinstance(stored, dict) and "completed_at_ms" not in stored:
+                message.pop("completed_at_ms", None)
+    return messages
 
 
 def create_archive(source, directory, archive, timestamp, timeout, memory=None):
     with tempfile.TemporaryDirectory(prefix=".snapshot-", dir=directory) as temporary:
         staging = Path(temporary)
         database = staging / "tasks.sqlite3"
-        memory_version = snapshot(memory, staging / "memory.sqlite3", timeout) if memory else None
+        memory_copy = staging / "memory.sqlite3"
+        memory_version = None
+        memory_error = None
+        if memory is not None:
+            try:
+                if not memory.is_file():
+                    raise BackupError("configured memory database is missing")
+                memory_version = snapshot(memory, memory_copy, timeout)
+            except BackupError as error:
+                memory_error = f"Memory snapshot failed: {error}"
+            except (OSError, sqlite3.Error):
+                memory_error = "Memory snapshot failed: filesystem or SQLite error"
         version = snapshot(source, database, timeout)
         with database.open("rb") as stream:
             digest = sha256(stream)
@@ -102,13 +120,23 @@ def create_archive(source, directory, archive, timestamp, timeout, memory=None):
             "sha256": digest,
         }
         names = ["tasks.sqlite3", "manifest.json"]
-        if memory:
-            manifest["format_version"] = 2
-            manifest["coverage"] = pair_coverage(database, staging / "memory.sqlite3")
-            with (staging / "memory.sqlite3").open("rb") as stream:
+        if memory_version is not None:
+            try:
+                coverage = pair_coverage(database, memory_copy)
+                with memory_copy.open("rb") as stream:
+                    memory_digest = sha256(stream)
+            except BackupError as error:
+                memory_error = str(error)
+            except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
+                memory_error = "Memory snapshot validation failed"
+            else:
+                manifest["format_version"] = 2
+                manifest["coverage"] = coverage
                 manifest["memory"] = {"source": str(memory), "sqlite_user_version": memory_version,
-                                      "sha256": sha256(stream)}
-            names.append("memory.sqlite3")
+                                      "sha256": memory_digest}
+                names.append("memory.sqlite3")
+        if memory_error is not None:
+            manifest["memory_status"] = "unavailable"
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         compressed = staging / "archive.tar.gz"
         with tarfile.open(compressed, "w:gz") as package:
@@ -123,6 +151,7 @@ def create_archive(source, directory, archive, timestamp, timeout, memory=None):
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+        return memory_error
 
 
 def verify_archive(archive, source=None, staging=None):
@@ -210,9 +239,14 @@ def arguments():
     parser.add_argument("--config", type=Path,
                         default=Path(os.environ.get("TASKIX_CONFIG", "~/.config/taskix/config.toml")),
                         help="existing Taskix config (default: TASKIX_CONFIG or ~/.config/taskix/config.toml)")
-    parser.add_argument("--output-dir", type=Path,
-                        help="local archive directory (default: backups/ beside storage.path)")
+    archive_location = parser.add_mutually_exclusive_group()
+    archive_location.add_argument("--output-dir", type=Path,
+                                  help="local archive directory (default: backups/ beside storage.path)")
+    archive_location.add_argument("--archive-root", type=Path,
+                                  help="independent local root for per-database and per-remote archive directories")
     parser.add_argument("--remote", help="named rclone remote and directory, e.g. r2:bucket/taskix/host")
+    parser.add_argument("--local-only", action="store_true",
+                        help="save a local snapshot for the configured remote without uploading")
     parser.add_argument("--rclone", default="rclone", help="rclone executable or absolute path")
     parser.add_argument("--rclone-config", type=Path, help="optional rclone config file")
     parser.add_argument("--timezone", help="IANA timezone for archive dates (default: system local timezone)")
@@ -231,10 +265,53 @@ def upload_error(stderr):
     return f"provider error{http}; run rclone copyto manually with --immutable to inspect details"
 
 
+def upload_archive(archive, destination, args):
+    # Destinations must already exist; scoped S3 tokens need not create buckets.
+    command = [args.rclone, "copyto", str(archive), destination, "--immutable",
+               "--s3-no-check-bucket", "--retries", "3"]
+    if args.rclone_config:
+        command.extend(["--config", str(args.rclone_config.expanduser())])
+    try:
+        with tempfile.TemporaryFile() as diagnostics:
+            result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=diagnostics, timeout=args.timeout, check=False)
+            if result.returncode:
+                diagnostics.seek(0, os.SEEK_END)
+                diagnostics.seek(max(0, diagnostics.tell() - 65536))
+                detail = upload_error(diagnostics.read().decode("utf-8", errors="replace"))
+                raise BackupError(f"rclone upload failed (exit {result.returncode}): {detail}")
+    except subprocess.TimeoutExpired:
+        raise BackupError("rclone upload timed out") from None
+    except OSError:
+        raise BackupError("could not start or communicate with rclone") from None
+
+
+def upload_retained(archive, source, remote, remote_path, args):
+    older = sorted(path for path in archive.parent.glob("taskix-*.tar.gz") if path != archive)
+    failures = []
+    for retained in (archive, *older):
+        try:
+            if retained.is_symlink():
+                raise BackupError("backup archive must not be a symbolic link")
+            verify_archive(retained, source)
+        except BackupError as error:
+            failures.append(f"{retained.name!r}: {error}")
+            continue
+        except (OSError, EOFError, ValueError, KeyError, TypeError, tarfile.TarError):
+            failures.append(f"{retained.name!r}: invalid or unreadable backup archive")
+            continue
+        destination = f"{remote}/{retained.name}" if remote_path else f"{remote}{retained.name}"
+        try:
+            upload_archive(retained, destination, args)
+        except BackupError as error:
+            failures.append(f"{retained.name!r}: {error}")
+    return failures
+
+
 def run(args):
     if args.restore is not None:
-        if args.restore_dir is None:
-            raise BackupError("--restore requires --restore-dir")
+        if args.restore_dir is None or args.local_only:
+            raise BackupError("--restore requires --restore-dir and cannot be combined with --local-only")
         restore_archive(args.restore, args.restore_dir)
         return
     if args.restore_dir is not None or args.remote is None:
@@ -259,21 +336,21 @@ def run(args):
     memory = Path(memory_path).expanduser() if memory_path else source.parent / "memory.sqlite3"
     if not memory.is_absolute() or memory.resolve() == source.resolve():
         raise BackupError("memory database must use a distinct absolute path")
-    if not memory.is_file():
-        if memory_path or os.environ.get("TASKIX_MEMORY_ENABLED") in ("true", "1"):
-            raise BackupError("configured memory database is missing; initialize it before backup")
-        memory = None
-    else:
-        memory = memory.resolve()
-    directory = (args.output_dir if args.output_dir is not None else source.parent / "backups").expanduser().resolve()
+    memory_expected = memory_path or os.environ.get("TASKIX_MEMORY_ENABLED") in ("true", "1")
+    memory = memory.resolve() if memory_expected or memory.is_file() else None
     source = source.resolve()
+    identity = {"source": str(source), "remote": remote}
+    if args.archive_root is not None:
+        namespace = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        directory = args.archive_root.expanduser().resolve() / namespace
+    else:
+        directory = (args.output_dir or source.parent / "backups").expanduser().resolve()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (directory / ".backup.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise BackupError("backup is already running for this output directory") from None
-        identity = {"source": str(source), "remote": remote}
         identity_path = directory / ".identity.json"
         if identity_path.exists():
             if json.loads(identity_path.read_text()) != identity:
@@ -284,33 +361,17 @@ def run(args):
         now = datetime.datetime.now(ZoneInfo(args.timezone)) if args.timezone else datetime.datetime.now().astimezone()
         timestamp = now.strftime("%Y-%m-%d-%H%M%S-%f")
         archive = directory / f"taskix-{timestamp}.tar.gz"
-        create_archive(source, directory, archive, timestamp, args.timeout, memory)
-        # Validate all retained packages before retrying old and new uploads.
-        archives = sorted(directory.glob("taskix-*.tar.gz"))
-        for retained in archives:
-            if retained.is_symlink():
-                raise BackupError("backup archive must not be a symbolic link")
-            verify_archive(retained, source)
-        for retained in archives:
-            destination = f"{remote}/{retained.name}" if remote_path else f"{remote}{retained.name}"
-            # Destinations must already exist; scoped S3 tokens need not create buckets.
-            command = [args.rclone, "copyto", str(retained), destination, "--immutable",
-                       "--s3-no-check-bucket", "--retries", "3"]
-            if args.rclone_config:
-                command.extend(["--config", str(args.rclone_config.expanduser())])
-            try:
-                with tempfile.TemporaryFile() as diagnostics:
-                    result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                            stderr=diagnostics, timeout=args.timeout, check=False)
-                    if result.returncode:
-                        diagnostics.seek(0, os.SEEK_END)
-                        diagnostics.seek(max(0, diagnostics.tell() - 65536))
-                        detail = upload_error(diagnostics.read().decode("utf-8", errors="replace"))
-                        raise BackupError(f"rclone upload failed (exit {result.returncode}): {detail}; "
-                                          "local archives retained for retry")
-            except subprocess.TimeoutExpired:
-                raise BackupError("rclone upload timed out; local archives retained for retry") from None
-        print(f"Backup complete: {archive}")
+        memory_error = create_archive(source, directory, archive, timestamp, args.timeout, memory)
+        print(f"Local snapshot saved: {archive}", flush=True)
+        failures = [f"Memory omitted from task snapshot: {memory_error}"] if memory_error else []
+        if args.local_only:
+            verify_archive(archive, source)
+        else:
+            failures.extend(upload_retained(archive, source, remote, remote_path, args))
+        if failures:
+            raise BackupError("; ".join(failures) + "; local archives retained")
+        if not args.local_only:
+            print(f"Backup complete: {archive}")
 
 
 def main():
