@@ -1,6 +1,6 @@
 {
   "name": "taskix-manager",
-  "version": "0.8.4",
+  "version": "0.8.4+dev",
   "description": "Coordinate tracked work with taskix and read-only Markdown boards.",
   "author": {
     "name": "tenfyzhong"
