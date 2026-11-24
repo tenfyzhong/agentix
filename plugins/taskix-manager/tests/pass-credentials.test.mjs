@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, symlinkSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, symlinkSync, mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 import { decisionConfig } from '../decision-provider.mjs';
 import { taskEnvironment } from '../environment.mjs';
+import { runHook } from '../runtime.mjs';
 
 function fixture(t, body) {
     const dir = mkdtempSync(join(tmpdir(), 'taskix-pass-'));
@@ -60,6 +64,68 @@ test('pass timeout is bounded and sanitized', async t => {
     assert.throws(()=>passKey('timeout',env,30), /timed out/);
     assert.ok(Date.now()-start < 2000);
 });
+test('maintenance hooks leave the decision credential unread', async t => {
+    const env = fixture(t, `
+        import { writeFileSync } from 'node:fs';
+        import { join } from 'node:path';
+        writeFileSync(join(process.env.HOME, 'pass-ran'), '');
+        writeSync(1, 'test-key\\n');
+        process.exit(0);
+    `);
+    const calls = [];
+    const runner = async args => {
+        calls.push(args.join(' '));
+        return {result: {}};
+    };
+    for (const hook_event_name of ['SessionStart', 'PreToolUse', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd']) {
+        await runHook({hook_event_name, session_id: 'maintenance'}, runner, {env, cacheDir: env.HOME});
+    }
+    assert.ok(calls.includes('hook session-end'));
+    assert.equal(existsSync(join(env.HOME, 'pass-ran')), false);
+});
+
+function running(pid) {
+    try {
+        const status = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']});
+        return !status.trim().startsWith('Z');
+    } catch (error) {
+        if (error.status === 1) return false;
+        throw error;
+    }
+}
+
+for (const trigger of ['timeout', 'caller exit']) {
+    test(`pass and its subprocess are stopped after ${trigger}`, {skip: process.platform === 'win32'}, async t => {
+        const env = fixture(t, `
+            import { spawn } from 'node:child_process';
+            import { writeFileSync } from 'node:fs';
+            import { join } from 'node:path';
+            const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 15_000)'], {env: {}, stdio: 'ignore'});
+            writeFileSync(join(process.env.HOME, 'pids'), JSON.stringify([process.pid, child.pid]));
+            await new Promise(resolve => setTimeout(resolve, 15_000));
+        `);
+        const host = spawn(process.execPath, ['--input-type=module', '-e', `
+            import { passKey } from ${JSON.stringify(new URL('../pass.mjs', import.meta.url).href)};
+            try { passKey('slow', ${JSON.stringify(env)}, ${trigger === 'timeout' ? 1500 : 10_000}); }
+            catch (error) { if (!/timed out/.test(error.message)) throw error; }
+        `], {stdio: 'ignore'});
+        const exited = once(host, 'exit');
+        const pidFile = join(env.HOME, 'pids');
+        let pids = [];
+        t.after(() => {
+            host.kill('SIGKILL');
+            for (const pid of pids) {
+                if (running(pid)) process.kill(pid, 'SIGKILL');
+            }
+        });
+        for (let retry = 0; retry < 100 && !existsSync(pidFile); retry++) await delay(20);
+        pids = JSON.parse(readFileSync(pidFile, 'utf8'));
+        if (trigger === 'caller exit') host.kill('SIGKILL');
+        assert.deepEqual(await exited, trigger === 'timeout' ? [0, null] : [null, 'SIGKILL']);
+        for (let retry = 0; retry < 40 && pids.some(running); retry++) await delay(25);
+        assert.deepEqual(pids.filter(running), []);
+    });
+}
 test('file pass references resolve only when decisions are requested', t => {
     const env=fixture(t,'writeSync(1, "file-key\\n"); process.exit(0);');
     delete env.TASKIX_DECISION_API_KEY_PASS;
