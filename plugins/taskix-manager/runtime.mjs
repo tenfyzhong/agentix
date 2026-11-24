@@ -1,5 +1,5 @@
 import { taskEnvironment } from "./environment.mjs";
-import { decisionConfig } from "./decision-provider.mjs";
+import { decisionConfigured } from "./decision-provider.mjs";
 import { memoryContext } from "./memory.mjs";
 import { withDeadline } from "./jev-io.mjs";
 import { assessLifecycle, lifecycleNotice } from "./lifecycle.mjs";
@@ -135,7 +135,7 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
         await runner(["hook", operation], options);
         return {};
     }
-    const enabled = !!decisionConfig(routing.env);
+    const enabled = decisionConfigured(routing.env);
     if (event.hook_event_name === "UserPromptSubmit") {
         const memory = memoryContext(event.prompt, event.turn_id, options, runner, { ...routing, requireEnabled: true });
         if (!enabled) {
@@ -434,7 +434,7 @@ export function registerExtension(
         const options = optionsFor(ctx);
         const memory = memoryContext(event.prompt, state?.turn || event.turnId || event.turn_id, options, runner, { ...routing, requireEnabled: true });
         let content;
-        if (decisionConfig(routing.env)) {
+        if (decisionConfigured(routing.env)) {
             const prepared = await preparePrompt(event.prompt, options, runner, routing, state?.history);
             const notice = cancellationContext(prepared.context);
             content = `${notice ? notice + "\n" : ""}${prepared.content}`;

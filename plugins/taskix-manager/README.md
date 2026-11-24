@@ -160,4 +160,7 @@ current LTS recommended). Bun hosts must support `node:util.parseEnv`.
 Memory accepts `api_key_pass` directly, or `api_key_env` with a matching `_PASS`
 entry in `taskix.env`. Plugins accept `TASKIX_DECISION_API_KEY_PASS`. Configure
 GPG/pinentry for the service user first; otherwise use a direct API key.
+The plugin checks decision settings without decrypting credentials during
+maintenance hooks. On Unix, it terminates the `pass` process group when
+decryption times out or the caller exits.
 See [pass setup and precedence](https://github.com/tenfyzhong/agentix/wiki/Pass-Secrets).

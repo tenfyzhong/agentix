@@ -11,7 +11,7 @@ export function metricsEnabled(env = taskEnvironment()) {
 export function metricsDatabase(env = taskEnvironment()) {
     return text(env.TASKIX_DECISION_METRICS_DB) ?? text(env.TASKIX_JEV_METRICS_DB);
 }
-export function decisionConfig(env = taskEnvironment()) {
+function decisionSettings(env) {
     const provider = text(env.TASKIX_DECISION_PROVIDER) ?? "typesafe";
     const protocol = text(env.TASKIX_DECISION_PROTOCOL) ?? ({ typesafe: "typesafe", openai: "openai_decisions" })[provider];
     if (!validProvider(provider) || !validProtocol(protocol)) return;
@@ -21,23 +21,32 @@ export function decisionConfig(env = taskEnvironment()) {
     const value = name => text(env[`TASKIX_DECISION_${name}`]) ?? (legacy ? text(env[`TASKIX_JEV_${name}`]) : undefined);
     const url = value("URL") ?? (officialOpenAI ? "https://api.openai.com/v1/decisions" : undefined);
     const credential = prefix => {
-        const direct = text(env[`${prefix}API_KEY`]);
-        if (direct) return direct;
+        const key = text(env[`${prefix}API_KEY`]);
+        if (key) return { key };
         const entry = env[`${prefix}API_KEY_PASS`];
-        return entry === undefined ? undefined : passKey(entry, env);
+        return entry === undefined ? undefined : { entry };
     };
-    const key = credential("TASKIX_DECISION_")
+    const source = credential("TASKIX_DECISION_")
         ?? (legacy ? credential("TASKIX_JEV_") : undefined)
         ?? (officialOpenAI ? credential("OPENAI_") : undefined);
     const model = value("MODEL") ?? (legacy ? "jev-latest" : officialOpenAI ? "gpt-6-luna" : undefined);
-    if (!url || !key || !model || /[^\x20-\x7e]/.test(key)) return;
+    if (!url || !source || !model || (source.key && /[^\x20-\x7e]/.test(source.key))) return;
     try {
         const parsed = new URL(url);
         if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) return;
     } catch { return; }
     const threshold = Number(value("MIN_CONFIDENCE") ?? "0.65");
     if (!Number.isFinite(threshold) || threshold < .5 || threshold > 1) return;
-    return { provider, protocol, url, key, model, threshold };
+    return { provider, protocol, url, model, threshold, source };
+}
+export function decisionConfigured(env = taskEnvironment()) {
+    return !!decisionSettings(env);
+}
+export function decisionConfig(env = taskEnvironment()) {
+    const settings = decisionSettings(env);
+    if (!settings) return;
+    const { source, ...config } = settings;
+    return { ...config, key: source.key ?? passKey(source.entry, env) };
 }
 
 export function encodeDecision(config, state, questions) {
