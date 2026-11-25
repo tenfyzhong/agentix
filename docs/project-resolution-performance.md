@@ -6,6 +6,8 @@
 
 Schema 14 maintains `project_lookup` in the same transaction as Project writes, with cascading deletion. Canonical roots and Unicode-lowercased keys are indexed independently. The migration builds these indexes once from existing Project metadata; ordinary startup does not rebuild them. Existing Project records and document paths are preserved. An expression index on the stored origin supports remote lookup without decoding unrelated Projects. Remote matching uses the exact nonblank origin URL; alternate transport URLs are not inferred to be equivalent. Root lookup materializes at most one Project, with the earliest legacy record winning if multiple stored aliases identify the same canonical directory.
 
+On the first prompt in an eligible Git workspace, the host plugin's routing snapshot registers a missing Project and publishes its board before returning Project context. The CLI applies tracking exclusions before opening storage. This also works with the decision service disabled. An explicit Project or existing session assignment takes precedence. Job creation still requires a separate lifecycle command.
+
 Directory lookup has O(log P) index cost, independent of unrelated Project bodies and filesystem paths. Name allocation performs indexed equality checks for the base name and occupied numeric suffixes, O((C + 1) log P) for C collisions. It preserves the existing first-free-suffix and Unicode case-folding behavior. Registration still incurs a transaction and document publication; that necessary cold-path cost is not hidden by a stale cross-process cache.
 
 ## Reproduce

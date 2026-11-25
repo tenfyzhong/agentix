@@ -1042,11 +1042,42 @@ fn git_worktrees_share_one_project() {
             .status
             .success()
     );
-    let first = cli.ok(&["project", "register", "--root", repo.to_str().unwrap()]);
-    let second = cli.ok(&["project", "register", "--root", worktree.to_str().unwrap()]);
-    assert_eq!(first["id"], second["id"]);
     let nested = worktree.join("nested");
     std::fs::create_dir(&nested).unwrap();
+    let origin = "https://example.invalid/test/repo.git";
+    assert!(
+        Command::new("git")
+            .args(["remote", "add", "origin", origin])
+            .current_dir(&repo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let children = [("primary", &repo), ("linked", &nested)].map(|(session, cwd)| {
+        cli.command(&["routing", "snapshot", "--session", session])
+            .current_dir(cwd)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap()
+    });
+    let ids = children
+        .map(|child| child.wait_with_output().unwrap())
+        .map(|out| {
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+            let result = serde_json::from_slice::<Value>(&out.stdout).unwrap();
+            assert!(result["result"]["project_id"].is_string(), "{result}");
+            result["result"]["project_id"].clone()
+        });
+    assert_eq!(ids[0], ids[1]);
+    let first = cli.ok(&["project", "show", ids[0].as_str().unwrap()]);
+    assert_eq!(first["root"], json!(repo.canonicalize().unwrap()));
+    assert_eq!(first["remote"], origin);
+    let second = cli.ok(&["project", "register", "--root", worktree.to_str().unwrap()]);
+    assert_eq!(first["id"], second["id"]);
     for cwd in [&repo, &worktree, &nested] {
         let out = cli.command(&["context"]).current_dir(cwd).output().unwrap();
         assert!(

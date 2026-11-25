@@ -19,6 +19,93 @@ fn step<'a>(job: &'a Value, name: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("missing coverage step: {name}"))
 }
 
+#[cfg(unix)]
+#[test]
+fn linux_tools_retry_the_official_archive_when_apt_update_or_install_fails() {
+    use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+
+    let action: Value = serde_yaml::from_str(include_str!(
+        "../../../.github/actions/install-linux-tools/action.yml"
+    ))
+    .unwrap();
+    let script = action["runs"]["steps"][0]["run"]
+        .as_str()
+        .unwrap()
+        .replace("/etc/os-release", "./os-release");
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("os-release"),
+        "ID=ubuntu\nVERSION_CODENAME=noble\n",
+    )
+    .unwrap();
+    let sudo = dir.path().join("sudo");
+    fs::write(
+        &sudo,
+        r#"#!/bin/sh
+set -eu
+test "$1" = apt-get
+shift
+sources=
+while [ "$1" = -o ]; do
+    case "$2" in Dir::Etc::sourcelist=*) sources=${2#*=};; esac
+    shift 2
+done
+uri=$(awk '$1 == "URIs:" {print $2}' "$sources")
+case "$uri" in
+    https://mirrors.edge.kernel.org/ubuntu) mirror=primary; fail=$FAIL_PRIMARY ;;
+    https://archive.ubuntu.com/ubuntu) mirror=official; fail=$FAIL_OFFICIAL ;;
+    *) exit 1 ;;
+esac
+printf '%s %s\n' "$mirror" "$*" >> calls
+if [ "$1" = "$fail" ]; then exit 100; fi
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(sudo, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(dir.path().to_owned())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let fallback = "official update\nofficial install --yes protobuf-compiler fish\n";
+    for (primary, official, expected, success) in [
+        (
+            "install",
+            "",
+            format!("primary update\nprimary install --yes protobuf-compiler fish\n{fallback}"),
+            true,
+        ),
+        ("update", "", format!("primary update\n{fallback}"), true),
+        (
+            "install",
+            "install",
+            format!("primary update\nprimary install --yes protobuf-compiler fish\n{fallback}"),
+            false,
+        ),
+        (
+            "",
+            "",
+            "primary update\nprimary install --yes protobuf-compiler fish\n".to_owned(),
+            true,
+        ),
+    ] {
+        let calls = dir.path().join("calls");
+        fs::write(&calls, "").unwrap();
+        let result = Command::new("bash")
+            .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", &script])
+            .current_dir(dir.path())
+            .env("PATH", &path)
+            .env("RUNNER_TEMP", dir.path())
+            .env("PACKAGES", "protobuf-compiler fish")
+            .env("FAIL_PRIMARY", primary)
+            .env("FAIL_OFFICIAL", official)
+            .output()
+            .unwrap();
+        assert_eq!(fs::read_to_string(calls).unwrap(), expected);
+        assert_eq!(result.status.success(), success, "{result:?}");
+    }
+}
+
 #[test]
 fn test_matrix_covers_every_partition_once_on_each_platform() {
     let config = workflow("tests.yml");

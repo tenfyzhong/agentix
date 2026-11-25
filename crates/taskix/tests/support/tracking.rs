@@ -154,4 +154,17 @@ fn symlinks_and_worktrees_preserve_exclusion_scope() {
         cli.ok(&["project", "check", "--path", worktree.to_str().unwrap()])["tracking"]["enabled"],
         false
     );
+    let output = cli
+        .command(&["routing", "snapshot", "--session", "excluded-git"])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["result"]["tracking"]["enabled"], false);
+    assert_eq!(cli.ok(&["project", "list"]), json!([]));
 }
