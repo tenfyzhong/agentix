@@ -112,13 +112,17 @@ impl Service {
         if directory.git {
             return Ok(None);
         }
+        self.register_directory_project(directory).await.map(Some)
+    }
+
+    async fn register_directory_project(&self, directory: &ProjectDirectory) -> Result<Project> {
         let name = directory.root.file_name().map_or_else(
             || directory.root.to_string_lossy().into_owned(),
             |name| name.to_string_lossy().into_owned(),
         );
         let outcome = self
             .execute(
-                json!({"command":"project.register","name":name,"root":directory.root}),
+                json!({"command":"project.register","name":name,"root":directory.root,"remote":directory.remote}),
                 WriteOptions::default(),
             )
             .await?;
@@ -127,7 +131,22 @@ impl Service {
             "Project synchronization pending: {:?}",
             outcome.projection_pending
         );
-        Ok(Some(serde_json::from_value(outcome.result)?))
+        Ok(serde_json::from_value(outcome.result)?)
+    }
+
+    /// Prompt routing can register a Git project before classification.
+    pub(crate) async fn project_for_prompt(&self, cwd: &Path) -> Result<Option<Project>> {
+        if !cwd.is_dir() {
+            return Ok(None);
+        }
+        let directory = ProjectDirectory::discover(cwd)?;
+        if let Some(project) = self.project_for_directory(&directory).await? {
+            return Ok(Some(project));
+        }
+        if directory.git {
+            return self.register_directory_project(&directory).await.map(Some);
+        }
+        Ok(None)
     }
 
     /// IM policy: resolve the current directory; use history only without a usable cwd.

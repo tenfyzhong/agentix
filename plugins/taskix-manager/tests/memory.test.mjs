@@ -82,9 +82,12 @@ test("a response arriving after the host deadline cannot suppress the next turn"
 });
 test("Codex and Claude prompt hooks retrieve memory independently of Jev routing", async () => {
     const calls = [];
-    const output = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "s", turn_id: "t", prompt: "regional endpoints" }, async args => { calls.push(args); return packet(); }, { env: { TASKIX_JEV_ENABLED: "false", TASKIX_MEMORY_ENABLED: "true" } });
+    const output = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "s", turn_id: "t", prompt: "regional endpoints" }, async args => {
+        calls.push(args);
+        return args[0] === "memory" ? packet() : { result: { project_id: "prj_test" } };
+    }, { env: { TASKIX_JEV_ENABLED: "false", TASKIX_MEMORY_ENABLED: "true" } });
     assert.match(output.hookSpecificOutput.additionalContext, /regional endpoints/);
-    assert.deepEqual(calls.map(args => args.slice(0, 2)), [["memory", "context"]]);
+    assert.deepEqual(calls.map(args => args.slice(0, 2)), [["memory", "context"], ["routing", "snapshot"]]);
 });
 for (const host of ["pi", "omp"]) test(`${host} retrieves memory before the agent starts`, async () => {
     const handlers = {};
@@ -106,7 +109,7 @@ for (const value of [undefined, "", "false", "0", "TRUE", "yes", " true ", "true
         const calls = [];
         const runner = async args => { if (args[0] === "memory") calls.push(args); return args[0] === "memory" ? packet() : { result: {} }; };
         const output = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "env-hook", turn_id: "t", prompt: "regional endpoints" }, runner, options);
-        assert.equal(!!output.hookSpecificOutput?.additionalContext, enabled);
+        assert.equal(!!output.hookSpecificOutput?.additionalContext?.includes("Historical memory"), enabled);
         assert.equal(calls.length, enabled ? 1 : 0);
         if (enabled) await memoryContext("regional endpoints", "cleanup", { session: "env-hook" }, runner, options);
         for (const host of ["pi", "omp"]) {

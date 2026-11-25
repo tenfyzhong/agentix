@@ -138,12 +138,12 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
     const enabled = decisionConfigured(routing.env);
     if (event.hook_event_name === "UserPromptSubmit") {
         const memory = memoryContext(event.prompt, event.turn_id, options, runner, { ...routing, requireEnabled: true });
-        if (!enabled) {
+        if (!enabled && !event.prompt?.trim()) {
             const content = await memory;
             return content ? { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: content } } : {};
         }
-        const prepared = await preparePrompt(event.prompt, options, runner, routing, [], event);
-        if (prepared.ready) await routingReceipt(event, "write", routing.cacheDir);
+        const prepared = await preparePrompt(event.prompt, options, runner, routing, [], enabled ? event : undefined);
+        if (enabled && prepared.ready) await routingReceipt(event, "write", routing.cacheDir);
         const notice = cancellationContext(prepared.context);
         return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: `${notice ? notice + "\n" : ""}${[prepared.content, await memory].filter(Boolean).join("\n")}` } };
     }
@@ -440,7 +440,9 @@ export function registerExtension(
             content = `${notice ? notice + "\n" : ""}${prepared.content}`;
         } else {
             const result = await runner(["context"], options);
-            content = await promptContext(event.prompt, result.result, options, runner, routing, state?.history);
+            content = result.result.project_id === null && event.prompt?.trim()
+                ? (await preparePrompt(event.prompt, options, runner, routing)).content
+                : await promptContext(event.prompt, result.result, options, runner, routing, state?.history);
         }
         return {
             message: {

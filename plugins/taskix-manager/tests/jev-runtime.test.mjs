@@ -88,10 +88,12 @@ test("uncertain_prompt_returns_to_main_agent_and_next_turn_is_not_suppressed",as
     assert.match(next.hookSpecificOutput.additionalContext,/Resolve whether/);
 });
 
-test("disabled_prompt_hook_does_not_change_existing_injection",async t=>{
+test("disabled_prompt_hook_injects_local_workflow_without_classification",async t=>{
     const f=await fixture(t);
     f.routing.env={};
-    assert.deepEqual(await runHook({...f.event,hook_event_name:"UserPromptSubmit",prompt:"Create PR"},f.runner,f.routing),{});
+    const prompt=await runHook({...f.event,hook_event_name:"UserPromptSubmit",prompt:"Create PR"},f.runner,f.routing);
+    assert.match(prompt.hookSpecificOutput.additionalContext,/"project_id":"p"/);
+    assert.doesNotMatch(prompt.hookSpecificOutput.additionalContext,/Taskix route:/);
     const tool=await runHook({...f.event,hook_event_name:"PreToolUse"},f.runner,f.routing);
     assert.match(tool.hookSpecificOutput.additionalContext,/Unrelated Issue body/);
     assert.equal(f.requests(),0);
@@ -140,11 +142,12 @@ test("unwritable_receipt_retains_legacy_tool_fallback",async t=>{
 });
 
 for (const configuration of [{}, { TASKIX_JEV_ENABLED: "true" }, { ...env, TASKIX_JEV_API_KEY: "" }]) {
-    test(`disabled_prompt_has_zero_cli_calls_${JSON.stringify(configuration)}`, async t => {
+    test(`disabled_prompt_uses_only_local_snapshot_${JSON.stringify(configuration)}`, async t => {
         const f = await fixture(t);
         f.routing.env = configuration;
         await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Continue" }, f.runner, f.routing);
-        assert.deepEqual(f.calls, []);
+        assert.deepEqual(f.calls, [["routing", "snapshot"]]);
+        assert.equal(f.requests(), 0);
     });
 }
 

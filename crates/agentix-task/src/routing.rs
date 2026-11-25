@@ -230,7 +230,7 @@ impl Service {
         let project = if let Some(id) = assignment["project_id"].as_str().or(project) {
             Some(self.store().project_result(id).await?)
         } else {
-            match self.project_for_session(Some(cwd), Some(session)).await? {
+            match self.project_for_prompt(cwd).await? {
                 Some(project) => Some(project),
                 None => self.project_for_session(None, Some(session)).await?,
             }

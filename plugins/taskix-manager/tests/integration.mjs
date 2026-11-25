@@ -1,7 +1,7 @@
 import { choiceAnswers } from "./support/jev.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -1289,6 +1289,55 @@ for (const host of ['codex','claude','pi','omp','opencode','antigravity']) test(
     assert.ok(recovered.result.project_id);
     assert.deepEqual((await f.run(['conversation','list'],options)).turns,[]);
 });
+
+for (const decisionEnabled of [true, false]) {
+    test(`Antigravity registers a new Git project on the first prompt with decision routing ${decisionEnabled ? "enabled" : "disabled"}`, async t => {
+        const { createAntigravityHooks } = await import("../antigravity/runtime.mjs");
+        const f = await fixture(t);
+        const repo = join(f.dir, "new-repo");
+        await mkdir(repo);
+        execFileSync("git", ["init", "--quiet", repo]);
+        const transcriptPath = join(f.dir, "antigravity-transcript.jsonl");
+        await writeFile(transcriptPath, "");
+        const session = "antigravity-first-prompt";
+        const event = { conversationId: session, workspacePaths: [repo], transcriptPath };
+        const routing = {
+            cacheDir: f.dir,
+            env: {
+                TASKIX_DECISION_ENABLED: String(decisionEnabled),
+                TASKIX_DECISION_URL: "https://fixture.invalid",
+                TASKIX_DECISION_API_KEY: "fixture",
+                TASKIX_MEMORY_ENABLED: "false",
+            },
+            fetch: async (_url, init) => ({
+                ok: true,
+                json: async () => choiceAnswers(JSON.parse(init.body), {
+                    intent: "question", route: "new_job", issue: "none", review_policy: "none",
+                }),
+            }),
+        };
+        const hooks = createAntigravityHooks({ root: join(f.dir, "identity"), key: session, routing });
+        await hooks.handle({ ...event, hookEventName: "SessionStart" });
+        assert.equal((await f.run(["project", "list"])).length, 1);
+        await writeFile(transcriptPath, JSON.stringify({
+            step_index: 0, type: "USER_INPUT", source: "USER_EXPLICIT",
+            created_at: "2026-11-25T00:00:00Z", content: "How is this repository organized?",
+        }) + "\n");
+        const result = await hooks.handle({ ...event, hookEventName: "PreInvocation" });
+        const projects = await f.run(["project", "list"]);
+        const project = projects.find(candidate => candidate.name === "new-repo");
+        assert.ok(project, "the first prompt registers its Git project");
+        const context = result.injectSteps.map(step => step.ephemeralMessage).join("\n");
+        assert.ok(context.includes(project.id), "the first prompt receives project context");
+        if (decisionEnabled) assert.match(context, /Taskix route: discussion/);
+        assert.equal((await f.run(["job", "list", "--project", project.id])).length, 0);
+        assert.match(
+            await readFile(join(f.root, "Tasks \u{2603}", "Projects", "new-repo", "Board.md"), "utf8"),
+            new RegExp(project.id),
+        );
+        assert.equal((await f.run(["conversation", "list"], { session })).turns.length, 1);
+    });
+}
 
 test('antigravity_resumed_steps_keep_job_outputs_and_elapsed_times_in_separate_turns', async t => {
     const { stageTranscript } = await import('../discussion.mjs');
