@@ -138,7 +138,7 @@ async function evaluate(config, body, signal, fetch, env) {
     const credential = config.protocol === "gemini"
         ? { "x-goog-api-key": config.key }
         : { Authorization: `Bearer ${config.key}` };
-    const proxyEnv = config.protocol === "gemini" && fetch === globalThis.fetch ? env : undefined;
+    const proxyEnv = fetch === globalThis.fetch ? env : undefined;
     const data = await requestDecisionJson(config.url, { method: "POST", redirect: "error", signal,
         headers: { ...credential, "Content-Type": "application/json" }, body }, fetch, proxyEnv);
     signal.throwIfAborted();

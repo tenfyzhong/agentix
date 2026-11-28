@@ -203,42 +203,46 @@ const nativeProxy = nodeMajor > 24 || (nodeMajor === 24 && nodeMinor >= 5)
     || (nodeMajor === 22 && nodeMinor >= 21);
 const proxyTest = { skip: !nativeProxy };
 
-test("Gemini reuses the supplied proxy environment and respects NO_PROXY", proxyTest, async t => {
-    const requests = [];
-    const answer = async (request, response, via) => {
-        requests.push({ via, url: request.url, key: request.headers["x-goog-api-key"] });
-        const chunks = [];
-        for await (const chunk of request) chunks.push(chunk);
-        const body = Buffer.concat(chunks).toString("utf8");
-        const reply = await fetchAnswers("gemini", { intent: "work", route: "resume:j", review_policy: "required" }, [])(request.url, {
-            body, headers: { "x-goog-api-key": request.headers["x-goog-api-key"] },
-        });
-        response.end(JSON.stringify(await reply.json()));
-    };
-    const origin = await loopbackServer(t, (req, res) => answer(req, res, "origin"));
-    const proxy = await loopbackServer(t, (req, res) => answer(req, res, "proxy"));
-    const url = origin.url + "/evaluate";
-    const env = { ...custom("gemini"), TASKIX_DECISION_URL: url, http_proxy: proxy.url };
-    const args = { prompt: "Continue", context: { project_id: "p" }, options, runner };
-    const globalFetch = globalThis.fetch;
-    assert.equal((await routePrompt({ ...args, env })).decision.action, "resume");
-    assert.equal((await routePrompt({ ...args, env: { ...env, NO_PROXY: "127.0.0.1" } })).decision.action, "resume");
-    assert.equal(globalThis.fetch, globalFetch);
-    assert.deepEqual(requests, [
-        { via: "proxy", url, key: "acme-key" },
-        { via: "origin", url: "/evaluate", key: "acme-key" },
-    ]);
-});
-
-test("Gemini uses HTTPS CONNECT and defers on proxy refusal", proxyTest, async t => {
-    const proxy = await loopbackServer(t, (_req, res) => res.writeHead(500).end());
-    const connects = [];
-    proxy.server.on("connect", (req, socket) => {
-        connects.push({ url: req.url, key: req.headers["x-goog-api-key"] });
-        socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n");
+for (const protocol of ["typesafe", "openai_decisions", "gemini"]) {
+    test(`${protocol} reuses the supplied proxy environment and respects NO_PROXY`, proxyTest, async t => {
+        const requests = [];
+        const expectedAuth = protocol === "gemini" ? ["acme-key", undefined] : [undefined, "Bearer acme-key"];
+        const answer = async (request, response, via) => {
+            const { authorization, "x-goog-api-key": key } = request.headers;
+            requests.push({ via, url: request.url, auth: [key, authorization] });
+            const chunks = [];
+            for await (const chunk of request) chunks.push(chunk);
+            const body = Buffer.concat(chunks).toString("utf8");
+            const reply = await fetchAnswers(protocol, { intent: "work", route: "resume:j", review_policy: "required" }, [])(request.url, {
+                body, headers: { "x-goog-api-key": request.headers["x-goog-api-key"] },
+            });
+            response.end(JSON.stringify(await reply.json()));
+        };
+        const origin = await loopbackServer(t, (req, res) => answer(req, res, "origin"));
+        const proxy = await loopbackServer(t, (req, res) => answer(req, res, "proxy"));
+        const url = origin.url + "/evaluate";
+        const env = { ...custom(protocol), TASKIX_DECISION_URL: url, http_proxy: proxy.url };
+        const args = { prompt: "Continue", context: { project_id: "p" }, options, runner };
+        const globalFetch = globalThis.fetch;
+        assert.equal((await routePrompt({ ...args, env })).decision.action, "resume");
+        assert.equal((await routePrompt({ ...args, env: { ...env, NO_PROXY: "127.0.0.1" } })).decision.action, "resume");
+        assert.equal(globalThis.fetch, globalFetch);
+        assert.deepEqual(requests, [
+            { via: "proxy", url, auth: expectedAuth },
+            { via: "origin", url: "/evaluate", auth: expectedAuth },
+        ]);
     });
-    const env = { ...custom("gemini"), TASKIX_DECISION_URL: "https://gemini.example.invalid/evaluate", HTTPS_PROXY: proxy.url };
-    const result = await routePrompt({ prompt: "Continue", context: { project_id: "p" }, options, runner, env });
-    assert.equal(result.decision.action, "agent");
-    assert.deepEqual(connects, [{ url: "gemini.example.invalid:443", key: undefined }]);
-});
+
+    test(`${protocol} uses HTTPS CONNECT and defers on proxy refusal`, proxyTest, async t => {
+        const proxy = await loopbackServer(t, (_req, res) => res.writeHead(500).end());
+        const connects = [];
+        proxy.server.on("connect", (req, socket) => {
+            connects.push({ url: req.url, auth: [req.headers["x-goog-api-key"], req.headers.authorization] });
+            socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n");
+        });
+        const env = { ...custom(protocol), TASKIX_DECISION_URL: "https://decisions.example.invalid/evaluate", HTTPS_PROXY: proxy.url };
+        const result = await routePrompt({ prompt: "Continue", context: { project_id: "p" }, options, runner, env });
+        assert.equal(result.decision.action, "agent");
+        assert.deepEqual(connects, [{ url: "decisions.example.invalid:443", auth: [undefined, undefined] }]);
+    });
+}

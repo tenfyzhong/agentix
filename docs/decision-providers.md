@@ -104,11 +104,11 @@ question. Oversized requests, errors and uncertainty hand decisions back to the
 main Agent. All lifecycle mutations require Taskix revision, lease and state
 guards.
 
-Gemini requests honor the existing `https_proxy` / `HTTPS_PROXY` (HTTPS
+All Decisions requests honor the existing `https_proxy` / `HTTPS_PROXY` (HTTPS
 endpoint), `http_proxy` / `HTTP_PROXY` (HTTP endpoint), and `no_proxy` /
 `NO_PROXY` settings from `taskix.env` or the host environment. Configured
 proxies must use HTTP or HTTPS. This requires Node 22.21+ on the 22.x line
-or Node 24.5+. Hosts without supported proxy handling defer Gemini decisions
+or Node 24.5+. Hosts without supported proxy handling defer decisions
 when a proxy is configured.
 
 The adapters handle choice questions. See the upstream
