@@ -21,11 +21,10 @@ async fn background_embedding_discovers_dimensions_and_query_failure_falls_back_
     };
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
-            api: agentix_memory::ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
             api_key_pass: None,
-            protocol: agentix_memory::ProviderProtocol::Openai,
+            protocol: agentix_memory::ProviderProtocol::OpenaiResponses,
             max_in_flight: 4,
         })
         .unwrap(),
@@ -77,11 +76,10 @@ async fn query_cache_reuses_vectors_but_not_memory_results_and_fences_profile_ch
     };
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
-            api: agentix_memory::ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
             api_key_pass: None,
-            protocol: agentix_memory::ProviderProtocol::Openai,
+            protocol: agentix_memory::ProviderProtocol::OpenaiResponses,
             max_in_flight: 4,
         })
         .unwrap(),

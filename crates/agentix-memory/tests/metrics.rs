@@ -1,6 +1,5 @@
 use agentix_memory::{
-    AgentConfig, HttpModel, HttpProvider, Model, ModelApi, ModelRequest, ProviderConfig,
-    ProviderProtocol,
+    AgentConfig, HttpModel, HttpProvider, Model, ModelRequest, ProviderConfig, ProviderProtocol,
 };
 use agentix_metrics::{Metrics, Service};
 use serde_json::json;
@@ -22,8 +21,7 @@ async fn provider_metrics_count_real_usage_without_inventing_missing_tokens() {
     .await;
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
-            protocol: ProviderProtocol::Openai,
-            api: ModelApi::Responses,
+            protocol: ProviderProtocol::OpenaiResponses,
             base_url: server.url.clone(),
             api_key_env: None,
             api_key_pass: None,

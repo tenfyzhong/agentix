@@ -146,11 +146,13 @@ must inspect the proposal rather than guess what a short approval refers to.
 Jev's unresolved-reference fallback remains conservative; Jev does not gain a
 separate conversation or repository access path.
 
-Support explicit Responses and Chat Completions API adapters where applicable.
-Select the API with `memory.providers.<name>.api`, alongside its protocol and
-base URL; omission defaults to `chat_completions`. The Agent uses its selected
-provider's API. `memory.agent.api` is no longer accepted: move the setting to
-the referenced provider. GPT-6 Astra requires explicit `api = "responses"`.
+Select the API with `memory.providers.<name>.protocol`. The Agent supports
+`openai_responses`, `openai_chat_completions`, native Claude Messages
+(`anthropic`), and the Gemini Developer API (`google`). Omission selects
+`openai_chat_completions`. GPT-6 Astra requires `openai_responses`.
+The optional Agent `reasoning_effort` setting applies to OpenAI protocols.
+The legacy `api` field and `protocol = "openai"` are rejected. Replace the old
+OpenAI pair with the corresponding single protocol value, then remove `api`.
 Validate structured proposals and their source references in application code.
 User-decision evidence requires a user quote, while allowing assistant quotes as
 supporting context; assistant-only decisions remain invalid.
@@ -325,8 +327,9 @@ combine ranks with RRF. Initially use SQLite vector storage and scoped exact
 cosine search in Rust, measured against realistic Project sizes. Maintain exact
 top-k with a bounded worst-first heap and one final deterministic score/ID sort.
 
-Embedding has independent provider configuration, including OpenAI-compatible
-embeddings and Ollama. Generate asynchronously. Fence writes by memory ID,
+Embedding has independent provider configuration, supporting both OpenAI protocols,
+Gemini, and Ollama. OpenAI protocol selection is independent of its embedding
+endpoint, so changing between the two OpenAI protocols preserves the index. Generate asynchronously. Fence writes by memory ID,
 content revision and embedding profile generation. Model, dimension or input
 template changes create a new generation; never mix incompatible vectors. Check
 finite values and consistent dimensions. Partial indexing and provider failures

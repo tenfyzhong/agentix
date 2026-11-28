@@ -133,12 +133,12 @@ async fn doctor(path: &std::path::Path, location: &MemoryLocation) -> Result<Val
                 });
                 let available = if pass { None } else { Some(provider.api_key_env.as_ref()
                     .is_none_or(|key| std::env::var(key).is_ok_and(|value| !value.trim().is_empty()))) };
-                json!({"name":name,
+                json!({"name":name, "protocol":provider.protocol,
                     "credential_source":if pass { "pass" } else if provider.api_key_env.is_some() { "environment" } else { "none" },
                     "credentials_available":available,
                     "credentials_check":if pass { "deferred_to_provider_initialization" } else { "environment" }})
             }).collect::<Vec<_>>();
-            json!({"valid":true,"model":config.agent.model,"api":config.providers.get(&config.agent.provider).map(|provider| provider.api),
+            json!({"valid":true,"model":config.agent.model,"protocol":config.providers.get(&config.agent.provider).map(|provider| provider.protocol),
                 "reasoning_effort":config.agent.reasoning_effort,
                 "embedding_enabled":config.embedding.enabled,"providers":providers})
         }

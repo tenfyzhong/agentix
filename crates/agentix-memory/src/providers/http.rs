@@ -21,7 +21,6 @@ pub struct HttpProvider {
     base_url: String,
     authorization: Option<reqwest::header::HeaderValue>,
     pub(crate) protocol: ProviderProtocol,
-    pub(crate) api: crate::ModelApi,
     limits: Arc<ProviderLimits>,
 }
 
@@ -70,7 +69,11 @@ impl HttpProvider {
         };
         let authorization = key
             .map(|key| -> Result<_> {
-                let mut header = reqwest::header::HeaderValue::from_str(&format!("Bearer {key}"))?;
+                let value = match config.protocol {
+                    ProviderProtocol::Anthropic | ProviderProtocol::Google => key,
+                    _ => format!("Bearer {key}"),
+                };
+                let mut header = reqwest::header::HeaderValue::from_str(&value)?;
                 header.set_sensitive(true);
                 Ok(header)
             })
@@ -82,13 +85,19 @@ impl HttpProvider {
             base_url: config.base_url.trim_end_matches('/').into(),
             authorization,
             protocol: config.protocol,
-            api: config.api,
             limits,
         })
     }
 
     pub(crate) fn identity(&self) -> String {
-        format!("{:?}:{}", self.protocol, self.base_url)
+        // Preserve the identity of existing OpenAI and Ollama embedding indexes.
+        let protocol = match self.protocol {
+            ProviderProtocol::OpenaiResponses | ProviderProtocol::OpenaiChatCompletions => "Openai",
+            ProviderProtocol::Ollama => "Ollama",
+            ProviderProtocol::Google => "Google",
+            ProviderProtocol::Anthropic => "Anthropic",
+        };
+        format!("{protocol}:{}", self.base_url)
     }
 
     async fn acquire(&self, query: bool) -> Result<(Option<Permit<'_>>, Permit<'_>)> {
@@ -128,8 +137,20 @@ impl HttpProvider {
                 .post(format!("{}/{}", self.base_url, endpoint))
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .body(body);
+            if self.protocol == ProviderProtocol::Anthropic {
+                request = request.header("anthropic-version", "2023-06-01");
+            }
             if let Some(value) = &self.authorization {
-                request = request.header(reqwest::header::AUTHORIZATION, value.clone());
+                let name = match self.protocol {
+                    ProviderProtocol::Anthropic => {
+                        reqwest::header::HeaderName::from_static("x-api-key")
+                    }
+                    ProviderProtocol::Google => {
+                        reqwest::header::HeaderName::from_static("x-goog-api-key")
+                    }
+                    _ => reqwest::header::AUTHORIZATION,
+                };
+                request = request.header(name, value.clone());
             }
             let mut response = request.send().await.context("provider request failed")?;
             if !response.status().is_success() {
@@ -229,11 +250,10 @@ mod tests {
         let make = || {
             HttpProvider::with_limits(
                 ProviderConfig {
-                    api: crate::ModelApi::Responses,
                     base_url: "http://127.0.0.1:1".into(),
                     api_key_env: None,
                     api_key_pass: None,
-                    protocol: ProviderProtocol::Openai,
+                    protocol: ProviderProtocol::OpenaiResponses,
                     max_in_flight: 2,
                 },
                 limits.clone(),
@@ -270,11 +290,10 @@ mod tests {
 
     fn provider(capacity: usize) -> HttpProvider {
         HttpProvider::new(ProviderConfig {
-            api: crate::ModelApi::Responses,
             base_url: "http://127.0.0.1:1".into(),
             api_key_env: None,
             api_key_pass: None,
-            protocol: ProviderProtocol::Openai,
+            protocol: ProviderProtocol::OpenaiResponses,
             max_in_flight: capacity,
         })
         .unwrap()

@@ -33,7 +33,7 @@ fn memory_activation_uses_environment_without_serializing_a_toml_switch() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(&path, format!("schema_version=1\n[storage]\npath={:?}\n[memory]\n[memory.providers.openai]\napi='responses'\nbase_url='http://127.0.0.1:9/v1'\n", dir.path().join("tasks.sqlite3"))).unwrap();
+        std::fs::write(&path, format!("schema_version=1\n[storage]\npath={:?}\n[memory]\n[memory.providers.openai]\nprotocol='openai_responses'\nbase_url='http://127.0.0.1:9/v1'\n", dir.path().join("tasks.sqlite3"))).unwrap();
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
         command
             .args([
@@ -84,9 +84,8 @@ fn model_configuration_is_explicit_and_capability_checked_without_downgrade() {
 path={:?}
 [memory]
 [memory.providers.local]
-protocol="openai"
 base_url="http://127.0.0.1:8080/v1"
-api="responses"
+protocol="openai_responses"
 [memory.agent]
 provider="local"
 model="gpt-6-astra"
@@ -105,7 +104,10 @@ dimensions=3
     assert_eq!(config.embedding.dimensions, Some(3));
     std::fs::write(
         &path,
-        text.replace("api=\"responses\"", "api=\"chat_completions\""),
+        text.replace(
+            "protocol=\"openai_responses\"",
+            "protocol=\"openai_chat_completions\"",
+        ),
     )
     .unwrap();
     assert!(
@@ -206,12 +208,12 @@ fn load_enabled_config(path: &std::path::Path) -> anyhow::Result<MemoryConfig> {
 }
 
 #[test]
-fn provider_api_defaults_to_chat_completions_and_agent_api_is_removed() {
+fn provider_protocol_defaults_to_openai_chat_completions() {
     let provider: agentix_memory::ProviderConfig =
         toml::from_str("base_url = 'http://localhost/v1'").unwrap();
     assert_eq!(
-        serde_json::to_value(provider).unwrap()["api"],
-        "chat_completions"
+        serde_json::to_value(provider).unwrap()["protocol"],
+        "openai_chat_completions"
     );
     assert!(toml::from_str::<agentix_memory::AgentConfig>("api = 'responses'").is_err());
     assert!(
@@ -219,18 +221,5 @@ fn provider_api_defaults_to_chat_completions_and_agent_api_is_removed() {
             .unwrap()
             .get("api")
             .is_none()
-    );
-}
-
-#[test]
-fn provider_api_accepts_explicit_responses_and_rejects_unknown_api() {
-    let provider: agentix_memory::ProviderConfig =
-        toml::from_str("base_url = 'http://localhost/v1'\napi = 'responses'").unwrap();
-    assert_eq!(serde_json::to_value(provider).unwrap()["api"], "responses");
-    assert!(
-        toml::from_str::<agentix_memory::ProviderConfig>(
-            "base_url = 'http://localhost/v1'\napi = 'unknown'"
-        )
-        .is_err()
     );
 }

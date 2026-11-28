@@ -86,7 +86,7 @@ In `config.toml`:
 
 ```toml
 [memory.providers.openai]
-api = "responses"
+protocol = "openai_responses"
 base_url = "https://api.openai.com/v1"
 api_key_pass = "taskix/openai"
 ```
