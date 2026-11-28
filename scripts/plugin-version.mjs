@@ -1,5 +1,5 @@
 import { latestStable } from "../plugins/taskix-manager/version.mjs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 
 // VERSION is committed before tagging so native Git installs see release metadata.
 const manifests = ["package.json", "plugins/taskix-manager/package.json", "plugins/agentix-bridge/package.json",
@@ -40,17 +40,28 @@ async function main() {
     if (action === "check" && match[2] !== version) throw new Error(`Cargo.toml: ${match[2]} != ${version}`);
     updates.set("Cargo.toml", cargo.replace(match[0], `${match[1]}${version}${match[3]}`));
     const lock = await readFile("Cargo.lock", "utf8");
-    let count = 0;
+    const workspacePackages = new Set();
+    for (const crate of await readdir("crates", { withFileTypes: true })) {
+        if (!crate.isDirectory()) continue;
+        const path = "crates/" + crate.name + "/Cargo.toml";
+        const manifest = await readFile(path, "utf8");
+        const pkg = manifest.split(/^\[package\][ \t]*\r?\n/m)[1]?.split(/^\[/m)[0];
+        const name = pkg?.match(/^[ \t]*name[ \t]*=[ \t]*"([^"]+)"/m)?.[1];
+        if (!name) throw new Error("Missing Cargo package name: " + path);
+        if (/^[ \t]*version[ \t]*\.[ \t]*workspace[ \t]*=[ \t]*true\b/m.test(pkg)) workspacePackages.add(name);
+    }
+    if (!workspacePackages.size) throw new Error("No Cargo packages inherit the workspace version");
     const updatedLock = lock.split(/(?=\[\[package\]\])/).map(block => {
-        // Workspace packages have no registry/git source; leave dependencies alone.
+        // Local packages can have an explicit compatibility version.
         if (!/^\[\[package\]\]/.test(block) || /^source = /m.test(block)) return block;
+        const name = block.match(/^name = "([^"]+)"/m)?.[1];
+        if (!workspacePackages.delete(name)) return block;
         const found = block.match(/^version = "([^"]+)"/m);
         if (!found) throw new Error("Missing Cargo lock package version");
-        if (action === "check" && found[1] !== version) throw new Error(`Cargo.lock workspace version ${found[1]} != ${version}`);
-        count++;
+        if (action === "check" && found[1] !== version) throw new Error(`Cargo.lock workspace package ${name}: ${found[1]} != ${version}`);
         return block.replace(/^version = "[^"]+"/m, `version = "${version}"`);
     }).join("");
-    if (!count) throw new Error("No workspace packages in Cargo.lock");
+    if (workspacePackages.size) throw new Error("Missing Cargo.lock workspace packages: " + [...workspacePackages].join(", "));
     updates.set("Cargo.lock", updatedLock);
     updates.set("VERSION", `${version}\n`);
     // Validate every input before writing any file.

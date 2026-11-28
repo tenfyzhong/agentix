@@ -14,6 +14,12 @@ priority = 100
 threads-required = 'num-test-threads'
 
 [[profile.ci.overrides]]
+# The embedding wake-up test measures progress before a real backoff deadline.
+filter = 'package(taskix) & binary(taskix) & test(=memory::daemon::tests::slow_project_embedding_does_not_block_another_project)'
+priority = 100
+threads-required = 'num-test-threads'
+
+[[profile.ci.overrides]]
 # Start the longest native integration early so ordinary tests overlap it.
 filter = 'package(taskix) & binary(cli) & test(plugin_entrypoints_execute_the_compiled_taskix)'
 priority = 100

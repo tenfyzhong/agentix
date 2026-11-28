@@ -15,6 +15,8 @@ members = [
   "crates/agentix-multiplexer",
   "crates/agentix-tmux",
   "crates/agentix-telegram",
+  "crates/aquamarine-compat",
+  "crates/aquamarine-compat-macro",
   "crates/agentix-task",
   "crates/agentix-memory",
   "crates/taskix",
@@ -60,7 +62,6 @@ toml_edit = "0.25"
 url = "2.5"
 uuid = { version = "1.18", features = ["v4", "serde"] }
 sha2 = "0.10"
-walkdir = "2.5"
 
 
 [workspace.lints.rust]
@@ -72,3 +73,7 @@ pedantic = { level = "warn", priority = -1 }
 format_push_string = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+
+[patch.crates-io]
+# Keep the teloxide rustdoc diagram on a maintained renderer.
+aquamarine = { path = "crates/aquamarine-compat" }

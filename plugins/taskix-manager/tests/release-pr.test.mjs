@@ -11,7 +11,7 @@ async function fixture(t) {
     const dir = await mkdtemp(join(tmpdir(), "release-pr-"));
     t.after(() => rm(dir, { recursive: true, force: true }));
     const files = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8" }).trim().split("\n");
-    for (const path of files.filter(p => /(^VERSION$|^Cargo\.(toml|lock)$|(^|\/)(package(-lock)?|plugin|manifest)\.json$)/.test(p)).concat(["scripts/plugin-version.mjs", "plugins/taskix-manager/version.mjs"])) {
+    for (const path of files.filter(p => /(^VERSION$|^Cargo\.(toml|lock)$|^crates\/[^/]+\/Cargo\.toml$|(^|\/)(package(-lock)?|plugin|manifest)\.json$)/.test(p)).concat(["scripts/plugin-version.mjs", "plugins/taskix-manager/version.mjs"])) {
         await mkdir(join(dir, path, ".."), { recursive: true });
         await cp(join(root, path), join(dir, path));
     }

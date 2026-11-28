@@ -22,21 +22,27 @@ workspace_packages=""
 workspace_package_count=0
 for package_manifest in "$repository_directory"/crates/*/Cargo.toml; do
     [ -f "$package_manifest" ] || continue
-    package_name="$(awk '
+    if ! package_name="$(awk '
         /^\[package\]$/ { in_package = 1; next }
         in_package && /^\[/ { exit }
         in_package && /^[[:space:]]*name[[:space:]]*=/ {
             value = $0
             sub(/^[^"]*"/, "", value)
             sub(/".*/, "", value)
-            print value
-            exit
+            name = value
         }
-    ' "$package_manifest")"
-    if [ -z "$package_name" ]; then
+        in_package && /^[[:space:]]*version[[:space:]]*\.[[:space:]]*workspace[[:space:]]*=[[:space:]]*true([[:space:]]|$)/ {
+            inherits_version = 1
+        }
+        END {
+            if (name == "") exit 1
+            if (inherits_version) print name
+        }
+    ' "$package_manifest")"; then
         echo "could not read package name from '$package_manifest'" >&2
         exit 1
     fi
+    [ -n "$package_name" ] || continue
     workspace_packages="$workspace_packages $package_name"
     workspace_package_count=$((workspace_package_count + 1))
 done
