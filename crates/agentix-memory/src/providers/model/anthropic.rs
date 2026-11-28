@@ -46,7 +46,7 @@ pub(super) fn reply(value: &Value, usage: TokenUsage) -> Result<ModelReply> {
     for block in blocks {
         match block["type"].as_str() {
             Some("text") => {
-                text.push_str(block["text"].as_str().context("invalid Anthropic text")?)
+                text.push_str(block["text"].as_str().context("invalid Anthropic text")?);
             }
             Some("tool_use") => calls.push(native_call(
                 block["id"].as_str(),
