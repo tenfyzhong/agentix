@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { cp, mkdtemp, readFile, readdir, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,12 @@ async function fixture(t) {
     const dir = await mkdtemp(join(tmpdir(), "plugin-version-"));
     t.after(() => rm(dir, { recursive: true, force: true }));
     for (const path of [...manifests, "package-lock.json", "plugins/taskix-manager/package-lock.json", "Cargo.toml", "Cargo.lock"]) {
+        await mkdir(join(dir, path, ".."), { recursive: true });
+        await cp(join(root, path), join(dir, path));
+    }
+    for (const crate of await readdir(join(root, "crates"), { withFileTypes: true })) {
+        if (!crate.isDirectory()) continue;
+        const path = join("crates", crate.name, "Cargo.toml");
         await mkdir(join(dir, path, ".."), { recursive: true });
         await cp(join(root, path), join(dir, path));
     }
@@ -43,6 +49,16 @@ test("prepare_aligns_all_manifests_and_workspace_locks_without_changing_dependen
     assert.notEqual(run(dir, "check", "1.2.4").status, 0);
     await writeFile(join(dir, manifests[3]), '{"version":"9.9.9"}\n');
     assert.notEqual(run(dir, "check", "1.2.3").status, 0);
+});
+
+test("prepare_preserves_the_aquamarine_compatibility_version", async t => {
+    const dir = await fixture(t);
+    const result = run(dir, "prepare", "1.2.3");
+    assert.equal(result.status, 0, result.stderr);
+    const lock = await readFile(join(dir, "Cargo.lock"), "utf8");
+    assert.match(lock, /name = "aquamarine"\r?\nversion = "0\.6\.0"/);
+    assert.match(lock, /name = "aquamarine-compat-macro"\r?\nversion = "1\.2\.3"/);
+    assert.equal(run(dir, "check", "1.2.3").status, 0);
 });
 
 test("prepare_rejects_invalid_versions_and_malformed_inputs_before_writing", async t => {
@@ -196,15 +212,6 @@ test("release_resolution_rejects_invalid_tags_and_wrong_commits", { skip: proces
 test("release_build_checks_committed_metadata_and_packages_plugin_versions", { skip: process.platform === "win32" }, async t => {
     const { dir, git } = await releaseFixture(t);
     const workflow = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
-    // Cargo's legacy setter discovers workspace package names from crate manifests.
-    const cargo = await readFile(join(dir, "Cargo.lock"), "utf8");
-    for (const block of cargo.split("[[package]]")) {
-        if (/^source = /m.test(block)) continue;
-        const name = block.match(/^name = "([^"]+)"/m)?.[1];
-        if (!name) continue;
-        await mkdir(join(dir, "crates", name), { recursive: true });
-        await writeFile(join(dir, "crates", name, "Cargo.toml"), `[package]\nname = "${name}"\n`);
-    }
     const result = shellStep(dir, workflowStep(workflow, "Set release version"), { RELEASE_TAG: "1.2.3" });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(run(dir, "check", "1.2.3").status, 0, "all metadata must match before packaging");
@@ -216,6 +223,9 @@ test("release_build_checks_committed_metadata_and_packages_plugin_versions", { s
     const legacy = shellStep(dir, workflowStep(workflow, "Set release version"), { RELEASE_TAG: "1.2.4" });
     assert.equal(legacy.status, 0, legacy.stderr);
     assert.match(await readFile(join(dir, "Cargo.toml"), "utf8"), /version = "1.2.4"/);
+    const lock = await readFile(join(dir, "Cargo.lock"), "utf8");
+    assert.match(lock, /name = "aquamarine"\r?\nversion = "0\.6\.0"/);
+    assert.match(lock, /name = "aquamarine-compat-macro"\r?\nversion = "1\.2\.4"/);
     assert.equal(JSON.parse(await readFile(join(dir, "package.json"))).version, "1.2.3");
 });
 
