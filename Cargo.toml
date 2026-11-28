@@ -15,6 +15,8 @@ members = [
   "crates/agentix-multiplexer",
   "crates/agentix-tmux",
   "crates/agentix-telegram",
+  "crates/aquamarine-compat",
+  "crates/aquamarine-compat-macro",
   "crates/agentix-task",
   "crates/agentix-memory",
   "crates/taskix",
@@ -73,5 +75,5 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 
 [patch.crates-io]
-# Remove when aquamarine releases with maintained proc-macro diagnostics.
-aquamarine = { git = "https://github.com/tenfyzhong/aquamarine", rev = "139ecda8999346b55204d5b91760dd0ff7bc0485" }
+# Keep the teloxide rustdoc diagram on a maintained renderer.
+aquamarine = { path = "crates/aquamarine-compat" }
