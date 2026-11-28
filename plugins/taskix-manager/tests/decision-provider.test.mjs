@@ -20,6 +20,25 @@ test("decision_config_separates_provider_protocol_and_legacy_models", () => {
     }
 });
 
+test("built_in_decision_urls_default_and_accept_full_endpoint_overrides", () => {
+    const urls = {
+        typesafe: "https://api.typesafe.ai/v1/systemone",
+        openai: "https://api.openai.com/v1/decisions",
+        google: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+    };
+    const override = "https://gateway.example.test/custom/evaluate";
+    for (const [provider, url] of Object.entries(urls)) {
+        const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_PROVIDER: provider, TASKIX_DECISION_API_KEY: "fixture-key" };
+        assert.equal(jevConfig(env)?.url, url, provider);
+        assert.equal(jevConfig({ ...env, TASKIX_DECISION_URL: " " })?.url, url, provider);
+        assert.equal(jevConfig({ ...env, TASKIX_DECISION_URL: override })?.url, override, provider);
+        assert.equal(jevConfig({ ...env, TASKIX_DECISION_URL: "file:///invalid" }), undefined, provider);
+    }
+    assert.equal(jevConfig({ ...legacy, TASKIX_JEV_URL: "" })?.url, urls.typesafe);
+    assert.equal(jevConfig({ ...legacy, TASKIX_DECISION_URL: override })?.url, override);
+    assert.equal(jevConfig({ ...custom("gemini"), TASKIX_DECISION_URL: "" }), undefined);
+});
+
 test("google_defaults_select_the_model_endpoint_and_only_gemini_credentials", () => {
     const env = { ...legacy, ...openai, TASKIX_DECISION_PROVIDER: "google", GEMINI_API_KEY: "google-key" };
     const url = "https://generativelanguage.googleapis.com/v1beta/models";

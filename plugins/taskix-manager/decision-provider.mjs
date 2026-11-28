@@ -21,7 +21,9 @@ function decisionSettings(env) {
     if (!enabled(env.TASKIX_DECISION_ENABLED ?? (legacy ? env.TASKIX_JEV_ENABLED : undefined))) return;
     const value = name => text(env[`TASKIX_DECISION_${name}`]) ?? (legacy ? text(env[`TASKIX_JEV_${name}`]) : undefined);
     const model = value("MODEL") ?? (legacy ? "jev-latest" : officialOpenAI ? "gpt-6-luna" : officialGemini ? "gemini-3.8-flash" : undefined);
-    const url = value("URL") ?? (officialOpenAI ? "https://api.openai.com/v1/decisions" : geminiEndpoint(officialGemini ? model : undefined));
+    const url = value("URL") ?? (legacy ? "https://api.typesafe.ai/v1/systemone"
+        : officialOpenAI ? "https://api.openai.com/v1/decisions"
+        : officialGemini ? geminiEndpoint(model) : undefined);
     const credential = prefix => {
         const key = text(env[`${prefix}API_KEY`]);
         if (key) return { key };

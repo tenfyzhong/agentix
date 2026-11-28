@@ -110,7 +110,7 @@ test("pending_delivery_retains_bounded_completed_task_evidence", async () => {
     assert.deepEqual(result.context.tasks, []);
 });
 
-for (const patch of [{TASKIX_JEV_ENABLED:"false"}, {TASKIX_JEV_ENABLED:""}, {TASKIX_JEV_URL:""}, {TASKIX_JEV_API_KEY:" "}]) {
+for (const patch of [{TASKIX_JEV_ENABLED:"false"}, {TASKIX_JEV_ENABLED:""}, {TASKIX_JEV_API_KEY:" "}]) {
     test(`disabled_or_incomplete_configuration_preserves_legacy_${JSON.stringify(patch)}`, async () => {
         const actual = {...env, ...patch};
         assert.equal(jevConfig(actual), undefined);

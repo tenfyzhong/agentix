@@ -14,7 +14,7 @@ Set Decision variables in the environment of each host. Restart the host after c
 | `TASKIX_DECISION_ENABLED` | `true` or `1` (case-insensitive) enables calls; default off. |
 | `TASKIX_DECISION_PROVIDER` | Provider identity, default `typesafe`. Built-ins are `typesafe`, `openai` and `google`; custom names match `[a-z][a-z0-9_-]{0,63}`. |
 | `TASKIX_DECISION_PROTOCOL` | `typesafe`, `openai_decisions` or `gemini`. Defaults from the built-in provider; required for third parties. Selects serialization, independently of provider identity. |
-| `TASKIX_DECISION_URL` | Full HTTP(S) endpoint without embedded credentials. OpenAI defaults to `https://api.openai.com/v1/decisions`. Google defaults to `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`. Defaults apply to matching built-in pairs. |
+| `TASKIX_DECISION_URL` | Optional full HTTP(S) endpoint override without embedded credentials. Typesafe defaults to `https://api.typesafe.ai/v1/systemone`. OpenAI defaults to `https://api.openai.com/v1/decisions`. Google defaults to `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`. Defaults apply to matching built-in pairs. |
 | `TASKIX_DECISION_API_KEY` | Key sent as `x-goog-api-key` for Gemini or as a Bearer credential for the other protocols. The matching Google and OpenAI built-ins can fall back to `GEMINI_API_KEY` and `OPENAI_API_KEY`, respectively. |
 | `TASKIX_DECISION_MODEL` | Defaults for matching built-in pairs are `jev-latest`, `gpt-6-luna` and `gemini-3.8-flash`, respectively. For a custom Gemini endpoint, use a URL that selects the configured model. |
 | `TASKIX_DECISION_MIN_CONFIDENCE` | Routing/lifecycle/discussion threshold, default `0.65`, range `0.5..1`. |
@@ -31,7 +31,6 @@ automatic cross-provider retry or switching.
 set -Ux TASKIX_DECISION_ENABLED true
 set -Ux TASKIX_DECISION_PROVIDER typesafe
 set -Ux TASKIX_DECISION_PROTOCOL typesafe
-set -Ux TASKIX_DECISION_URL https://api.typesafe.ai/v1/systemone
 set -Ux TASKIX_DECISION_API_KEY YOUR_API_KEY
 set -Ux TASKIX_DECISION_MODEL jev-latest
 ```
