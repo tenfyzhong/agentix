@@ -9,17 +9,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderProtocol {
+    OpenaiResponses,
     #[default]
-    Openai,
+    OpenaiChatCompletions,
+    Anthropic,
+    Google,
     Ollama,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelApi {
-    Responses,
-    #[default]
-    ChatCompletions,
+impl ProviderProtocol {
+    pub(crate) fn is_openai(self) -> bool {
+        matches!(self, Self::OpenaiResponses | Self::OpenaiChatCompletions)
+    }
 }
 
 /// Forwarded to the configured provider; supported levels depend on its model.
@@ -39,8 +40,6 @@ pub enum ReasoningEffort {
 pub struct ProviderConfig {
     #[serde(default)]
     pub protocol: ProviderProtocol,
-    #[serde(default)]
-    pub api: ModelApi,
     pub base_url: String,
     #[serde(default)]
     pub api_key_env: Option<String>,
@@ -359,19 +358,7 @@ impl MemoryConfig {
             .providers
             .get(&self.agent.provider)
             .context("missing memory Agent provider")?;
-        ensure!(
-            provider.protocol == ProviderProtocol::Openai,
-            "Agent requires an OpenAI-compatible provider"
-        );
-        ensure!(
-            !self.agent.model.trim().is_empty(),
-            "missing memory Agent model"
-        );
-        ensure!(
-            !(self.agent.model == "gpt-6-astra" || self.agent.model.starts_with("gpt-6-astra-"))
-                || provider.api == ModelApi::Responses,
-            "GPT-6 Astra tool calling requires the Responses API"
-        );
+        self.agent.validate_provider(provider.protocol)?;
         ensure!(
             (1..=32).contains(&self.agent.max_concurrent_loops)
                 && (1..=32).contains(&self.agent.max_extraction_loops_per_project),
@@ -410,10 +397,11 @@ impl MemoryConfig {
             "invalid projection limits"
         );
         if self.embedding.enabled {
-            ensure!(
-                self.providers.contains_key(&self.embedding.provider),
-                "missing memory embedding provider"
-            );
+            let provider = self
+                .providers
+                .get(&self.embedding.provider)
+                .context("missing memory embedding provider")?;
+            self.embedding.validate_provider(provider.protocol)?;
             ensure!(
                 !self.embedding.model.trim().is_empty()
                     && self
@@ -432,4 +420,40 @@ impl MemoryConfig {
 
 fn memory_enabled(value: Option<&str>) -> bool {
     matches!(value, Some("true" | "1"))
+}
+
+impl AgentConfig {
+    pub(crate) fn validate_provider(&self, protocol: ProviderProtocol) -> Result<()> {
+        ensure!(
+            protocol != ProviderProtocol::Ollama,
+            "Ollama is supported only for embeddings"
+        );
+        ensure!(!self.model.trim().is_empty(), "missing memory Agent model");
+        ensure!(
+            !(self.model == "gpt-6-astra" || self.model.starts_with("gpt-6-astra-"))
+                || protocol == ProviderProtocol::OpenaiResponses,
+            "GPT-6 Astra tool calling requires the Responses API"
+        );
+        ensure!(
+            protocol.is_openai() || self.reasoning_effort.is_none(),
+            "memory Agent reasoning_effort requires an OpenAI protocol"
+        );
+        if protocol == ProviderProtocol::Google {
+            crate::providers::google_model_resource(&self.model)?;
+        }
+        Ok(())
+    }
+}
+
+impl EmbeddingConfig {
+    pub(crate) fn validate_provider(&self, protocol: ProviderProtocol) -> Result<()> {
+        ensure!(
+            protocol != ProviderProtocol::Anthropic,
+            "Anthropic does not provide an embedding API"
+        );
+        if protocol == ProviderProtocol::Google {
+            crate::providers::google_model_resource(&self.model)?;
+        }
+        Ok(())
+    }
 }

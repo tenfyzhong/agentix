@@ -27,9 +27,8 @@ async fn targeted_worker_records_failure_without_claiming_other_projects() {
         ..AgentConfig::default()
     };
     let provider = agentix_memory::HttpProvider::new(agentix_memory::ProviderConfig {
-        api: agentix_memory::ModelApi::Responses,
         base_url: server.url.clone(),
-        protocol: agentix_memory::ProviderProtocol::Openai,
+        protocol: agentix_memory::ProviderProtocol::OpenaiResponses,
         api_key_env: None,
         api_key_pass: None,
         max_in_flight: 4,
@@ -61,9 +60,8 @@ async fn permanent_provider_rejection_fails_work_without_replaying_the_same_requ
         ..AgentConfig::default()
     };
     let provider = agentix_memory::HttpProvider::new(agentix_memory::ProviderConfig {
-        api: agentix_memory::ModelApi::Responses,
         base_url: server.url.clone(),
-        protocol: agentix_memory::ProviderProtocol::Openai,
+        protocol: agentix_memory::ProviderProtocol::OpenaiResponses,
         api_key_env: None,
         api_key_pass: None,
         max_in_flight: 4,
@@ -305,9 +303,8 @@ async fn real_http_agent_pipeline_extracts_consolidates_and_preserves_provenance
         .unwrap();
     store.ingest(&source("a")).await.unwrap();
     let provider = agentix_memory::HttpProvider::new(agentix_memory::ProviderConfig {
-        api: agentix_memory::ModelApi::Responses,
         base_url: server.url.clone(),
-        protocol: agentix_memory::ProviderProtocol::Openai,
+        protocol: agentix_memory::ProviderProtocol::OpenaiResponses,
         api_key_env: None,
         api_key_pass: None,
         max_in_flight: 4,
@@ -623,9 +620,8 @@ async fn worker_corrects_unanchored_candidates_and_oversized_consolidation_evide
         .unwrap();
     store.ingest(&source("a")).await.unwrap();
     let provider = agentix_memory::HttpProvider::new(agentix_memory::ProviderConfig {
-        api: agentix_memory::ModelApi::Responses,
         base_url: server.url.clone(),
-        protocol: agentix_memory::ProviderProtocol::Openai,
+        protocol: agentix_memory::ProviderProtocol::OpenaiResponses,
         api_key_env: None,
         api_key_pass: None,
         max_in_flight: 4,

@@ -14,6 +14,7 @@ pub struct HttpEmbedding {
 impl HttpEmbedding {
     pub fn new(provider: Arc<HttpProvider>, config: EmbeddingConfig) -> Result<Self> {
         ensure!(!config.model.is_empty(), "missing embedding model");
+        config.validate_provider(provider.protocol)?;
         Ok(Self { provider, config })
     }
 
@@ -46,43 +47,26 @@ impl HttpEmbedding {
                             .all(|t| !t.trim().is_empty() && t.len() <= 65536),
                     "invalid: embedding input batch"
                 );
-                let mut body = json!({"model":self.config.model,"input":texts});
-                let endpoint = if self.provider.protocol == ProviderProtocol::Openai {
-                    body["encoding_format"] = json!("float");
-                    "embeddings"
-                } else {
-                    body["truncate"] = json!(false);
-                    "api/embed"
-                };
-                if let Some(dimensions) = self.config.dimensions {
-                    body["dimensions"] = json!(dimensions);
-                }
+                let protocol = self.provider.protocol;
+                let (endpoint, body) = self.request(texts)?;
                 let response = self
                     .provider
-                    .post_classified(endpoint, body, self.config.request_timeout_seconds, query)
+                    .post_classified(&endpoint, body, self.config.request_timeout_seconds, query)
                     .await?;
-                let vectors: Vec<Vec<f32>> = if self.provider.protocol == ProviderProtocol::Openai {
-                    let mut ordered = vec![None; texts.len()];
-                    for item in response["data"].as_array().context("missing embeddings")? {
-                        let index = usize::try_from(
-                            item["index"].as_u64().context("missing embedding index")?,
-                        )?;
-                        ensure!(
-                            index < ordered.len() && ordered[index].is_none(),
-                            "invalid: embedding index"
-                        );
-                        ordered[index] = Some(serde_json::from_value::<Vec<f32>>(
-                            item["embedding"].clone(),
-                        )?);
+                let vectors: Vec<Vec<f32>> = match protocol {
+                    ProviderProtocol::OpenaiResponses | ProviderProtocol::OpenaiChatCompletions => {
+                        openai_embeddings(&response, texts.len())?
                     }
-                    ordered
-                        .into_iter()
-                        .map(|v| v.context("missing embedding result"))
-                        .collect::<Result<_>>()?
-                } else {
-                    serde_json::from_value(
-                        response.get("embeddings").cloned().unwrap_or(Value::Null),
-                    )?
+                    ProviderProtocol::Google => response["embeddings"]
+                        .as_array()
+                        .context("missing Gemini embeddings")?
+                        .iter()
+                        .map(|entry| Ok(serde_json::from_value(entry["values"].clone())?))
+                        .collect::<Result<_>>()?,
+                    ProviderProtocol::Ollama => {
+                        serde_json::from_value(response["embeddings"].clone())?
+                    }
+                    ProviderProtocol::Anthropic => unreachable!("validated embedding protocol"),
                 };
                 ensure!(
                     vectors.len() == texts.len(),
@@ -105,6 +89,39 @@ impl HttpEmbedding {
             .await
     }
 
+    fn request(&self, texts: &[String]) -> Result<(String, Value)> {
+        let dimensions = self.config.dimensions;
+        if self.provider.protocol == ProviderProtocol::Google {
+            let model = super::google_model_resource(&self.config.model)?;
+            let requests: Vec<_> = texts
+                .iter()
+                .map(|text| {
+                    let mut input = json!({"model":model,"content":{"parts":[{"text":text}]}});
+                    if let Some(dimensions) = dimensions {
+                        input["outputDimensionality"] = json!(dimensions);
+                    }
+                    input
+                })
+                .collect();
+            return Ok((
+                format!("{model}:batchEmbedContents"),
+                json!({"requests":requests}),
+            ));
+        }
+        let mut body = json!({"model":self.config.model,"input":texts});
+        let endpoint = if self.provider.protocol.is_openai() {
+            body["encoding_format"] = json!("float");
+            "embeddings"
+        } else {
+            body["truncate"] = json!(false);
+            "api/embed"
+        };
+        if let Some(dimensions) = dimensions {
+            body["dimensions"] = json!(dimensions);
+        }
+        Ok((endpoint.into(), body))
+    }
+
     pub async fn query(&self, text: &str) -> Result<Vec<f32>> {
         Ok(self
             .embed_classified(&[format!("{}{text}", self.config.query_prefix)], true)
@@ -121,4 +138,20 @@ impl HttpEmbedding {
         )
         .await
     }
+}
+
+fn openai_embeddings(response: &Value, count: usize) -> Result<Vec<Vec<f32>>> {
+    let mut ordered = vec![None; count];
+    for item in response["data"].as_array().context("missing embeddings")? {
+        let index = usize::try_from(item["index"].as_u64().context("missing embedding index")?)?;
+        ensure!(
+            index < ordered.len() && ordered[index].is_none(),
+            "invalid: embedding index"
+        );
+        ordered[index] = Some(serde_json::from_value(item["embedding"].clone())?);
+    }
+    ordered
+        .into_iter()
+        .map(|value| value.context("missing embedding result"))
+        .collect()
 }

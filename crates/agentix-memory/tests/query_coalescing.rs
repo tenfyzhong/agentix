@@ -21,11 +21,10 @@ async fn identical_queries_share_work_and_short_waiter_does_not_cancel_long_wait
     };
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
-            api: agentix_memory::ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
             api_key_pass: None,
-            protocol: ProviderProtocol::Openai,
+            protocol: ProviderProtocol::OpenaiResponses,
             max_in_flight: 4,
         })
         .unwrap(),
@@ -75,11 +74,10 @@ async fn failed_queries_retry_and_project_generation_keys_are_isolated() {
         HttpEmbedding::new(
             Arc::new(
                 HttpProvider::new(ProviderConfig {
-                    api: agentix_memory::ModelApi::Responses,
                     base_url: server.url.clone(),
                     api_key_env: None,
                     api_key_pass: None,
-                    protocol: ProviderProtocol::Openai,
+                    protocol: ProviderProtocol::OpenaiResponses,
                     max_in_flight: 4,
                 })
                 .unwrap(),
@@ -137,11 +135,10 @@ async fn concurrent_query_latency_and_provider_request_count() {
         HttpEmbedding::new(
             Arc::new(
                 HttpProvider::new(ProviderConfig {
-                    api: agentix_memory::ModelApi::Responses,
                     base_url: server.url.clone(),
                     api_key_env: None,
                     api_key_pass: None,
-                    protocol: ProviderProtocol::Openai,
+                    protocol: ProviderProtocol::OpenaiResponses,
                     max_in_flight: 4,
                 })
                 .unwrap(),

@@ -147,11 +147,10 @@ async fn provider_outage_does_not_fan_out_and_new_revision_or_generation_can_ret
     };
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
-            api: agentix_memory::ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
             api_key_pass: None,
-            protocol: ProviderProtocol::Openai,
+            protocol: ProviderProtocol::OpenaiResponses,
             max_in_flight: 4,
         })
         .unwrap(),
@@ -225,11 +224,10 @@ async fn permanent_embedding_failure_does_not_starve_later_memories() {
     };
     let provider = Arc::new(
         HttpProvider::new(ProviderConfig {
-            api: agentix_memory::ModelApi::Responses,
             base_url: server.url.clone(),
             api_key_env: None,
             api_key_pass: None,
-            protocol: ProviderProtocol::Openai,
+            protocol: ProviderProtocol::OpenaiResponses,
             max_in_flight: 4,
         })
         .unwrap(),
@@ -262,11 +260,10 @@ async fn permanent_embedding_failure_does_not_starve_later_memories() {
 fn connection(url: &str) -> Arc<HttpProvider> {
     Arc::new(
         HttpProvider::new(ProviderConfig {
-            api: agentix_memory::ModelApi::Responses,
             base_url: url.into(),
             api_key_env: None,
             api_key_pass: None,
-            protocol: ProviderProtocol::Openai,
+            protocol: ProviderProtocol::OpenaiResponses,
             max_in_flight: 4,
         })
         .unwrap(),

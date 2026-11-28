@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::HttpProvider;
-use crate::{AgentConfig, ModelApi, ProviderProtocol};
+use crate::{AgentConfig, ProviderProtocol};
+
+mod anthropic;
+mod google;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -56,6 +59,8 @@ pub trait Model: Send + Sync {
     async fn complete(&self, request: &ModelRequest) -> Result<ModelReply>;
 }
 
+type ParseReply = fn(&Value, TokenUsage) -> Result<ModelReply>;
+
 pub struct HttpModel {
     provider: Arc<HttpProvider>,
     config: AgentConfig,
@@ -63,29 +68,21 @@ pub struct HttpModel {
 
 impl HttpModel {
     pub fn new(provider: Arc<HttpProvider>, config: AgentConfig) -> Result<Self> {
-        ensure!(
-            provider.protocol == ProviderProtocol::Openai,
-            "Agent requires an OpenAI-compatible provider"
-        );
-        ensure!(!config.model.is_empty(), "missing Agent model");
-        ensure!(
-            !(config.model == "gpt-6-astra" || config.model.starts_with("gpt-6-astra-"))
-                || provider.api == ModelApi::Responses,
-            "GPT-6 Astra tool calling requires Responses"
-        );
+        config.validate_provider(provider.protocol)?;
         Ok(Self { provider, config })
     }
 
-    fn request_body(&self, request: &ModelRequest) -> Result<Value> {
+    fn openai_body(&self, request: &ModelRequest) -> Result<Value> {
+        let responses = self.provider.protocol == ProviderProtocol::OpenaiResponses;
         let mut input = Vec::new();
-        if self.provider.api == ModelApi::ChatCompletions {
+        if !responses {
             input.push(json!({"role":"system","content":request.instructions}));
         }
         for item in &request.history {
             match item {
                 Message::User(text) => input.push(json!({"role":"user","content":text})),
                 Message::Model(output) => {
-                    if self.provider.api == ModelApi::Responses {
+                    if responses {
                         input.extend(
                             output
                                 .as_array()
@@ -98,7 +95,7 @@ impl HttpModel {
                     }
                 }
                 Message::Tool { id, output } => {
-                    input.push(if self.provider.api == ModelApi::Responses {
+                    input.push(if responses {
                         json!({"type":"function_call_output","call_id":id,"output":output})
                     } else {
                         json!({"role":"tool","tool_call_id":id,"content":output})
@@ -108,11 +105,11 @@ impl HttpModel {
         }
         let tools:Vec<_>=request.tools.iter().map(|tool| {
             let function=json!({"name":tool.name,"description":tool.description,"parameters":tool.parameters,"strict":true});
-            if self.provider.api==ModelApi::Responses {
+            if responses {
                 let mut function=function;function["type"]=json!("function");function
             } else {json!({"type":"function","function":function})}
         }).collect();
-        let mut body = if self.provider.api == ModelApi::Responses {
+        let mut body = if responses {
             json!({"model":self.config.model,"instructions":request.instructions,"input":input,"tools":tools,
                 "store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":self.config.max_output_tokens})
         } else {
@@ -122,7 +119,7 @@ impl HttpModel {
             body["tool_choice"] = json!("required");
         }
         if let Some(effort) = self.config.reasoning_effort {
-            if self.provider.api == ModelApi::Responses {
+            if responses {
                 body["reasoning"] = json!({"effort": effort});
             } else {
                 body["reasoning_effort"] = json!(effort);
@@ -137,27 +134,55 @@ impl Model for HttpModel {
     async fn complete(&self, request: &ModelRequest) -> Result<ModelReply> {
         agentix_metrics::global()
             .track(agentix_metrics::Operation::ModelRequest, async {
-                let body = self.request_body(request)?;
-                let endpoint = if self.provider.api == ModelApi::Responses {
-                    "responses"
-                } else {
-                    "chat/completions"
+                use ProviderProtocol::{
+                    Anthropic, Google, Ollama, OpenaiChatCompletions, OpenaiResponses,
                 };
+
+                let (endpoint, body, parse): (String, Value, ParseReply) =
+                    match self.provider.protocol {
+                        OpenaiResponses => (
+                            "responses".into(),
+                            self.openai_body(request)?,
+                            responses_reply,
+                        ),
+                        OpenaiChatCompletions => (
+                            "chat/completions".into(),
+                            self.openai_body(request)?,
+                            chat_reply,
+                        ),
+                        Anthropic => (
+                            "messages".into(),
+                            anthropic::body(&self.config, request)?,
+                            anthropic::reply,
+                        ),
+                        Google => (
+                            format!(
+                                "{}:generateContent",
+                                super::google_model_resource(&self.config.model)?
+                            ),
+                            google::body(&self.config, request)?,
+                            google::reply,
+                        ),
+                        Ollama => unreachable!("validated Agent protocol"),
+                    };
                 let value = self
                     .provider
-                    .post(endpoint, body, self.config.request_timeout_seconds)
+                    .post(&endpoint, body, self.config.request_timeout_seconds)
                     .await?;
-                let usage = &value["usage"];
-                let (input, output) = if self.provider.api == ModelApi::Responses {
-                    ("input_tokens", "output_tokens")
-                } else {
-                    ("prompt_tokens", "completion_tokens")
+                let usage = match self.provider.protocol {
+                    OpenaiResponses => openai_usage(&value, "input_tokens", "output_tokens"),
+                    OpenaiChatCompletions => {
+                        openai_usage(&value, "prompt_tokens", "completion_tokens")
+                    }
+                    Anthropic => anthropic::usage(&value),
+                    Google => google::usage(&value),
+                    Ollama => unreachable!("validated Agent protocol"),
                 };
-                for (kind, key) in [
-                    (agentix_metrics::TokenKind::Input, input),
-                    (agentix_metrics::TokenKind::Output, output),
+                for (kind, count) in [
+                    (agentix_metrics::TokenKind::Input, usage.input_tokens),
+                    (agentix_metrics::TokenKind::Output, usage.output_tokens),
                 ] {
-                    if let Some(count) = usage[key].as_u64() {
+                    if count > 0 {
                         agentix_metrics::global().tokens(
                             agentix_metrics::TokenSource::Memory,
                             kind,
@@ -165,11 +190,7 @@ impl Model for HttpModel {
                         );
                     }
                 }
-                if self.provider.api == ModelApi::Responses {
-                    responses_reply(&value)
-                } else {
-                    chat_reply(&value)
-                }
+                parse(&value, usage)
             })
             .await
     }
@@ -193,7 +214,60 @@ fn call(id: &Value, name: &Value, arguments: &Value) -> Result<ToolCall> {
     })
 }
 
-fn responses_reply(value: &Value) -> Result<ModelReply> {
+fn native_call(id: Option<&str>, name: &Value, arguments: Value) -> Result<ToolCall> {
+    let id = id
+        .filter(|id| !id.is_empty())
+        .context("missing model tool call ID")?;
+    let name = name
+        .as_str()
+        .filter(|name| !name.is_empty())
+        .context("missing model tool name")?;
+    ensure!(arguments.is_object(), "invalid model tool arguments");
+    Ok(ToolCall {
+        id: id.into(),
+        name: name.into(),
+        arguments,
+    })
+}
+
+fn ensure_unique_calls(calls: &[ToolCall]) -> Result<()> {
+    let mut ids = HashSet::new();
+    ensure!(
+        calls.iter().all(|call| ids.insert(&call.id)),
+        "duplicate model tool call ID"
+    );
+    Ok(())
+}
+
+fn native_history(
+    history: &[Message],
+    user: impl Fn(&str) -> Value,
+    model: impl Fn(&Value) -> Value,
+    tools: impl Fn(&Value, &[(&str, &str)]) -> Result<Value>,
+) -> Result<Vec<Value>> {
+    let mut messages = Vec::new();
+    let mut history = history.iter().peekable();
+    while let Some(message) = history.next() {
+        match message {
+            Message::User(text) => messages.push(user(text)),
+            Message::Model(content) => {
+                messages.push(model(content));
+                let mut results = Vec::new();
+                while let Some(Message::Tool { id, output }) = history.peek() {
+                    results.push((id.as_str(), output.as_str()));
+                    history.next();
+                }
+                if !results.is_empty() {
+                    messages.push(tools(content, &results)?);
+                }
+            }
+            Message::Tool { .. } => anyhow::bail!("tool result without a preceding model turn"),
+        }
+    }
+    Ok(messages)
+}
+
+fn responses_reply(value: &Value, usage: TokenUsage) -> Result<ModelReply> {
     ensure!(
         value.get("status").is_none_or(|v| v == "completed"),
         "model response is incomplete or failed"
@@ -223,14 +297,11 @@ fn responses_reply(value: &Value) -> Result<ModelReply> {
         continuation: json!(output),
         calls,
         text,
-        usage: TokenUsage {
-            input_tokens: value["usage"]["input_tokens"].as_u64().unwrap_or(0),
-            output_tokens: value["usage"]["output_tokens"].as_u64().unwrap_or(0),
-        },
+        usage,
     })
 }
 
-fn chat_reply(value: &Value) -> Result<ModelReply> {
+fn chat_reply(value: &Value, usage: TokenUsage) -> Result<ModelReply> {
     let choice = value["choices"]
         .as_array()
         .and_then(|v| v.first())
@@ -261,9 +332,14 @@ fn chat_reply(value: &Value) -> Result<ModelReply> {
         continuation: message.clone(),
         calls,
         text: message["content"].as_str().unwrap_or_default().into(),
-        usage: TokenUsage {
-            input_tokens: value["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
-            output_tokens: value["usage"]["completion_tokens"].as_u64().unwrap_or(0),
-        },
+        usage,
     })
+}
+
+fn openai_usage(value: &Value, input: &str, output: &str) -> TokenUsage {
+    let usage = &value["usage"];
+    TokenUsage {
+        input_tokens: usage[input].as_u64().unwrap_or(0),
+        output_tokens: usage[output].as_u64().unwrap_or(0),
+    }
 }

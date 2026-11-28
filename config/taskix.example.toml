@@ -34,9 +34,8 @@ max_files = 7
 path = "~/.local/share/taskix/memory.sqlite3"
 
 [memory.providers.openai]
-## Defaults to chat_completions; GPT-6 Astra requires responses.
-api = "responses"
-protocol = "openai"
+## Defaults to openai_chat_completions; GPT-6 Astra requires openai_responses.
+protocol = "openai_responses"
 base_url = "https://api.openai.com/v1"
 ## Plaintext API keys remain supported without pass or pinentry: use api_key_env
 ## below and store the actual key in that variable in taskix.env or the environment.
@@ -53,10 +52,27 @@ api_key_env = "OPENAI_API_KEY"
 ## Total provider concurrency; background work leaves one slot for online embedding queries.
 max_in_flight = 8
 
+## Native Claude Messages (Agent only).
+# [memory.providers.anthropic]
+# protocol = "anthropic"
+# base_url = "https://api.anthropic.com/v1"
+# api_key_env = "ANTHROPIC_API_KEY"
+
+## Native Gemini Developer API (Agent and embeddings).
+# [memory.providers.google]
+# protocol = "google"
+# base_url = "https://generativelanguage.googleapis.com/v1beta"
+# api_key_env = "GEMINI_API_KEY"
+
+## Ollama (embeddings only).
+# [memory.providers.local_embedding]
+# protocol = "ollama"
+# base_url = "http://127.0.0.1:11434"
+
 [memory.agent]
 provider = "openai"
 model = "gpt-6-astra"
-## Optional; omit for provider default. Levels depend on the selected model.
+## Optional for OpenAI protocols. Omit to use the selected model’s default.
 # reasoning_effort = "low"
 max_concurrent_loops = 4
 max_extraction_loops_per_project = 2

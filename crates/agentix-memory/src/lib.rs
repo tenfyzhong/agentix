@@ -17,8 +17,8 @@ pub use providers::{
 };
 
 pub use config::{
-    AgentConfig, EmbeddingConfig, MemoryConfig, MemoryLocation, ModelApi, ProjectionConfig,
-    ProviderConfig, ProviderProtocol, ReasoningEffort, RetrievalConfig, ServiceConfig,
+    AgentConfig, EmbeddingConfig, MemoryConfig, MemoryLocation, ProjectionConfig, ProviderConfig,
+    ProviderProtocol, ReasoningEffort, RetrievalConfig, ServiceConfig,
 };
 pub use domain::{
     Actor, Evidence, Fact, FactQualifier, IndexPage, Kind, Memory, MemoryInput, Source,

@@ -1780,7 +1780,7 @@ fn doctor_pass_credentials_are_deferred_without_decryption() {
         let cli = Cli::new();
         let path = cli.dir.path().join("config.toml");
         let original = std::fs::read_to_string(&path).unwrap();
-        std::fs::write(&path, format!("{original}\n[memory.providers.openai]\nbase_url='http://localhost:9/v1'\napi='responses'\n{source}\n")).unwrap();
+        std::fs::write(&path, format!("{original}\n[memory.providers.openai]\nbase_url='http://localhost:9/v1'\nprotocol='openai_responses'\n{source}\n")).unwrap();
         let output = cli
             .command(&["doctor"])
             .env("TASKIX_MEMORY_ENABLED", "true")
@@ -1795,7 +1795,11 @@ fn doctor_pass_credentials_are_deferred_without_decryption() {
             String::from_utf8_lossy(&output.stderr)
         );
         let data: Value = serde_json::from_slice(&output.stdout).unwrap();
-        let provider = &data["result"]["configuration"]["providers"][0];
+        let config = &data["result"]["configuration"];
+        assert_eq!(config["protocol"], "openai_responses");
+        assert!(config.get("api").is_none());
+        let provider = &config["providers"][0];
+        assert_eq!(provider["protocol"], "openai_responses");
         assert_eq!(provider["credential_source"], "pass", "{data}");
         assert!(provider["credentials_available"].is_null());
         assert_eq!(
