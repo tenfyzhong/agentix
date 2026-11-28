@@ -71,3 +71,7 @@ pedantic = { level = "warn", priority = -1 }
 format_push_string = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+
+[patch.crates-io]
+# Remove when a crates.io release includes https://github.com/GnomedDev/proc-macro-error-2/pull/14.
+proc-macro-error2 = { git = "https://github.com/GnomedDev/proc-macro-error-2", rev = "53ff94b61c678593158db1a3d50269c6f0de0db7" }
