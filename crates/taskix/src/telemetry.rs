@@ -575,12 +575,12 @@ fn decision_group(
     groups: &mut BTreeSet<(String, String)>,
 ) -> (String, String) {
     if !crate::decision::valid_provider(provider)
-        || !matches!(protocol, "typesafe" | "openai_decisions")
+        || !matches!(protocol, "typesafe" | "openai_decisions" | "gemini")
     {
         return ("other".into(), "other".into());
     }
     let group = (provider.to_owned(), protocol.to_owned());
-    if matches!(provider, "typesafe" | "openai") {
+    if matches!(provider, "typesafe" | "openai" | "google") {
         return group;
     }
     if groups.contains(&group) || groups.len() < MAX_DECISION_GROUPS {

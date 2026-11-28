@@ -15,7 +15,7 @@ Codex and Claude share the common lifecycle hooks. Codex explicitly loads the sh
 
 ## Decision configuration
 
-Typesafe (Jev), OpenAI Decisions and third-party services share the same decision pipeline. `TASKIX_DECISION_PROVIDER` identifies the service; `TASKIX_DECISION_PROTOCOL` selects `typesafe` or `openai_decisions`. See [configuration and compatibility](https://github.com/tenfyzhong/agentix/blob/main/docs/decision-providers.md) and the [Wiki](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#optional-decision-routing). Metrics v3 preserves historical Typesafe data; upgrade the CLI, service and plugin together.
+Typesafe (Jev), OpenAI Decisions, Google Gemini and third-party services share the same decision pipeline. `TASKIX_DECISION_PROVIDER` identifies the service; `TASKIX_DECISION_PROTOCOL` selects `typesafe`, `openai_decisions` or `gemini`. See [configuration and compatibility](https://github.com/tenfyzhong/agentix/blob/main/docs/decision-providers.md) and the [Wiki](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#optional-decision-routing). Metrics v3 preserves historical Typesafe data; upgrade the CLI, service and plugin together.
 
 ## Runtime boundaries
 

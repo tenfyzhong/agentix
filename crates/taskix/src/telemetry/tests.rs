@@ -493,6 +493,7 @@ async fn decisions_group_by_provider_protocol_and_keep_legacy_typesafe_only() {
         ("a", "typesafe", "typesafe"),
         ("b", "openai", "openai_decisions"),
         ("c", "acme", "openai_decisions"),
+        ("d", "google", "gemini"),
     ] {
         sqlx::query("INSERT INTO requests(id,started_at,model,threshold,duration_ms,called,accepted,action,answer_count,kind,provider,protocol,review) VALUES(?,1,'model',.65,25,1,1,'new_job',0,'routing',?,?,'correct')").bind(id).bind(provider).bind(protocol).execute(&mut db).await.unwrap();
     }
@@ -503,6 +504,7 @@ async fn decisions_group_by_provider_protocol_and_keep_legacy_typesafe_only() {
         ("typesafe", "typesafe"),
         ("openai", "openai_decisions"),
         ("acme", "openai_decisions"),
+        ("google", "gemini"),
     ] {
         assert!(text.contains(&format!("taskix_decision_decisions_total{{provider=\"{provider}\",protocol=\"{protocol}\",kind=\"routing\",outcome=\"accepted\"}} 1")), "{text}");
         assert!(text.contains(&format!("taskix_decision_duration_seconds_bucket{{provider=\"{provider}\",protocol=\"{protocol}\",kind=\"routing\",le=\"0.025\"}} 1")), "{text}");
@@ -540,6 +542,10 @@ fn decision_metric_groups_are_bounded_without_losing_builtin_identities() {
     assert_eq!(
         decision_group("openai", "openai_decisions", &mut groups),
         ("openai".into(), "openai_decisions".into())
+    );
+    assert_eq!(
+        decision_group("google", "gemini", &mut groups),
+        ("google".into(), "gemini".into())
     );
     assert_eq!(
         decision_group("bad\"label", "typesafe", &mut groups),

@@ -135,8 +135,11 @@ function confident(answer, criteria, threshold) {
 
 async function evaluate(config, body, signal, fetch) {
     signal.throwIfAborted();
+    const credential = config.protocol === "gemini"
+        ? { "x-goog-api-key": config.key }
+        : { Authorization: `Bearer ${config.key}` };
     const response = await fetch(config.url, { method: "POST", redirect: "error", signal,
-        headers: { Authorization: `Bearer ${config.key}`, "Content-Type": "application/json" }, body });
+        headers: { ...credential, "Content-Type": "application/json" }, body });
     if (!response.ok) throw new Error("Evaluation unavailable");
     const data = await readJson(response, signal);
     signal.throwIfAborted();

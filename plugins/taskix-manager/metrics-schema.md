@@ -74,7 +74,7 @@ JSON reports add `by_provider` and `by_provider_kind` while preserving previous
 aggregate fields. `--details` prints these breakdowns; list includes both identities.
 Historical v1/v2 records read as `typesafe` / `typesafe` without modifying the file.
 Provider names are configuration identities matching `[a-z][a-z0-9_-]{0,63}`;
-protocol is `typesafe` or `openai_decisions`. Never infer provider from model.
+protocol is `typesafe`, `openai_decisions` or `gemini`. Never infer provider from model.
 
 ## Verification
 

@@ -12,11 +12,34 @@ test("decision_config_separates_provider_protocol_and_legacy_models", () => {
     assert.equal(jevConfig(legacy).provider, "typesafe");
     assert.equal(jevConfig(legacy).protocol, "typesafe");
     assert.equal(jevConfig(legacy).model, "jev-latest");
-    for (const protocol of ["typesafe", "openai_decisions"]) {
+    for (const protocol of ["typesafe", "openai_decisions", "gemini"]) {
         assert.equal(jevConfig(custom(protocol)).provider, "acme");
         assert.equal(jevConfig(custom(protocol)).protocol, protocol);
     }
 });
+
+test("google_defaults_select_the_model_endpoint_and_only_gemini_credentials", () => {
+    const env = { ...legacy, ...openai, TASKIX_DECISION_PROVIDER: "google", GEMINI_API_KEY: "google-key" };
+    const url = "https://generativelanguage.googleapis.com/v1beta/models";
+    assert.deepEqual(jevConfig(env), { provider: "google", protocol: "gemini", url: `${url}/gemini-3.8-flash:generateContent`,
+        key: "google-key", model: "gemini-3.8-flash", threshold: .65 });
+    const override = jevConfig({ ...env, TASKIX_DECISION_MODEL: "gemini-2.5-flash", TASKIX_DECISION_API_KEY: "explicit-key" });
+    assert.equal(override.url, `${url}/gemini-2.5-flash:generateContent`);
+    assert.equal(override.key, "explicit-key");
+    assert.equal(jevConfig({ ...env, GEMINI_API_KEY: "" }), undefined);
+    assert.equal(jevConfig({ ...env, TASKIX_DECISION_MODEL: "../other" }), undefined);
+    assert.equal(jevConfig({ ...env, TASKIX_DECISION_PROTOCOL: "openai_decisions" }), undefined);
+    const { TASKIX_DECISION_API_KEY, ...thirdParty } = custom("gemini");
+    assert.equal(jevConfig({ ...thirdParty, GEMINI_API_KEY: "google-key" }), undefined);
+});
+
+function geminiReply(decision) {
+    const json = JSON.stringify(decision);
+    return { candidates: [{ finishReason: "STOP", content: { parts: [
+        { thought: true, text: "Internal reasoning" },
+        { text: json.slice(0, 5) }, { text: json.slice(5) },
+    ] } }] };
+}
 
 test("decision_config_new_values_override_legacy_without_cross_provider_credentials", () => {
     assert.equal(jevConfig({ ...legacy, TASKIX_DECISION_ENABLED: "false" }), undefined);
@@ -41,14 +64,27 @@ function fetchAnswers(protocol, selections, captured, mutate = x => x) {
             const choice = selections[name] || "unrelated";
             return [name, { type: "choice", choice, confidence: .99, probabilities: Object.fromEntries(Object.keys(q.criteria).map(value => [value, Number(value === choice)])) }];
         })) }) };
-        assert.equal(body.state, undefined);
-        assert.equal(body.input[0].content[0].type, "input_json");
-        const reply = { answers: body.questions.map(q => {
+        let questions;
+        if (protocol === "gemini") {
+            assert.equal(init.headers["x-goog-api-key"], "acme-key");
+            assert.equal(init.headers.Authorization, undefined);
+            assert.equal(body.generationConfig.responseMimeType, "application/json");
+            assert.equal(body.generationConfig.responseJsonSchema.properties.answers.type, "array");
+            assert.match(body.systemInstruction.parts[0].text, /untrusted/i);
+            const input = JSON.parse(body.contents[0].parts[0].text);
+            assert.ok(input.state);
+            questions = input.questions;
+        } else {
+            assert.equal(body.state, undefined);
+            assert.equal(body.input[0].content[0].type, "input_json");
+            questions = body.questions;
+        }
+        const reply = { answers: questions.map(q => {
             const choice = selections[q.name] || "unrelated";
             assert.ok(q.choices.every(c => typeof c.description === "string"));
             return { name: q.name, type: "choice", choice, confidence: .99, probabilities: q.choices.map(({ value }) => ({ value, probability: Number(value === choice) })) };
         }).reverse() };
-        return { ok: true, json: async () => mutate(reply) };
+        return { ok: true, json: async () => mutate(protocol === "gemini" ? geminiReply(reply) : reply) };
     };
 }
 const job = { id: "j", project_id: "p", title: "Delivery", prompt: "Implement", status: "ACTIVE", revision: 2, review_policy: "required", conversation: [], completed_tasks_complete: true };
@@ -59,14 +95,14 @@ const runner = async args => {
     throw Error(`Unexpected write: ${args}`);
 };
 const options = { session: "s" };
-for (const protocol of ["typesafe", "openai_decisions"]) {
+for (const protocol of ["typesafe", "openai_decisions", "gemini"]) {
     test(`third_party_${protocol}_routes_and_selects_discussion`, async () => {
         const captured = [], env = custom(protocol);
         const result = await routePrompt({ prompt: "Continue", context: { project_id: "p", issue_candidates: [] }, options, runner, env,
             fetch: fetchAnswers(protocol, { intent: "work", route: "resume:j", review_policy: "required" }, captured) });
         assert.equal(result.decision.action, "resume");
         assert.equal(captured[0].url, env.TASKIX_DECISION_URL);
-        assert.equal(captured[0].init.headers.Authorization, "Bearer acme-key");
+        if (protocol !== "gemini") assert.equal(captured[0].init.headers.Authorization, "Bearer acme-key");
         assert.equal(captured[0].init.redirect, "error");
         if (protocol === "openai_decisions") {
             const description = captured[0].body.questions.find(q => q.name === "route").choices.find(c => c.value === "resume:j").description;
@@ -99,7 +135,7 @@ for (const [name, mutate] of Object.entries({
     assert.equal(result.decision.action, "agent");
 });
 
-test("openai_issue_matching_retains_explicit_candidates", async () => {
+for (const protocol of ["openai_decisions", "gemini"]) test(`${protocol}_issue_matching_retains_explicit_candidates`, async () => {
     const issue = { id: "i", project_id: "p", status: "TODO", title: "Feature", revision: 1, content_hash: "hash" };
     const result = await routePrompt({ prompt: "Implement feature", context: { project_id: "p", issue_candidates: [issue], issue_candidates_complete: true }, options,
         runner: async args => {
@@ -107,7 +143,7 @@ test("openai_issue_matching_retains_explicit_candidates", async () => {
             if (args[0] === "obsidian" && args[1] === "sync") return { result: {} };
             if (args[0] === "issue" && args[1] === "show") return { result: { issue, requirement: "Feature", acceptance: "Works", milestone: null } };
             throw Error(`Unexpected write: ${args}`);
-        }, env: openai, fetch: fetchAnswers("openai_decisions", { intent: "work", route: "new_job", review_policy: "required", issue: "i" }, []) });
+        }, env: custom(protocol), fetch: fetchAnswers(protocol, { intent: "work", route: "new_job", review_policy: "required", issue: "i" }, []) });
     assert.equal(result.decision.action, "new_job");
     assert.equal(result.decision.issue_id, "i");
 });
@@ -126,12 +162,28 @@ test("openai_transport_errors_abort_and_actual_payload_limits_defer", async () =
     }
 });
 
-test("shared_configuration_contract_matches_rust_memory_service", async () => {
+test("decision_configuration_contract_matches_fixtures", async () => {
     const { readFile } = await import("node:fs/promises");
     const cases = JSON.parse(await readFile(new URL("./fixtures/decision-config.json", import.meta.url), "utf8"));
     for (const { name, env, expected } of cases) {
         const actual = jevConfig(env);
         if (!expected) assert.equal(actual, undefined, name);
         else assert.deepEqual(actual, { ...expected, threshold: .65 }, name);
+    }
+});
+
+test("gemini_blocked_truncated_or_unusable_answers_defer_to_agent", async () => {
+    for (const mutate of [
+        () => ({ promptFeedback: { blockReason: "SAFETY" } }),
+        reply => { reply.candidates[0].finishReason = "MAX_TOKENS"; return reply; },
+        reply => { reply.candidates.push(reply.candidates[0]); return reply; },
+        () => geminiReply({ answers: [] }),
+        () => geminiReply({ answers: [{ name: "intent", type: "choice", choice: "work",
+            confidence: .99, probabilities: [{ value: "work", probability: 1 }, { value: "work", probability: 0 }] }] }),
+        reply => { reply.candidates[0].content.parts = [{ text: "broken JSON" }]; return reply; },
+    ]) {
+        const result = await routePrompt({ prompt: "Continue", context: { project_id: "p" }, options, runner,
+            env: custom("gemini"), fetch: fetchAnswers("gemini", { intent: "work", route: "resume:j", review_policy: "required" }, [], mutate) });
+        assert.equal(result.decision.action, "agent");
     }
 });
