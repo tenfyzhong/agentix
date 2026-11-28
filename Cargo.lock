@@ -475,12 +475,11 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 [[package]]
 name = "aquamarine"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f50776554130342de4836ba542aa85a4ddb361690d7e8df13774d7284c3d5c2"
+source = "git+https://github.com/tenfyzhong/aquamarine?rev=139ecda8999346b55204d5b91760dd0ff7bc0485#139ecda8999346b55204d5b91760dd0ff7bc0485"
 dependencies = [
  "include_dir",
  "itertools",
- "proc-macro-error2",
+ "proc-macro-error3",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -2799,30 +2798,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-error-attr2"
-version = "2.0.0"
-source = "git+https://github.com/GnomedDev/proc-macro-error-2?rev=53ff94b61c678593158db1a3d50269c6f0de0db7#53ff94b61c678593158db1a3d50269c6f0de0db7"
-dependencies = [
- "proc-macro2",
- "quote",
-]
-
-[[package]]
 name = "proc-macro-error-attr3"
 version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e564d14133360e1ae169ffde5da25881b5fa47261665b8e5713c212c27799da"
 dependencies = [
- "proc-macro2",
- "quote",
-]
-
-[[package]]
-name = "proc-macro-error2"
-version = "2.0.1"
-source = "git+https://github.com/GnomedDev/proc-macro-error-2?rev=53ff94b61c678593158db1a3d50269c6f0de0db7#53ff94b61c678593158db1a3d50269c6f0de0db7"
-dependencies = [
- "proc-macro-error-attr2",
  "proc-macro2",
  "quote",
 ]
