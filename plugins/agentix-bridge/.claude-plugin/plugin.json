@@ -1,6 +1,6 @@
 {
   "name": "agentix-bridge",
-  "version": "0.8.4+dev",
+  "version": "0.8.5",
   "description": "Connect live Claude Code sessions to Agentix.",
   "author": {
     "name": "tenfyzhong"
