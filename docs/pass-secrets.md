@@ -115,12 +115,12 @@ Plugins read `taskix.env` without parsing TOML:
 TASKIX_DECISION_API_KEY_PASS=taskix/decision
 ```
 
-Existing source precedence remains: current decision settings, legacy
-`TASKIX_JEV_*` for Typesafe, then `OPENAI_*` only for built-in OpenAI Decisions.
-Within each source a nonempty direct `API_KEY` wins over `API_KEY_PASS`.
-Supported references: `TASKIX_DECISION_API_KEY_PASS`, `TASKIX_JEV_API_KEY_PASS`,
-`OPENAI_API_KEY_PASS`. A selected pass failure stops resolution without trying
-another credential. Without working pinentry, use `TASKIX_DECISION_API_KEY`.
+Taskix checks `TASKIX_DECISION_API_KEY` and `TASKIX_DECISION_API_KEY_PASS`
+first. A matching OpenAI provider and protocol can fall back to `OPENAI_API_KEY`
+or `OPENAI_API_KEY_PASS`. The matching Google pair can use `GEMINI_API_KEY`
+or `GEMINI_API_KEY_PASS`. Within each source a nonempty direct key takes
+precedence. A selected pass failure stops credential resolution.
+Without working pinentry, use `TASKIX_DECISION_API_KEY`.
 
 ## Runtime behavior
 

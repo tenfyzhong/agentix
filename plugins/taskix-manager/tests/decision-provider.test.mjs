@@ -1,19 +1,39 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import { metricsDatabase, metricsEnabled } from "../decision-provider.mjs";
 import { test } from "node:test";
 import { jevConfig, routePrompt, classifyDiscussionTurns, classifyLifecycle } from "../jev.mjs";
 
-const legacy = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://typesafe.test/evaluate", TASKIX_JEV_API_KEY: "legacy-key" };
+const typesafe = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://typesafe.test/evaluate", TASKIX_DECISION_API_KEY: "typesafe-key" };
 const openai = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_PROVIDER: "openai", OPENAI_API_KEY: "openai-key" };
 const custom = protocol => ({ TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_PROVIDER: "acme", TASKIX_DECISION_PROTOCOL: protocol,
     TASKIX_DECISION_URL: "https://acme.test/evaluate", TASKIX_DECISION_API_KEY: "acme-key", TASKIX_DECISION_MODEL: "acme-model" });
 
-test("decision_config_separates_provider_protocol_and_legacy_models", () => {
+test("retired_jev_variables_do_not_configure_decisions_or_metrics", () => {
+    const retired = {
+        TASKIX_JEV_ENABLED: "true",
+        TASKIX_JEV_API_KEY: "old-key",
+        TASKIX_JEV_URL: "https://old.invalid/evaluate",
+        TASKIX_JEV_MODEL: "old-model",
+        TASKIX_JEV_MIN_CONFIDENCE: ".95",
+        TASKIX_JEV_METRICS_ENABLED: "true",
+        TASKIX_JEV_METRICS_DB: "/old/jev.sqlite",
+    };
+    assert.equal(jevConfig(retired), undefined);
+    assert.equal(jevConfig({ ...retired, TASKIX_DECISION_ENABLED: "true" }), undefined);
+    assert.equal(jevConfig({ ...retired, TASKIX_DECISION_API_KEY: "new-key" }), undefined);
+    assert.deepEqual(jevConfig({ ...retired, TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_API_KEY: "new-key" }),
+        { provider: "typesafe", protocol: "typesafe", key: "new-key", url: "https://api.typesafe.ai/v1/systemone", model: "jev-latest", threshold: .65 });
+    assert.equal(metricsEnabled(retired), false);
+    assert.equal(metricsDatabase(retired), undefined);
+});
+
+test("decision_config_separates_provider_protocol_and_typesafe_models", () => {
     assert.deepEqual(jevConfig(openai), { provider: "openai", protocol: "openai_decisions", url: "https://api.openai.com/v1/decisions", key: "openai-key", model: "gpt-6-luna", threshold: .65 });
-    assert.equal(jevConfig(legacy).provider, "typesafe");
-    assert.equal(jevConfig(legacy).protocol, "typesafe");
-    assert.equal(jevConfig(legacy).model, "jev-latest");
+    assert.equal(jevConfig(typesafe).provider, "typesafe");
+    assert.equal(jevConfig(typesafe).protocol, "typesafe");
+    assert.equal(jevConfig(typesafe).model, "jev-latest");
     for (const protocol of ["typesafe", "openai_decisions", "gemini"]) {
         assert.equal(jevConfig(custom(protocol)).provider, "acme");
         assert.equal(jevConfig(custom(protocol)).protocol, protocol);
@@ -34,13 +54,13 @@ test("built_in_decision_urls_default_and_accept_full_endpoint_overrides", () => 
         assert.equal(jevConfig({ ...env, TASKIX_DECISION_URL: override })?.url, override, provider);
         assert.equal(jevConfig({ ...env, TASKIX_DECISION_URL: "file:///invalid" }), undefined, provider);
     }
-    assert.equal(jevConfig({ ...legacy, TASKIX_JEV_URL: "" })?.url, urls.typesafe);
-    assert.equal(jevConfig({ ...legacy, TASKIX_DECISION_URL: override })?.url, override);
+    assert.equal(jevConfig({ ...typesafe, TASKIX_DECISION_URL: "" })?.url, urls.typesafe);
+    assert.equal(jevConfig({ ...typesafe, TASKIX_DECISION_URL: override })?.url, override);
     assert.equal(jevConfig({ ...custom("gemini"), TASKIX_DECISION_URL: "" }), undefined);
 });
 
 test("google_defaults_select_the_model_endpoint_and_only_gemini_credentials", () => {
-    const env = { ...legacy, ...openai, TASKIX_DECISION_PROVIDER: "google", GEMINI_API_KEY: "google-key" };
+    const env = { ...openai, TASKIX_DECISION_PROVIDER: "google", GEMINI_API_KEY: "google-key" };
     const url = "https://generativelanguage.googleapis.com/v1beta/models";
     assert.deepEqual(jevConfig(env), { provider: "google", protocol: "gemini", url: `${url}/gemini-3.8-flash:generateContent`,
         key: "google-key", model: "gemini-3.8-flash", threshold: .65 });
@@ -62,15 +82,14 @@ function geminiReply(decision) {
     ] } }] };
 }
 
-test("decision_config_new_values_override_legacy_without_cross_provider_credentials", () => {
-    assert.equal(jevConfig({ ...legacy, TASKIX_DECISION_ENABLED: "false" }), undefined);
-    assert.equal(jevConfig({ ...legacy, ...openai }).key, "openai-key");
-    assert.equal(jevConfig({ ...legacy, TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_PROVIDER: "openai" }), undefined);
+test("decision_config_validates_options_without_cross_provider_credentials", () => {
+    assert.equal(jevConfig({ ...typesafe, TASKIX_DECISION_ENABLED: "false" }), undefined);
+    assert.equal(jevConfig({ TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_PROVIDER: "openai" }), undefined);
     assert.equal(jevConfig({ OPENAI_API_KEY: "key" }), undefined);
-    assert.equal(jevConfig({ ...legacy, TASKIX_DECISION_MIN_CONFIDENCE: ".8" }).threshold, .8);
+    assert.equal(jevConfig({ ...typesafe, TASKIX_DECISION_MIN_CONFIDENCE: ".8" }).threshold, .8);
     for (const field of ["PROTOCOL", "URL", "API_KEY", "MODEL"]) {
         const env = custom("openai_decisions"); delete env[`TASKIX_DECISION_${field}`];
-        assert.equal(jevConfig({ ...legacy, ...env, OPENAI_API_KEY: "key" }), undefined, field);
+        assert.equal(jevConfig({ ...env, OPENAI_API_KEY: "key" }), undefined, field);
     }
     for (const override of [{ TASKIX_DECISION_PROTOCOL: "invalid" }, { TASKIX_DECISION_PROVIDER: "bad\nprovider" },
         { TASKIX_DECISION_URL: "https://user:pass@acme.test" }, { TASKIX_DECISION_API_KEY: "bad\nkey" }, { TASKIX_DECISION_MIN_CONFIDENCE: "NaN" }]) {

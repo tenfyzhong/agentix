@@ -73,8 +73,7 @@ Supported keys are `AGENTIX_CONFIG`, `AGENTIX_LOGIN_SHELL`,
 `AGENTIX_CLAUDE_DATA_DIR`, `AGENTIX_OPENCODE_STATE_DIR`,
 `AGENTIX_ANTIGRAVITY_DATA_DIR`, `AGENTIX_ANTIGRAVITY_SESSION_DIR`, `CODEX_HOME`,
 `TASKIX_CONFIG`, `TASKIX_BIN` (legacy), `TASKIX_LOGIN_SHELL`,
-`TASKIX_ANTIGRAVITY_DATA_DIR`, `TASKIX_DECISION_METRICS_DB`,
-and `TASKIX_JEV_METRICS_DB` (legacy).
+`TASKIX_ANTIGRAVITY_DATA_DIR` and `TASKIX_DECISION_METRICS_DB`.
 Config selectors still need to be set outside the file for discovery.
 `TASKIX_BIN` expansion does not restore the legacy executable override; plugins
 resolve the Taskix executable through `PATH`.

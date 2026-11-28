@@ -13,7 +13,10 @@ async fn metrics_only_service_does_not_initialize_memory_or_need_providers() {
         .args(["--config", config.to_str().unwrap(), "serve"])
         .env("TASKIX_MEMORY_ENABLED", "false")
         .env("TASKIX_LOGIN_SHELL", "/nonexistent")
-        .env("TASKIX_JEV_METRICS_DB", dir.path().join("absent-jev.db"))
+        .env(
+            "TASKIX_DECISION_METRICS_DB",
+            dir.path().join("absent-jev.db"),
+        )
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)

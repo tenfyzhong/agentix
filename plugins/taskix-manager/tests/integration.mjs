@@ -17,7 +17,7 @@ for (const host of ["codex","claude","pi","omp"]) {
     test(`${host} Issue route rereads the real document and guards association before start`,async t=>{
         const f=await fixture(t), session=`issue-route:${host}`;
         const item=await f.run(["issue","create","--project",f.project.id,"--title","Login","--requirement","Allow login","--acceptance","Valid users sign in"]);
-        const env={TASKIX_JEV_ENABLED:"true",TASKIX_JEV_URL:"https://fixture.test/jev",TASKIX_JEV_API_KEY:"fixture"};
+        const env={TASKIX_DECISION_ENABLED:"true",TASKIX_DECISION_URL:"https://fixture.test/jev",TASKIX_DECISION_API_KEY:"fixture"};
         const routing={env,cacheDir:f.dir,fetch:async(_url,init)=>({ok:true,json:async()=>choiceAnswers(JSON.parse(init.body),{intent:"work",route:`resume:${f.job.id}`,issue:item.id})})};
         let content;
         if(["codex","claude"].includes(host)) {
@@ -742,7 +742,7 @@ test("Jev routing uses real project-scoped CLI candidates and recovers waiting w
     assert.equal(context.previous_job, null);
     const routed = await routePrompt({
         prompt: "Asia", context, options, runner: runTaskix,
-        env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "mock" },
+        env: { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://unused.test", TASKIX_DECISION_API_KEY: "mock" },
         fetch: async (_url, init) => {
             const request = JSON.parse(init.body);
             const candidate = request.state.candidates.find(c => c.job.id === f.job.id);
@@ -774,7 +774,7 @@ for (const host of ["codex", "claude"]) test(`${host} Jev prompt and tool hooks 
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
     const config = JSON.parse(await readFile(resolve("hooks/hooks.json"), "utf8"));
-    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: `http://127.0.0.1:${server.address().port}/v1/systemone`, TASKIX_JEV_API_KEY: "integration-key" };
+    const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: `http://127.0.0.1:${server.address().port}/v1/systemone`, TASKIX_DECISION_API_KEY: "integration-key" };
     const event = { session_id: "jev-process", cwd: f.dir, ...(host === "codex" ? { turn_id: "turn_1" } : {}) };
     const hook = (name, extra = {}) => hookProcess({ ...event, hook_event_name: name, ...extra }, config.hooks[name][0].hooks[0].command, host, resolve("."), "/bin/sh", env);
     const prompt = await hook("UserPromptSubmit", { prompt: "Asia" });
@@ -818,7 +818,7 @@ for (const [count, history] of [[0, 0], [1, 0], [8, 0], [32, 0], [33, 0], [1, 10
             const begin = performance.now();
             const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "benchmark", cwd: f.dir, turn_id: `turn_${i}`, prompt: "Continue the integration work" }, runner, {
                 cacheDir: join(f.dir, "receipts"),
-                env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "mock" },
+                env: { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://unused.test", TASKIX_DECISION_API_KEY: "mock" },
                 fetch: async (_url, init) => {
                     requests++;
                     requestBytes = Buffer.byteLength(init.body);
@@ -857,7 +857,7 @@ for (const host of ["codex", "claude", "pi", "omp"]) for (const changed of [fals
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
-    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: `http://127.0.0.1:${server.address().port}`, TASKIX_JEV_API_KEY: "fixture-key", TASKIX_JEV_METRICS_ENABLED: "false" };
+    const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: `http://127.0.0.1:${server.address().port}`, TASKIX_DECISION_API_KEY: "fixture-key", TASKIX_DECISION_METRICS_ENABLED: "false" };
     let content;
     if (["pi", "omp"].includes(host)) {
         const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
@@ -899,7 +899,7 @@ for (const host of ["codex", "claude", "pi", "omp"]) for (const changed of [fals
 test("real CLI prompt latency includes optional metrics writing", async t => {
     const f = await fixture(t);
     const path = join(f.dir, "metrics.sqlite");
-    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "mock", TASKIX_JEV_METRICS_DB: path };
+    const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://unused.test", TASKIX_DECISION_API_KEY: "mock", TASKIX_DECISION_METRICS_DB: path };
     const elapsed = {};
     let lock;
     for (const mode of ["off", "on", "locked"]) {
@@ -910,7 +910,7 @@ test("real CLI prompt latency includes optional metrics writing", async t => {
         const start = performance.now();
         try {
             const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: `metrics_${mode}`, cwd: f.dir, prompt: "Explain the current status" }, runTaskix, {
-                env: { ...env, TASKIX_JEV_METRICS_ENABLED: mode === "off" ? "false" : "true" }, cacheDir: join(f.dir, "routing"),
+                env: { ...env, TASKIX_DECISION_METRICS_ENABLED: mode === "off" ? "false" : "true" }, cacheDir: join(f.dir, "routing"),
                 fetch: async (_url, init) => ({ ok: true, json: async () => (choiceAnswers(JSON.parse(init.body), { intent: "question", route: "new_job", review_policy: "not_applicable" })) }),
             });
             elapsed[mode] = performance.now() - start;
@@ -960,7 +960,7 @@ for (const host of ["codex","claude","pi","omp"]) for (const mode of ["create","
     }
     const target={title:'Capacity cards',goal:'Only split long messages',prompt:prompts.at(-1),...(mode==='create'?{}:{job_id:f.job.id})};
     let selected=await selectDiscussion({target,current_turn:current},options,runTaskix,{
-        env:mode==='resume'?{}:{TASKIX_JEV_ENABLED:'true',TASKIX_JEV_URL:'https://unused.test',TASKIX_JEV_API_KEY:'test'},
+        env:mode==='resume'?{}:{TASKIX_DECISION_ENABLED:'true',TASKIX_DECISION_URL:'https://unused.test',TASKIX_DECISION_API_KEY:'test'},
         fetch:async(_url,init)=>{
             const request=JSON.parse(init.body);
             return {ok:true,json:async()=>({answers:Object.fromEntries(Object.entries(request.questions).map(([id,q],i)=>{
@@ -1012,7 +1012,7 @@ test("packaged_discussion_cli_returns_guarded_arguments_and_attaches_the_origina
         await cp(resolve(file), join(packaged, file));
     }
     const child = spawn(process.execPath, [join(packaged, "discussion.mjs"), session], {
-        cwd: f.dir, env: { ...process.env, TASKIX_JEV_ENABLED: "false" }, stdio: ["pipe", "pipe", "pipe"],
+        cwd: f.dir, env: { ...process.env, TASKIX_DECISION_ENABLED: "false" }, stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "", stderr = "";
     child.stdout.on("data", chunk => { stdout += chunk; });
@@ -1051,7 +1051,7 @@ for (const host of ["codex", "claude", "pi", "omp"]) test(`${host} lifecycle ass
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
-    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: `http://127.0.0.1:${server.address().port}`, TASKIX_JEV_API_KEY: "test" };
+    const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: `http://127.0.0.1:${server.address().port}`, TASKIX_DECISION_API_KEY: "test" };
     let tool;
     if (["pi", "omp"].includes(host)) registerExtension({ on() {}, registerTool: registered => { tool = registered; } }, host, runTaskix, globalThis, undefined, { env });
     const classify = async kind => {
@@ -1117,7 +1117,7 @@ for (const [kind, action, prepare, expected] of [
     }
     const input = { kind, job_id: f.job.id, task_id: task.id, prompt: "Explicit user request", history: [] };
     const verdict = await assessLifecycle(input, { cwd: f.dir, session: owner.session }, runTaskix, {
-        env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://mock.test", TASKIX_JEV_API_KEY: "test" },
+        env: { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://mock.test", TASKIX_DECISION_API_KEY: "test" },
         fetch: async (_url, init) => ({ ok: true, json: async () => choiceAnswers(JSON.parse(init.body), { [kind]: action }) }),
     });
     assert.equal(verdict.status, "selected", JSON.stringify(verdict));
@@ -1137,7 +1137,7 @@ for (const action of ["approve", "reject", "cancel"]) test(`Jev explicit Job ${a
     await f.run(["task", "done", task.id], { ...options, token });
     const context = (await runTaskix(["routing", "snapshot"], options)).result;
     const result = await routePrompt({ prompt: "Explicit user review decision", context, options, runner: runTaskix,
-        env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://mock.test", TASKIX_JEV_API_KEY: "test" },
+        env: { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://mock.test", TASKIX_DECISION_API_KEY: "test" },
         fetch: async (_url, init) => ({ ok: true, json: async () => choiceAnswers(JSON.parse(init.body), { intent: action, route: `followup:${f.job.id}`, review_policy: "not_applicable" }) }),
     });
     assert.equal(result.decision.action, action);
@@ -1153,7 +1153,7 @@ for (const [initial, choice, effective] of [["none", "required", "required"], ["
     const f = await fixture(t, "policy-assessment"), owner = { cwd: f.dir, session: "policy-assessment", executor: "agent:test" };
     await f.run(["job", "update", f.job.id, "--review-policy", initial]);
     const verdict = await assessLifecycle({ kind: "review_policy", job_id: f.job.id, prompt: "Classify the requested scope" }, owner, runTaskix, {
-        env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://mock.test", TASKIX_JEV_API_KEY: "test" },
+        env: { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://mock.test", TASKIX_DECISION_API_KEY: "test" },
         fetch: async (_url, init) => ({ ok: true, json: async () => choiceAnswers(JSON.parse(init.body), { review_policy: choice }) }),
     });
     assert.equal(verdict.status, "selected");
@@ -1179,7 +1179,7 @@ for (const [choice, expected] of [["completed", "COMPLETED"], ["pending_review",
     await f.run(["task", "start", task.id], owner);
     let requests = 0;
     const verdict = await assessLifecycle({ kind: "completion", job_id: f.job.id, task_id: task.id, prompt: "Finish the delivery" }, owner, runTaskix, {
-        env: { TASKIX_JEV_ENABLED: String(choice !== "disabled"), TASKIX_JEV_URL: "https://mock.test", TASKIX_JEV_API_KEY: "test" },
+        env: { TASKIX_DECISION_ENABLED: String(choice !== "disabled"), TASKIX_DECISION_URL: "https://mock.test", TASKIX_DECISION_API_KEY: "test" },
         fetch: async (_url, init) => { requests++; return { ok: true, json: async () => choiceAnswers(JSON.parse(init.body), { completion: choice }) }; },
     });
     const unchanged = await f.run(["job", "show", f.job.id]);
@@ -1222,7 +1222,7 @@ test('OpenCode native hooks use real Taskix leases and deduplicate Bridge discus
     }, {
         maxConcurrentEvents:1,
         timers:{setInterval(){return 1;},clearInterval(){}},
-        routing:{env:{TASKIX_JEV_ENABLED:'false',TASKIX_MEMORY_ENABLED:'false'}},
+        routing:{env:{TASKIX_DECISION_ENABLED:'false',TASKIX_MEMORY_ENABLED:'false'}},
     });
     f.cleanup.push(cleanup);
     const prompt=(messageID,text)=>handlers.get('prompt')({sessionID:session,messageID,prompt:{text},delivery:'steer'});

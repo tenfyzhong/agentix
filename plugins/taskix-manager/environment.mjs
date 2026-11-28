@@ -27,7 +27,6 @@ const pathKeys = new Set([
     'TASKIX_LOGIN_SHELL',
     'TASKIX_ANTIGRAVITY_DATA_DIR',
     'TASKIX_DECISION_METRICS_DB',
-    'TASKIX_JEV_METRICS_DB',
 ]);
 function expandPaths(values, home) {
     return Object.fromEntries(Object.entries(values).map(([key, value]) => [

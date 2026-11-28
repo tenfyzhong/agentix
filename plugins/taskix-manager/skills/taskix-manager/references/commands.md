@@ -1,6 +1,6 @@
 # Taskix workflow
 
-Provider identity (`TASKIX_DECISION_PROVIDER`) is separate from protocol (`TASKIX_DECISION_PROTOCOL=typesafe|openai_decisions|gemini`). Built-ins default to their matching protocol; third parties supply protocol, endpoint, key and model. Legacy `TASKIX_JEV_*` configuration remains supported for Typesafe. See the [decision configuration guide](https://github.com/tenfyzhong/agentix/blob/main/docs/decision-providers.md).
+Provider identity (`TASKIX_DECISION_PROVIDER`) is separate from protocol (`TASKIX_DECISION_PROTOCOL=typesafe|openai_decisions|gemini`). Built-ins default to their matching protocol; third parties supply protocol, endpoint, key and model. See the [decision configuration guide](https://github.com/tenfyzhong/agentix/blob/main/docs/decision-providers.md).
 
 Optional host routing uses `TASKIX_DECISION_ENABLED=true`, `TASKIX_DECISION_URL` (full evaluation endpoint), and `TASKIX_DECISION_API_KEY`. Missing configuration preserves the existing workflow. A confident host `Taskix route` supplies selected Job/single Issue ID; use those in the normal guarded commands below. Uncertain or failed classification returns directly to the current main Agent without a classifier subagent. Read the selected Job and pass its current revision with `--expect-revision` on fallback followup.
 

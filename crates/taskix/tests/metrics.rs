@@ -5,7 +5,10 @@ use tempfile::TempDir;
 
 fn command(dir: &TempDir, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_taskix"))
-        .env("TASKIX_JEV_METRICS_DB", dir.path().join("metrics.sqlite"))
+        .env(
+            "TASKIX_DECISION_METRICS_DB",
+            dir.path().join("metrics.sqlite"),
+        )
         .env("TASKIX_CONFIG", dir.path().join("missing.toml"))
         .args(args)
         .output()
@@ -404,11 +407,11 @@ async fn neutral_metrics_report_and_list_include_provider_protocol() {
 }
 
 #[test]
-fn metrics_default_path_uses_decision_filename() {
+fn metrics_default_path_ignores_legacy_environment_override() {
     let dir = TempDir::new().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_taskix"))
         .env_remove("TASKIX_DECISION_METRICS_DB")
-        .env_remove("TASKIX_JEV_METRICS_DB")
+        .env("TASKIX_JEV_METRICS_DB", dir.path().join("legacy.sqlite"))
         .env("XDG_STATE_HOME", dir.path())
         .args(["routing", "metrics", "report", "--json"])
         .output()

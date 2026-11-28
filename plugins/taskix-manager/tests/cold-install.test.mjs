@@ -42,7 +42,7 @@ for (const distribution of ["directory", "npm_tarball"]) {
         assert.deepEqual(pkg.dependencies ?? {}, {});
         assert.deepEqual(pkg.devDependencies ?? {}, {});
         const env = {
-            ...process.env, NODE_PATH: "", TASKIX_JEV_ENABLED: "false",
+            ...process.env, NODE_PATH: "", TASKIX_DECISION_ENABLED: "false",
             XDG_STATE_HOME: join(directory, "state"),
         };
         const runHook = input => spawnSync(process.execPath, [join(root, "hooks", "run.mjs")], {

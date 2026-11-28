@@ -65,14 +65,11 @@ set -Ux TASKIX_DECISION_MODEL acme-decision-model
 
 ## Existing installations
 
-For `typesafe` with the `typesafe` protocol, corresponding `TASKIX_JEV_*`
-variables remain fallbacks for enablement, URL, key, model and routing threshold.
-Nonblank connection values under the new names take priority. An explicitly set new enable switch,
-including `false` or blank, overrides the old switch. Legacy credentials are
-never inherited by another provider or protocol.
+Replace any `TASKIX_JEV_*` runtime configuration with the corresponding
+`TASKIX_DECISION_*` variables before upgrading. This includes enablement,
+endpoint, credentials, model, threshold and metrics settings.
 
-Metrics aliases are provider-independent: new `TASKIX_DECISION_METRICS_*`
-variables take priority over `TASKIX_JEV_METRICS_*`. The default path is
+The default metrics path is
 `$XDG_STATE_HOME/taskix/decision-metrics.sqlite`, or
 `~/.local/state/taskix/decision-metrics.sqlite`.
 Existing `jev-metrics.sqlite` files are not automatically moved or selected.

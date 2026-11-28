@@ -22,8 +22,8 @@ without migration. Upgrade CLI, service and plugins together: older writers and
 readers reject v3. Unknown versions, foreign databases and nonempty unversioned
 databases remain untouched. Never rewrite version metadata to force compatibility.
 
-`TASKIX_DECISION_METRICS_ENABLED` and `TASKIX_DECISION_METRICS_DB` supersede the
-corresponding `TASKIX_JEV_METRICS_*` names, which remain fallbacks. The default
+`TASKIX_DECISION_METRICS_ENABLED` controls collection and
+`TASKIX_DECISION_METRICS_DB` overrides the database path. The default
 physical path is `taskix/decision-metrics.sqlite` under the XDG state directory.
 Existing `jev-metrics.sqlite` files remain accessible through an explicit database
 path override; they are not automatically moved or selected.

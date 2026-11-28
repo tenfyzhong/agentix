@@ -4,9 +4,7 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 pub(crate) fn database_path() -> Result<PathBuf> {
-    if let Some(path) = nonblank(std::env::var("TASKIX_DECISION_METRICS_DB").ok())
-        .or_else(|| nonblank(std::env::var("TASKIX_JEV_METRICS_DB").ok()))
-    {
+    if let Some(path) = nonblank(std::env::var("TASKIX_DECISION_METRICS_DB").ok()) {
         return Ok(PathBuf::from(path));
     }
     let root = std::env::var_os("XDG_STATE_HOME")

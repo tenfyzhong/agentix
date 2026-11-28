@@ -1,6 +1,6 @@
 # Jev confidence threshold guide
 
-We recommend setting `TASKIX_JEV_MIN_CONFIDENCE=0.65` as a starting point for
+We recommend setting `TASKIX_DECISION_MIN_CONFIDENCE=0.65` as a starting point for
 Jev routing with the context improvements described in
 [Task routing performance](task-routing-performance.md). It balances acceptance
 and the errors flagged in the historical review below. The built-in default
@@ -11,7 +11,7 @@ is `0.65` when the variable is unset or blank. An explicit value overrides it.
 For a host launched from fish, set the threshold before starting the host:
 
 ```fish
-set -gx TASKIX_JEV_MIN_CONFIDENCE 0.65
+set -gx TASKIX_DECISION_MIN_CONFIDENCE 0.65
 ```
 
 To retain this setting, add it to the fish startup configuration used to launch

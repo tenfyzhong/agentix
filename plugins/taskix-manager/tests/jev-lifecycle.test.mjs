@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { routePrompt } from "../jev.mjs";
 
-const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://jev.test/evaluate", TASKIX_JEV_API_KEY: "secret" };
+const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://jev.test/evaluate", TASKIX_DECISION_API_KEY: "secret" };
 const job = { id: "job_a", project_id: "p", status: "PENDING_REVIEW", revision: 3,
     title: "Login", prompt: "Fix login", review_policy: "required", conversation: [] };
 export function answers(request, choices) {
@@ -55,7 +55,7 @@ test("uncertain_work_policy_defers_without_guessing", async () => {
     assert.equal(result.decision.action, "agent");
 });
 test("disabled_routing_keeps_existing_workflow_without_requests", async () => {
-    const { result, calls } = await run({}, { env: { ...env, TASKIX_JEV_ENABLED: "false" } });
+    const { result, calls } = await run({}, { env: { ...env, TASKIX_DECISION_ENABLED: "false" } });
     assert.equal(result, undefined);
     assert.equal(calls, 0);
 });

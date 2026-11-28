@@ -6,22 +6,22 @@ const text = value => value?.trim() || undefined;
 export const validProvider = value => typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value);
 export const validProtocol = value => ["typesafe", "openai_decisions", "gemini"].includes(value);
 export function metricsEnabled(env = taskEnvironment()) {
-    return enabled(env.TASKIX_DECISION_METRICS_ENABLED ?? env.TASKIX_JEV_METRICS_ENABLED);
+    return enabled(env.TASKIX_DECISION_METRICS_ENABLED);
 }
 export function metricsDatabase(env = taskEnvironment()) {
-    return text(env.TASKIX_DECISION_METRICS_DB) ?? text(env.TASKIX_JEV_METRICS_DB);
+    return text(env.TASKIX_DECISION_METRICS_DB);
 }
 function decisionSettings(env) {
     const provider = text(env.TASKIX_DECISION_PROVIDER) ?? "typesafe";
     const protocol = text(env.TASKIX_DECISION_PROTOCOL) ?? ({ typesafe: "typesafe", openai: "openai_decisions", google: "gemini" })[provider];
     if (!validProvider(provider) || !validProtocol(protocol)) return;
-    const legacy = provider === "typesafe" && protocol === "typesafe";
+    const officialTypesafe = provider === "typesafe" && protocol === "typesafe";
     const officialOpenAI = provider === "openai" && protocol === "openai_decisions";
     const officialGemini = provider === "google" && protocol === "gemini";
-    if (!enabled(env.TASKIX_DECISION_ENABLED ?? (legacy ? env.TASKIX_JEV_ENABLED : undefined))) return;
-    const value = name => text(env[`TASKIX_DECISION_${name}`]) ?? (legacy ? text(env[`TASKIX_JEV_${name}`]) : undefined);
-    const model = value("MODEL") ?? (legacy ? "jev-latest" : officialOpenAI ? "gpt-6-luna" : officialGemini ? "gemini-3.8-flash" : undefined);
-    const url = value("URL") ?? (legacy ? "https://api.typesafe.ai/v1/systemone"
+    if (!enabled(env.TASKIX_DECISION_ENABLED)) return;
+    const value = name => text(env[`TASKIX_DECISION_${name}`]);
+    const model = value("MODEL") ?? (officialTypesafe ? "jev-latest" : officialOpenAI ? "gpt-6-luna" : officialGemini ? "gemini-3.8-flash" : undefined);
+    const url = value("URL") ?? (officialTypesafe ? "https://api.typesafe.ai/v1/systemone"
         : officialOpenAI ? "https://api.openai.com/v1/decisions"
         : officialGemini ? geminiEndpoint(model) : undefined);
     const credential = prefix => {
@@ -31,7 +31,6 @@ function decisionSettings(env) {
         return entry === undefined ? undefined : { entry };
     };
     const source = credential("TASKIX_DECISION_")
-        ?? (legacy ? credential("TASKIX_JEV_") : undefined)
         ?? (officialOpenAI ? credential("OPENAI_") : undefined)
         ?? (officialGemini ? credential("GEMINI_") : undefined);
     if (!url || !source || !model || (source.key && /[^\x20-\x7e]/.test(source.key))) return;

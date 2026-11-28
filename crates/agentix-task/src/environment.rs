@@ -157,7 +157,6 @@ fn file_defaults(mut values: BTreeMap<String, String>) -> Result<BTreeMap<String
         "TASKIX_LOGIN_SHELL",
         "TASKIX_ANTIGRAVITY_DATA_DIR",
         "TASKIX_DECISION_METRICS_DB",
-        "TASKIX_JEV_METRICS_DB",
     ];
     // This global setting belongs to the host, never an application env file.
     values.remove("XDG_STATE_HOME");

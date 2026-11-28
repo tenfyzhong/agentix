@@ -21,7 +21,7 @@ function run(f, input, extra = {}) {
         input: typeof input === "string" ? input : JSON.stringify(input),
         encoding: "utf8",
         env: { ...process.env, PATH: f.bin + delimiter + process.env.PATH,
-            XDG_STATE_HOME: join(f.dir, "state"), TASKIX_JEV_ENABLED: "false", ...extra },
+            XDG_STATE_HOME: join(f.dir, "state"), TASKIX_DECISION_ENABLED: "false", ...extra },
     });
 }
 

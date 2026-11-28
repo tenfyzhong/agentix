@@ -30,7 +30,7 @@ for (const host of ["codex","claude","pi","omp"]) test(`${host}_explicit_im_issu
     assert.deepEqual(calls.filter(a=>["obsidian","issue"].includes(a[0])),[["obsidian","sync",issue.id],["issue","show",issue.id]]);
 });
 
-const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://jev.test/v1/systemone", TASKIX_JEV_API_KEY: "private" };
+const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://jev.test/v1/systemone", TASKIX_DECISION_API_KEY: "private" };
 const job = {id:"job_a",project_id:"p",revision:1,status:"PENDING_REVIEW",title:"Login",prompt:"Fix login",review_policy:"required"};
 async function fixture(t, choice="followup:job_a") {
     const cacheDir=await mkdtemp(join(tmpdir(),"taskix-routing-test-"));
@@ -141,7 +141,7 @@ test("unwritable_receipt_retains_legacy_tool_fallback",async t=>{
     assert.match(result.hookSpecificOutput.additionalContext,/Resolve whether/);
 });
 
-for (const configuration of [{}, { TASKIX_JEV_ENABLED: "true" }, { ...env, TASKIX_JEV_API_KEY: "" }]) {
+for (const configuration of [{}, { TASKIX_DECISION_ENABLED: "true" }, { ...env, TASKIX_DECISION_API_KEY: "" }]) {
     test(`disabled_prompt_uses_only_local_snapshot_${JSON.stringify(configuration)}`, async t => {
         const f = await fixture(t);
         f.routing.env = configuration;
