@@ -1,3 +1,7 @@
+import * as http from "node:http";
+import * as https from "node:https";
+import { Readable } from "node:stream";
+
 const deadlines = new WeakSet();
 
 // One end-to-end budget shared by nested classifiers and preparation helpers.
@@ -52,5 +56,55 @@ export async function readJson(response, signal) {
     } finally {
         signal.removeEventListener("abort", cancel);
         cancel();
+    }
+}
+
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+const supportsProxyAgent = nodeMajor > 24 || (nodeMajor === 24 && nodeMinor >= 5)
+    || (nodeMajor === 22 && nodeMinor >= 21);
+
+export async function requestDecisionJson(url, init, fetch, proxyEnv) {
+    const target = new URL(url);
+    const isHttps = target.protocol === "https:";
+    const proxy = isHttps ? proxyEnv?.https_proxy?.trim() || proxyEnv?.HTTPS_PROXY?.trim()
+        : proxyEnv?.http_proxy?.trim() || proxyEnv?.HTTP_PROXY?.trim();
+    if (!proxy) {
+        const response = await fetch(url, init);
+        if (!response.ok) throw new Error("Evaluation unavailable");
+        return readJson(response, init.signal);
+    }
+    if (!supportsProxyAgent || !["http:", "https:"].includes(new URL(proxy).protocol)) {
+        throw new Error("Decision proxy unavailable");
+    }
+    // Configure only this request's agent. Other providers and host requests keep their transport.
+    const transport = isHttps ? https : http;
+    const proxySettings = {
+        [isHttps ? "HTTPS_PROXY" : "HTTP_PROXY"]: proxy,
+        NO_PROXY: proxyEnv.no_proxy?.trim() || proxyEnv.NO_PROXY?.trim(),
+    };
+    const agent = new transport.Agent({ proxyEnv: proxySettings });
+    try {
+        const response = await new Promise((resolve, reject) => {
+            const request = transport.request(target, {
+                agent,
+                signal: init.signal,
+                method: init.method,
+                headers: {
+                    ...init.headers,
+                    "Accept-Encoding": "identity",
+                    "Content-Length": Buffer.byteLength(init.body),
+                },
+            }, resolve);
+            request.once("error", reject);
+            request.end(init.body);
+        });
+        // The native client does not follow redirects.
+        if (response.statusCode < 200 || response.statusCode >= 300) throw new Error("Evaluation unavailable");
+        return await readJson({
+            headers: new Headers(response.headers),
+            body: Readable.toWeb(response),
+        }, init.signal);
+    } finally {
+        agent.destroy();
     }
 }

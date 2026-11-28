@@ -5,7 +5,7 @@ import {runHook, registerExtension} from './support/runtime.mjs';
 import {mkdtemp, writeFile, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-const env={TASKIX_JEV_ENABLED:'true',TASKIX_JEV_URL:'https://jev.test/evaluate',TASKIX_JEV_API_KEY:'secret'};
+const env={TASKIX_DECISION_ENABLED:'true',TASKIX_DECISION_URL:'https://jev.test/evaluate',TASKIX_DECISION_API_KEY:'secret'};
 const pending={revision:7,complete:true,session_id:'s',turns:[
     {turn_id:'one',messages:[{id:'a',role:'user',text:'Cards lose long output'},{id:'b',role:'assistant',text:'Split by capacity'}]},
     {turn_id:'other',messages:[{id:'c',role:'user',text:'Explain a different project'}]},

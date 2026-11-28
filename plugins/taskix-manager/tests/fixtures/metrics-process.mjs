@@ -12,7 +12,7 @@ const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: 
     if (args[1] !== "snapshot") throw new Error("Unexpected lifecycle call");
     return { result: { project_id: "fixture", issue_candidates: [], routing: { complete: true, candidates: [] } } };
 }, {
-    env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "fixture-key", TASKIX_JEV_METRICS_ENABLED: mode, TASKIX_JEV_METRICS_DB: `${directory}/metrics.sqlite` },
+    env: { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://unused.test", TASKIX_DECISION_API_KEY: "fixture-key", TASKIX_DECISION_METRICS_ENABLED: mode, TASKIX_DECISION_METRICS_DB: `${directory}/metrics.sqlite` },
     cacheDir: directory,
     fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: Object.fromEntries(
         Object.entries(JSON.parse(init.body).questions).map(([id, question]) => {

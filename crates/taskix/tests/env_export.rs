@@ -44,8 +44,7 @@ fn ordinary_command_loads_local_defaults_and_preserves_inherited_override() {
             .arg(&config)
             .args(["routing", "metrics", "report", "--json"])
             .env("HOME", dir.path())
-            .env_remove("TASKIX_DECISION_METRICS_DB")
-            .env_remove("TASKIX_JEV_METRICS_DB");
+            .env_remove("TASKIX_DECISION_METRICS_DB");
         if inherited {
             cmd.env("TASKIX_DECISION_METRICS_DB", &inherited_db);
         }

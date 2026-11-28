@@ -85,7 +85,7 @@ test("Codex and Claude prompt hooks retrieve memory independently of Jev routing
     const output = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "s", turn_id: "t", prompt: "regional endpoints" }, async args => {
         calls.push(args);
         return args[0] === "memory" ? packet() : { result: { project_id: "prj_test" } };
-    }, { env: { TASKIX_JEV_ENABLED: "false", TASKIX_MEMORY_ENABLED: "true" } });
+    }, { env: { TASKIX_DECISION_ENABLED: "false", TASKIX_MEMORY_ENABLED: "true" } });
     assert.match(output.hookSpecificOutput.additionalContext, /regional endpoints/);
     assert.deepEqual(calls.map(args => args.slice(0, 2)), [["memory", "context"], ["routing", "snapshot"]]);
 });
@@ -93,7 +93,7 @@ for (const host of ["pi", "omp"]) test(`${host} retrieves memory before the agen
     const handlers = {};
     registerExtension({ on: (name, handler) => { handlers[name] = handler; }, registerTool() {} }, host,
         async args => args[0] === "memory" ? packet() : { result: {} },
-        { setInterval: () => 1, clearInterval() {} }, undefined, { env: { TASKIX_JEV_ENABLED: "false", TASKIX_MEMORY_ENABLED: "1" } });
+        { setInterval: () => 1, clearInterval() {} }, undefined, { env: { TASKIX_DECISION_ENABLED: "false", TASKIX_MEMORY_ENABLED: "1" } });
     const ctx = { cwd: tmpdir(), sessionManager: { getSessionId: () => `memory-${host}` } };
     const result = await handlers.before_agent_start({ prompt: "regional endpoints", turn_id: "native-turn" }, ctx);
     assert.match(result.message.content, /regional endpoints/);
@@ -102,7 +102,7 @@ for (const host of ["pi", "omp"]) test(`${host} retrieves memory before the agen
 for (const value of [undefined, "", "false", "0", "TRUE", "yes", " true ", "true", "1"]) {
     test(`memory_environment_${JSON.stringify(value)}_controls_all_hosts_without_config_io`, async t => {
         const enabled = value === "true" || value === "1";
-        const env = { TASKIX_JEV_ENABLED: "false", ...(value === undefined ? {} : { TASKIX_MEMORY_ENABLED: value }) };
+        const env = { TASKIX_DECISION_ENABLED: "false", ...(value === undefined ? {} : { TASKIX_MEMORY_ENABLED: value }) };
         const directory = await mkdtemp(join(tmpdir(), "memory-env-"));
         t.after(() => rm(directory, { recursive: true, force: true }));
         const options = { env, cacheDir: directory };

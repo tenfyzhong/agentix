@@ -180,8 +180,8 @@ impl Cli {
         );
         command
             .env_remove("TASKIX_MEMORY_ENABLED")
-            .env_remove("TASKIX_JEV_ENABLED")
-            .env_remove("TASKIX_JEV_METRICS_ENABLED")
+            .env_remove("TASKIX_DECISION_ENABLED")
+            .env_remove("TASKIX_DECISION_METRICS_ENABLED")
             .arg("--config")
             .arg(self.dir.path().join("config.toml"))
             .arg("--json")

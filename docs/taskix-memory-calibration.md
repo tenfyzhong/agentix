@@ -11,7 +11,7 @@ confidence and selected probability both meet the threshold, with a margin of
 at least `0.2`, suppresses extraction. All other outcomes continue to the model:
 `extract`, uncertainty, low scores, malformed replies, disabled/invalid Jev
 configuration and service failures. Source records remain stored after a skip.
-The routing setting `TASKIX_JEV_MIN_CONFIDENCE` is independent and unchanged.
+The routing setting `TASKIX_DECISION_MIN_CONFIDENCE` is independent and unchanged.
 Explicit memory environment settings override the default; the rollback did
 not modify installed/global configuration or deploy a service.
 

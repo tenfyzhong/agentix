@@ -51,7 +51,7 @@ export function isolatedOpenCodeEnvironment(
         OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
         OPENCODE_DISABLE_MODELS_FETCH: "true",
         OPENCODE_DISABLE_AUTOUPDATE: "true",
-        TASKIX_JEV_ENABLED: "false",
+        TASKIX_DECISION_ENABLED: "false",
     });
     if (inherited.AGENTIX_TEST_NPM_CACHE)
         env.npm_config_cache = inherited.AGENTIX_TEST_NPM_CACHE;

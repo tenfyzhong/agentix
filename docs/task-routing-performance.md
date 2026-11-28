@@ -199,7 +199,7 @@ node --test --test-name-pattern='compact_instructions' plugins/taskix-manager/te
 
 ## Opt-in statistics overhead
 
-`TASKIX_JEV_METRICS_ENABLED` defaults off. The disabled path does not load the
+`TASKIX_DECISION_METRICS_ENABLED` defaults off. The disabled path does not load the
 statistics module or SQLite and makes no statistics filesystem accesses. Enabling
 it adds one local transaction per prompt in a separate database, executed in a worker with a 250 ms parent wait budget. The default-off path creates no worker. Statistics use
 no extra CLI or model calls and are never injected into the Agent context. The

@@ -1,5 +1,5 @@
 import { taskEnvironment } from "./environment.mjs";
-import { withDeadline, readJson } from "./jev-io.mjs";
+import { withDeadline, requestDecisionJson } from "./jev-io.mjs";
 // Host-side routing only. All lifecycle writes remain guarded by taskix.
 import { decisionConfig, encodeDecision, decodeDecision, metricsEnabled } from "./decision-provider.mjs";
 // Compatibility export for existing integrations; all callers use the common config.
@@ -133,12 +133,14 @@ function confident(answer, criteria, threshold) {
     return selected >= threshold && selected - runnerUp >= 0.2;
 }
 
-async function evaluate(config, body, signal, fetch) {
+async function evaluate(config, body, signal, fetch, env) {
     signal.throwIfAborted();
-    const response = await fetch(config.url, { method: "POST", redirect: "error", signal,
-        headers: { Authorization: `Bearer ${config.key}`, "Content-Type": "application/json" }, body });
-    if (!response.ok) throw new Error("Evaluation unavailable");
-    const data = await readJson(response, signal);
+    const credential = config.protocol === "gemini"
+        ? { "x-goog-api-key": config.key }
+        : { Authorization: `Bearer ${config.key}` };
+    const proxyEnv = fetch === globalThis.fetch ? env : undefined;
+    const data = await requestDecisionJson(config.url, { method: "POST", redirect: "error", signal,
+        headers: { ...credential, "Content-Type": "application/json" }, body }, fetch, proxyEnv);
     signal.throwIfAborted();
     return decodeDecision(config, data);
 }
@@ -305,7 +307,7 @@ async function classifyPrompt({ prompt, context, options, runner, history = [], 
             }
             if (Buffer.byteLength(body, "utf8") > MAX_REQUEST_BYTES) return fallback("context_too_large");
             if (telemetry) telemetry.called = true;
-            const data = await evaluate(config, body, signal, fetch);
+            const data = await evaluate(config, body, signal, fetch, env);
             const explicitJob = !assessment && data.answers?.intent?.choice === "work" && context.requested_issue_id && context.requested_job_id
                 ? candidates.find(c => c.job.id === context.requested_job_id) : undefined;
             if (!assessment && data.answers?.intent?.choice === "work" && context.requested_job_id &&
@@ -438,7 +440,7 @@ async function classifyDiscussionMeasured({ target, pending, currentTurn, env = 
     try {
         return await withDeadline(signal, async combined => {
             if (telemetry) telemetry.called = true;
-            const data = await evaluate(config, body, combined, fetch);
+            const data = await evaluate(config, body, combined, fetch, env);
             if (telemetry) {
                 const { answerScore } = await import("./jev-metrics.mjs");
                 telemetry.answers = Object.entries(questions).map(([id, question]) =>

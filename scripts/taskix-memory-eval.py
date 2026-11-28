@@ -167,8 +167,8 @@ def run(args):
     labels = json.loads((args.output / 'labels.json').read_text())
     assert set(labels) == {s['id'] for s in samples}, 'Complete blind labels before calling Jev'
     assert all(v['label'] in ('extract', 'skip') and v['reason'] for v in labels.values())
-    url = os.environ['TASKIX_JEV_URL']; key = os.environ['TASKIX_JEV_API_KEY']
-    model = os.environ.get('TASKIX_JEV_MODEL', '').strip() or 'jev-latest'
+    url = os.environ['TASKIX_DECISION_URL']; key = os.environ['TASKIX_DECISION_API_KEY']
+    model = os.environ.get('TASKIX_DECISION_MODEL', '').strip() or 'jev-latest'
     question = questions()
     write(args.output / 'question.json', question)
     def call(sample):

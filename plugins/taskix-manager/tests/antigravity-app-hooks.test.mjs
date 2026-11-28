@@ -23,7 +23,7 @@ async function fixture(t) {
         toolCall: { name: 'view_file', args: { AbsolutePath: join(root, 'README.md') } }, fullyIdle: true };
     const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, TASKIX_BIN: join(bin, 'taskix'),
         TASKIX_TEST_LOG: join(root, 'calls.jsonl'), TASKIX_ANTIGRAVITY_DATA_DIR: join(root, 'identity'),
-        XDG_STATE_HOME: join(root, 'state'), TASKIX_DECISION_ENABLED: 'false', TASKIX_JEV_ENABLED: 'false' };
+        XDG_STATE_HOME: join(root, 'state'), TASKIX_DECISION_ENABLED: 'false', TASKIX_DECISION_ENABLED: 'false' };
     async function run(command, input = payload) {
         const child = spawn(command, { cwd: plugin, env, shell: true, stdio: ['pipe', 'pipe', 'pipe'] });
         let stdout = '', stderr = '';

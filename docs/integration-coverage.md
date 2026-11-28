@@ -817,9 +817,11 @@ of all performance regressions.
 
 ## Decision provider and protocol compatibility
 
-`decision-provider.test.mjs` covers Typesafe and OpenAI Decisions using the same
-third-party provider identity, including routing, Issues, discussion, lifecycle,
-refusals, malformed distributions, transport failures and payload bounds.
+`decision-provider.test.mjs` covers Typesafe, OpenAI Decisions and Gemini using
+the same third-party provider identity, including routing, Issues, discussion, lifecycle,
+refusals, malformed distributions, transport failures and payload bounds. The
+Gemini tests exercise its native request envelope, API-key header, structured
+output, and fallback on blocked or incomplete responses.
 The `decision-config.json` fixture verifies host provider configuration.
 The Memory daemon regression verifies direct extraction with Decision configured.
 Metrics tests cover v1/v2/v3, transactional migration/rollback, provider/protocol

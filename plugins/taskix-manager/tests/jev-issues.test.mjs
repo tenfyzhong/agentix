@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { routePrompt } from "../jev.mjs";
 import { choiceAnswers } from "./support/jev.mjs";
 
-const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://example.test/jev", TASKIX_JEV_API_KEY: "test" };
+const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://example.test/jev", TASKIX_DECISION_API_KEY: "test" };
 const item = { id: "issue_a", project_id: "p", status: "TODO", revision: 2, content_hash: "requirement-hash",
     title: "Login", requirement: "Repair login", acceptance: "Valid users can log in", milestone_id: "milestone_a" };
 const job = { id: "job_a", project_id: "p", status: "ACTIVE", revision: 3, title: "Login round",

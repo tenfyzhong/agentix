@@ -14,7 +14,7 @@ async function fixture(t, enabled = true) {
     const dir = await mkdtemp(join(tmpdir(), "jev-metrics-"));
     t.after(() => rm(dir, { recursive: true, force: true }));
     const path = join(dir, "metrics.sqlite");
-    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://example.test", TASKIX_JEV_API_KEY: "private-key", TASKIX_JEV_MIN_CONFIDENCE: "0.9", TASKIX_JEV_METRICS_DB: path, ...(enabled ? { TASKIX_JEV_METRICS_ENABLED: "true" } : {}) };
+    const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://example.test", TASKIX_DECISION_API_KEY: "private-key", TASKIX_DECISION_MIN_CONFIDENCE: "0.9", TASKIX_DECISION_METRICS_DB: path, ...(enabled ? { TASKIX_DECISION_METRICS_ENABLED: "true" } : {}) };
     const args = { env, prompt: "private prompt", options: { session: "session", cwd: dir }, context: { project_id: "p", issue_candidates: [{ id: "issue_a", project_id: "p", status: "TODO", requirement: "private issue" }], routing: { complete: true, candidates: [] } }, runner: () => assert.fail("unexpected CLI"), fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: Object.fromEntries(Object.entries(JSON.parse(init.body).questions).map(([id, q]) => {
         const choice = id === "review_policy" ? "required" : id === "intent" ? "work" : id === "route" ? "new_job" : "none";
         return [id, { type: "choice", choice, confidence: id === "issue" ? .87 : .99, probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, k === choice ? 1 : 0])) }];
@@ -51,7 +51,7 @@ test("metrics_records_all_question_scores_without_prompt_or_credentials", async 
 });
 test("metrics_records_accepted_and_pre_request_fallback", async t => {
     const f = await fixture(t);
-    f.args.env.TASKIX_JEV_MIN_CONFIDENCE = ".85";
+    f.args.env.TASKIX_DECISION_MIN_CONFIDENCE = ".85";
     await routePrompt(f.args);
     f.args.context.routing.complete = false;
     await routePrompt(f.args);
@@ -60,11 +60,11 @@ test("metrics_records_accepted_and_pre_request_fallback", async t => {
 });
 test("metrics_storage_failure_does_not_change_routing", async t => {
     const f = await fixture(t);
-    f.args.env.TASKIX_JEV_METRICS_DB = join(f.path, "..", "missing", "..", "bad.sqlite", "child");
+    f.args.env.TASKIX_DECISION_METRICS_DB = join(f.path, "..", "missing", "..", "bad.sqlite", "child");
     // A regular file as a parent makes the destination unwritable on every OS.
     const { writeFile } = await import("node:fs/promises");
     await writeFile(f.path, "not a directory");
-    f.args.env.TASKIX_JEV_METRICS_DB = join(f.path, "child");
+    f.args.env.TASKIX_DECISION_METRICS_DB = join(f.path, "child");
     assert.equal((await routePrompt(f.args)).decision.reason, "uncertain_or_conflicting");
 });
 
@@ -83,7 +83,7 @@ test("metrics_disabled_does_not_touch_an_existing_database", async t => {
     const f = await fixture(t);
     await routePrompt(f.args);
     const before = await readFile(f.path);
-    f.args.env.TASKIX_JEV_METRICS_ENABLED = "false";
+    f.args.env.TASKIX_DECISION_METRICS_ENABLED = "false";
     await routePrompt(f.args);
     assert.deepEqual(await readFile(f.path), before);
 });
@@ -119,7 +119,7 @@ test("metrics_invalid_answer_does_not_persist_unknown_model_text", async t => {
     assert.doesNotMatch((await readFile(f.path)).toString(), /unexpected private text/);
 });
 
-for (const patch of [{ TASKIX_JEV_ENABLED: "false" }, { TASKIX_JEV_API_KEY: "" }, { TASKIX_JEV_METRICS_ENABLED: "0" }]) test(`metrics_does_not_write_when_disabled_${JSON.stringify(patch)}`, async t => {
+for (const patch of [{ TASKIX_DECISION_ENABLED: "false" }, { TASKIX_DECISION_API_KEY: "" }, { TASKIX_DECISION_METRICS_ENABLED: "0" }]) test(`metrics_does_not_write_when_disabled_${JSON.stringify(patch)}`, async t => {
     const f = await fixture(t);
     Object.assign(f.args.env, patch);
     await routePrompt(f.args);
@@ -129,7 +129,7 @@ for (const patch of [{ TASKIX_JEV_ENABLED: "false" }, { TASKIX_JEV_API_KEY: "" }
 test("native_taskix_report_matches_plugin_database_and_preserves_read_only_data", { skip: !process.env.TASKIX_TEST_METRICS_BIN }, async t => {
     const f = await fixture(t);
     await routePrompt(f.args);
-    f.args.env.TASKIX_JEV_MIN_CONFIDENCE = ".85";
+    f.args.env.TASKIX_DECISION_MIN_CONFIDENCE = ".85";
     await routePrompt(f.args);
     const before = await readFile(f.path);
     const { execFile } = await import("node:child_process");
@@ -444,6 +444,6 @@ test("metrics_default_path_uses_decision_filename", async () => {
     const { metricsPath } = await import("../jev-metrics.mjs");
     assert.equal(metricsPath({}), join(homedir(), ".local", "state", "taskix", "decision-metrics.sqlite"));
     assert.equal(metricsPath({ XDG_STATE_HOME: "/custom-state" }), join("/custom-state", "taskix", "decision-metrics.sqlite"));
-    assert.equal(metricsPath({ TASKIX_JEV_METRICS_DB: "/old/jev-metrics.sqlite" }), "/old/jev-metrics.sqlite");
+    assert.equal(metricsPath({ TASKIX_JEV_METRICS_DB: "/old/jev-metrics.sqlite" }), metricsPath({}));
     assert.equal(metricsPath({ TASKIX_DECISION_METRICS_DB: "/new/custom.sqlite", TASKIX_JEV_METRICS_DB: "/old/jev-metrics.sqlite" }), "/new/custom.sqlite");
 });

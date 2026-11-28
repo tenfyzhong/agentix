@@ -1,25 +1,16 @@
 [
   {
-    "name": "legacy_typesafe",
+    "name": "retired_typesafe_variables",
     "env": {
       "TASKIX_JEV_ENABLED": "true",
       "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
       "TASKIX_JEV_API_KEY": "legacy-key"
     },
-    "expected": {
-      "provider": "typesafe",
-      "protocol": "typesafe",
-      "model": "jev-latest",
-      "url": "https://typesafe.test/evaluate",
-      "key": "legacy-key"
-    }
+    "expected": null
   },
   {
     "name": "openai_defaults",
     "env": {
-      "TASKIX_JEV_ENABLED": "true",
-      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
-      "TASKIX_JEV_API_KEY": "legacy-key",
       "TASKIX_DECISION_ENABLED": "true",
       "TASKIX_DECISION_PROVIDER": "openai",
       "OPENAI_API_KEY": "openai-key"
@@ -35,9 +26,6 @@
   {
     "name": "custom_typesafe",
     "env": {
-      "TASKIX_JEV_ENABLED": "true",
-      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
-      "TASKIX_JEV_API_KEY": "legacy-key",
       "TASKIX_DECISION_ENABLED": "true",
       "TASKIX_DECISION_PROVIDER": "acme",
       "TASKIX_DECISION_PROTOCOL": "typesafe",
@@ -56,9 +44,6 @@
   {
     "name": "custom_openai_decisions",
     "env": {
-      "TASKIX_JEV_ENABLED": "true",
-      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
-      "TASKIX_JEV_API_KEY": "legacy-key",
       "TASKIX_DECISION_ENABLED": "true",
       "TASKIX_DECISION_PROVIDER": "acme",
       "TASKIX_DECISION_PROTOCOL": "openai_decisions",
@@ -77,9 +62,6 @@
   {
     "name": "custom_missing_protocol",
     "env": {
-      "TASKIX_JEV_ENABLED": "true",
-      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
-      "TASKIX_JEV_API_KEY": "legacy-key",
       "TASKIX_DECISION_ENABLED": "true",
       "TASKIX_DECISION_PROVIDER": "acme",
       "TASKIX_DECISION_URL": "https://acme.test/evaluate",
@@ -92,9 +74,6 @@
   {
     "name": "custom_missing_url",
     "env": {
-      "TASKIX_JEV_ENABLED": "true",
-      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
-      "TASKIX_JEV_API_KEY": "legacy-key",
       "TASKIX_DECISION_ENABLED": "true",
       "TASKIX_DECISION_PROVIDER": "acme",
       "TASKIX_DECISION_PROTOCOL": "typesafe",
@@ -107,9 +86,6 @@
   {
     "name": "custom_missing_api_key",
     "env": {
-      "TASKIX_JEV_ENABLED": "true",
-      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
-      "TASKIX_JEV_API_KEY": "legacy-key",
       "TASKIX_DECISION_ENABLED": "true",
       "TASKIX_DECISION_PROVIDER": "acme",
       "TASKIX_DECISION_PROTOCOL": "typesafe",
@@ -122,9 +98,6 @@
   {
     "name": "custom_missing_model",
     "env": {
-      "TASKIX_JEV_ENABLED": "true",
-      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
-      "TASKIX_JEV_API_KEY": "legacy-key",
       "TASKIX_DECISION_ENABLED": "true",
       "TASKIX_DECISION_PROVIDER": "acme",
       "TASKIX_DECISION_PROTOCOL": "typesafe",
@@ -135,12 +108,10 @@
     "expected": null
   },
   {
-    "name": "new_disable_overrides_legacy",
+    "name": "explicit_disable_with_key",
     "env": {
-      "TASKIX_JEV_ENABLED": "true",
-      "TASKIX_JEV_URL": "https://typesafe.test/evaluate",
-      "TASKIX_JEV_API_KEY": "legacy-key",
-      "TASKIX_DECISION_ENABLED": "false"
+      "TASKIX_DECISION_ENABLED": "false",
+      "TASKIX_DECISION_API_KEY": "typesafe-key"
     },
     "expected": null
   },

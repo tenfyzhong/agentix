@@ -286,7 +286,7 @@ async function workload() {
             mkdirSync(join(vault, '.obsidian'), { recursive: true }); mkdirSync(home, { recursive: true });
             const env = { PATH: '/opt/homebrew/bin:/usr/bin:/bin', HOME: home, LANG: 'C',
                 XDG_CONFIG_HOME: join(home, '.config'), XDG_CACHE_HOME: join(home, '.cache'), XDG_STATE_HOME: join(home, '.local/state'),
-                TASKIX_CONFIG: join(directory, 'config.toml'), TASKIX_MEMORY_ENABLED: 'false', TASKIX_JEV_ENABLED: 'false' };
+                TASKIX_CONFIG: join(directory, 'config.toml'), TASKIX_MEMORY_ENABLED: 'false', TASKIX_DECISION_ENABLED: 'false' };
             const execute = promisify(execFile);
             let calls = 0, heartbeats = 0, contexts = 0, cliElapsed = 0, requestedToolCalls = 0, requestedToolElapsed = 0;
             const runner = async (args, options = {}) => {
@@ -309,7 +309,7 @@ async function workload() {
             const setupCalls = calls, setupElapsed = cliElapsed;
             const timers = new Set();
             const hooks = await taskixHost(setupOpenCode, directory, {
-                runner, routing: { env: { TASKIX_MEMORY_ENABLED: 'false', TASKIX_JEV_ENABLED: 'false' } },
+                runner, routing: { env: { TASKIX_MEMORY_ENABLED: 'false', TASKIX_DECISION_ENABLED: 'false' } },
                 timers: { setInterval(fn) { timers.add(fn); return fn; }, clearInterval(fn) { timers.delete(fn); } },
             });
             try {

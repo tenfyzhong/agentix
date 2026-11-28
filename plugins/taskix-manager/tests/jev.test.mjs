@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { routePrompt, jevConfig } from "../jev.mjs";
 
-const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://example.test/v1/systemone", TASKIX_JEV_API_KEY: "test-key" };
+const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://example.test/v1/systemone", TASKIX_DECISION_API_KEY: "test-key" };
 test("jev_config_defaults_to_065_and_preserves_explicit_thresholds", () => {
     for (const value of [undefined, "", "   "]) {
-        assert.equal(jevConfig({ ...env, TASKIX_JEV_MIN_CONFIDENCE: value }).threshold, 0.65);
+        assert.equal(jevConfig({ ...env, TASKIX_DECISION_MIN_CONFIDENCE: value }).threshold, 0.65);
     }
     for (const value of ["0.5", "0.65", " 0.9 ", "1"]) {
-        assert.equal(jevConfig({ ...env, TASKIX_JEV_MIN_CONFIDENCE: value }).threshold, Number(value));
+        assert.equal(jevConfig({ ...env, TASKIX_DECISION_MIN_CONFIDENCE: value }).threshold, Number(value));
     }
 });
 
@@ -110,8 +110,8 @@ test("pending_delivery_retains_bounded_completed_task_evidence", async () => {
     assert.deepEqual(result.context.tasks, []);
 });
 
-for (const patch of [{TASKIX_JEV_ENABLED:"false"}, {TASKIX_JEV_ENABLED:""}, {TASKIX_JEV_URL:""}, {TASKIX_JEV_API_KEY:" "}]) {
-    test(`disabled_or_incomplete_configuration_preserves_legacy_${JSON.stringify(patch)}`, async () => {
+for (const patch of [{TASKIX_DECISION_ENABLED:"false"}, {TASKIX_DECISION_ENABLED:""}, {TASKIX_DECISION_API_KEY:" "}]) {
+    test(`disabled_or_incomplete_configuration_skips_decisions_${JSON.stringify(patch)}`, async () => {
         const actual = {...env, ...patch};
         assert.equal(jevConfig(actual), undefined);
         const result = await routePrompt({prompt:"create PR", context, options, env:actual, runner:()=>assert.fail("no task query"), fetch:()=>assert.fail("no network")});
@@ -123,7 +123,7 @@ test("confident_followup_has_only_selected_context_and_no_mutations", async () =
     const f = fixture([job, {...job,id:"job_other",prompt:"Unrelated secret background"}]);
     let request;
     const result = await routePrompt({prompt:"Create PR",context,options,env,runner:f.runner,fetch:async(url,init)=>{
-        assert.equal(url,env.TASKIX_JEV_URL);
+        assert.equal(url,env.TASKIX_DECISION_URL);
         assert.equal(init.headers.Authorization,"Bearer test-key");
         assert.equal(init.redirect,"error");
         request=JSON.parse(init.body);
@@ -171,12 +171,12 @@ test("changed_candidate_revision_falls_back_before_delivery",async()=>{
     assert.equal(result.decision.action,"agent");
 });
 
-for (const [name, patch] of [["invalid_url",{TASKIX_JEV_URL:"file:///private/key"}], ["credential_url",{TASKIX_JEV_URL:"https://user:key@example.test"}], ["invalid_threshold",{TASKIX_JEV_MIN_CONFIDENCE:"NaN"}]]) {
+for (const [name, patch] of [["invalid_url",{TASKIX_DECISION_URL:"file:///private/key"}], ["credential_url",{TASKIX_DECISION_URL:"https://user:key@example.test"}], ["invalid_threshold",{TASKIX_DECISION_MIN_CONFIDENCE:"NaN"}]]) {
     test(name,()=>assert.equal(jevConfig({...env,...patch}),undefined));
 }
 
 test("custom_model_and_threshold_are_applied",async()=>{
-    const result=await routePrompt({prompt:"Create PR",context,options,env:{...env,TASKIX_JEV_MODEL:"jev-pinned",TASKIX_JEV_MIN_CONFIDENCE:"0.95"},runner:fixture().runner,fetch:async(_url,init)=>{
+    const result=await routePrompt({prompt:"Create PR",context,options,env:{...env,TASKIX_DECISION_MODEL:"jev-pinned",TASKIX_DECISION_MIN_CONFIDENCE:"0.95"},runner:fixture().runner,fetch:async(_url,init)=>{
         const req=JSON.parse(init.body);
         assert.equal(req.model,"jev-pinned");
         return {ok:true,json:async()=>response(req,"followup:job_a",{confidence:.94})};

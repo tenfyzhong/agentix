@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as jev from "../jev.mjs";
-const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://jev.test/evaluate", TASKIX_JEV_API_KEY: "secret" };
+const env = { TASKIX_DECISION_ENABLED: "true", TASKIX_DECISION_URL: "https://jev.test/evaluate", TASKIX_DECISION_API_KEY: "secret" };
 const job = { id: "job_a", project_id: "p", status: "ACTIVE", revision: 3, title: "Login", prompt: "Fix login", review_policy: "required", completed_tasks_complete: true, conversation: [] };
 const task = { id: "task_a", job_id: job.id, status: "IN_PROGRESS", phase: "EXECUTING", revision: 2, title: "Fix login with regression coverage", reason: null };
 function answer(request, choice) {

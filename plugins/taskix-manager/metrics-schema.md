@@ -22,8 +22,8 @@ without migration. Upgrade CLI, service and plugins together: older writers and
 readers reject v3. Unknown versions, foreign databases and nonempty unversioned
 databases remain untouched. Never rewrite version metadata to force compatibility.
 
-`TASKIX_DECISION_METRICS_ENABLED` and `TASKIX_DECISION_METRICS_DB` supersede the
-corresponding `TASKIX_JEV_METRICS_*` names, which remain fallbacks. The default
+`TASKIX_DECISION_METRICS_ENABLED` controls collection and
+`TASKIX_DECISION_METRICS_DB` overrides the database path. The default
 physical path is `taskix/decision-metrics.sqlite` under the XDG state directory.
 Existing `jev-metrics.sqlite` files remain accessible through an explicit database
 path override; they are not automatically moved or selected.
@@ -74,7 +74,7 @@ JSON reports add `by_provider` and `by_provider_kind` while preserving previous
 aggregate fields. `--details` prints these breakdowns; list includes both identities.
 Historical v1/v2 records read as `typesafe` / `typesafe` without modifying the file.
 Provider names are configuration identities matching `[a-z][a-z0-9_-]{0,63}`;
-protocol is `typesafe` or `openai_decisions`. Never infer provider from model.
+protocol is `typesafe`, `openai_decisions` or `gemini`. Never infer provider from model.
 
 ## Verification
 
