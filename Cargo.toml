@@ -60,7 +60,6 @@ toml_edit = "0.25"
 url = "2.5"
 uuid = { version = "1.18", features = ["v4", "serde"] }
 sha2 = "0.10"
-walkdir = "2.5"
 
 
 [workspace.lints.rust]
